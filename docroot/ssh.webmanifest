@@ -1,0 +1,16 @@
+{
+  "name": "SSH Term",
+  "short_name": "SSH Term",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#000",
+  "description": "SSH Terminal",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "ssh.png",
+      "sizes": "144x144",
+      "type": "image/png"
+    }
+  ]
+}

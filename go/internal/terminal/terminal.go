@@ -26,6 +26,7 @@ func New(ctx context.Context, t js.Value) *Terminal {
 		closeCh:  make(chan struct{}),
 	}
 	tt.vt = term.NewTerminal(tt, "")
+	tt.vt.SetBracketedPasteMode(true)
 	tt.setDefaultPrompt()
 
 	disp := t.Call("onData", js.FuncOf(func(this js.Value, args []js.Value) any {

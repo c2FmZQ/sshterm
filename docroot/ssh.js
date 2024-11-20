@@ -23,6 +23,12 @@ window.addEventListener('load', () => {
   term.loadAddon(fitAddon);
   term.open(document.getElementById('terminal'));
   term.onTitleChange(t => document.querySelector('head title').textContent = t);
+  term.onSelectionChange(() => {
+    const v = term.getSelection();
+    if (v !== '') {
+      navigator.clipboard.writeText(v);
+    }
+  });
   window.addEventListener('resize', () => fitAddon.fit())
   fitAddon.fit();
   sshApp.ready
