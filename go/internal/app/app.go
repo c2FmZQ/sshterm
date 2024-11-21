@@ -42,6 +42,7 @@ import (
 	"github.com/mattn/go-shellwords"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/c2FmZQ/sshterm/internal/indexeddb"
 	"github.com/c2FmZQ/sshterm/internal/terminal"
@@ -55,6 +56,7 @@ type Config struct {
 func New(cfg *Config) (*App, error) {
 	app := &App{
 		cfg:       *cfg,
+		agent:     agent.NewKeyring(),
 		endpoints: make(map[string]endpoint),
 		keys:      make(map[string]key),
 	}
@@ -62,10 +64,11 @@ func New(cfg *Config) (*App, error) {
 }
 
 type App struct {
-	cfg  Config
-	ctx  context.Context
-	term *terminal.Terminal
-	db   *indexeddb.DB
+	cfg   Config
+	ctx   context.Context
+	term  *terminal.Terminal
+	agent agent.Agent
+	db    *indexeddb.DB
 
 	endpoints map[string]endpoint
 	keys      map[string]key
@@ -149,6 +152,11 @@ func (a *App) Run() error {
 					Name:    "identity",
 					Aliases: []string{"i", "key"},
 					Usage:   "The key to use for authentication.",
+				},
+				&cli.BoolFlag{
+					Name:  "A",
+					Value: false,
+					Usage: "Forward access to the local SSH agent. Use with caution.",
 				},
 			},
 		},
@@ -319,6 +327,142 @@ func (a *App) Run() error {
 				},
 			},
 		},
+		{
+			Name:            "agent",
+			Usage:           "Manage keys in SSH agent",
+			UsageText:       "agent <list|add|remove|lock|unlock>",
+			Description:     "The agent command adds or removes keys from the in-memory\nSSH agent. Keys can be used without entering a passphrase while\nin the agent. Access to the agent can be forwarded to remote\nsessions with ssh -A.\n\nKeys remain in the agent until they are removed or the page\nis reloaded.",
+			HideHelpCommand: true,
+			Commands: []*cli.Command{
+				{
+					Name:      "list",
+					Usage:     "List the keys currently in the agent",
+					UsageText: "agent list",
+					Action: func(ctx *cli.Context) error {
+						keys, err := a.agent.List()
+						if err != nil {
+							t.Errorf("agent.List: %v", err)
+							return nil
+						}
+						if len(keys) == 0 {
+							t.Printf("<none>\n")
+							return nil
+						}
+						maxSize := 5
+						for _, k := range keys {
+							maxSize = max(maxSize, len(k.Comment))
+						}
+						for _, k := range keys {
+							t.Printf("%*s %s\n", -maxSize, k.Comment, k.Format)
+						}
+						return nil
+					},
+				},
+				{
+					Name:        "add",
+					Usage:       "Add a key to the agent",
+					UsageText:   "agent add <name>",
+					Description: "The add command adds the named key to the agent.",
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 1 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						name := ctx.Args().Get(0)
+						key, exists := a.keys[name]
+						if !exists {
+							t.Errorf("key %q not found", name)
+							return nil
+						}
+						priv, err := a.privKey(key)
+						if err != nil {
+							t.Errorf("private key: %v", err)
+							return nil
+						}
+						if err := a.agent.Add(agent.AddedKey{
+							PrivateKey: priv,
+							Comment:    name,
+						}); err != nil {
+							t.Errorf("agent.Add: %v", err)
+							return nil
+						}
+						return nil
+					},
+				},
+				{
+					Name:      "remove",
+					Usage:     "Remove a key from the agent",
+					UsageText: "agent remove [-all] [<name>]",
+					Flags: []cli.Flag{
+						&cli.BoolFlag{
+							Name:  "all",
+							Value: false,
+							Usage: "Remove all keys.",
+						},
+					},
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 1 && (ctx.Args().Len() != 0 || !ctx.Bool("all")) {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						if ctx.Bool("all") {
+							if err := a.agent.RemoveAll(); err != nil {
+								t.Errorf("agent.RemoveAll: %v", err)
+							}
+							return nil
+						}
+						name := ctx.Args().Get(0)
+						key, exists := a.keys[name]
+						if !exists {
+							t.Errorf("key %q not found", name)
+							return nil
+						}
+						pub, err := ssh.ParsePublicKey(key.Public)
+						if err != nil {
+							t.Errorf("ssh.ParsePublicKey: %v", err)
+							return nil
+						}
+						if err := a.agent.Remove(pub); err != nil {
+							t.Errorf("agent.Remove: %v", err)
+							return nil
+						}
+						return nil
+					},
+				},
+				{
+					Name:      "lock",
+					Usage:     "Lock the SSH agent",
+					UsageText: "agent lock",
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 0 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						passphrase, err := a.term.ReadPassword("Enter lock passphrase: ")
+						if err != nil {
+							return err
+						}
+						return a.agent.Lock([]byte(passphrase))
+					},
+				},
+				{
+					Name:      "unlock",
+					Usage:     "Unlock the SSH agent",
+					UsageText: "agent unlock",
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 0 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						passphrase, err := a.term.ReadPassword("Enter lock passphrase: ")
+						if err != nil {
+							return err
+						}
+						return a.agent.Unlock([]byte(passphrase))
+					},
+				},
+			},
+		},
 	}
 	sort.Slice(commands, func(i, j int) bool {
 		return commands[i].Name < commands[j].Name
@@ -417,29 +561,27 @@ func (a *App) ssh(ctx *cli.Context) error {
 		}
 	}()
 
-	var signers []ssh.Signer
-	if keyName == "" {
-		keyName = "default"
+	signers, err := a.agent.Signers()
+	if err != nil {
+		t.Errorf("%v", err)
 	}
-	if key, exists := a.keys[keyName]; exists {
-		priv, err := ssh.ParseRawPrivateKey(key.Private)
-		if _, ok := err.(*ssh.PassphraseMissingError); ok {
-			passphrase, err2 := t.ReadPassword("Enter passphrase for " + keyName + ": ")
-			if err2 != nil {
-				return fmt.Errorf("ReadPassword: %w", err2)
+	if len(signers) == 0 || keyName != "" {
+		if keyName == "" {
+			keyName = "default"
+		}
+		if key, exists := a.keys[keyName]; exists {
+			priv, err := a.privKey(key)
+			if err != nil {
+				return fmt.Errorf("private key: %w", err)
 			}
-			priv, err = ssh.ParseRawPrivateKeyWithPassphrase(key.Private, []byte(passphrase))
+			signer, err := ssh.NewSignerFromKey(priv)
+			if err != nil {
+				return fmt.Errorf("NewSignerFromKey: %w", err)
+			}
+			signers = append(signers, signer)
+		} else if ctx.String("identity") != "" {
+			t.Errorf("unknown key %q", keyName)
 		}
-		if err != nil {
-			return fmt.Errorf("private key: %w", err)
-		}
-		signer, err := ssh.NewSignerFromKey(priv)
-		if err != nil {
-			return fmt.Errorf("NewSignerFromKey: %w", err)
-		}
-		signers = append(signers, signer)
-	} else if ctx.String("identity") != "" {
-		t.Errorf("unknown key %q", keyName)
 	}
 
 	conn, chans, reqs, err := ssh.NewClientConn(ws, ep.URL, &ssh.ClientConfig{
@@ -512,6 +654,18 @@ func (a *App) ssh(ctx *cli.Context) error {
 		session.Close()
 	}()
 
+	if ctx.Bool("A") {
+		if verbose {
+			t.Printf("Requesting agent forwarding")
+		}
+		if err := agent.ForwardToAgent(client, a.agent); err != nil {
+			return fmt.Errorf("agent.ForwardToAgent: %w", err)
+		}
+		if err := agent.RequestAgentForwarding(session); err != nil {
+			return fmt.Errorf("agent.RequestAgentForwarding: %w", err)
+		}
+	}
+
 	session.Stdin = t
 	session.Stdout = t
 	session.Stderr = t
@@ -542,4 +696,16 @@ func (a *App) ssh(ctx *cli.Context) error {
 		return fmt.Errorf("session.Shell: %w", err)
 	}
 	return session.Wait()
+}
+
+func (a *App) privKey(key key) (any, error) {
+	priv, err := ssh.ParseRawPrivateKey(key.Private)
+	if _, ok := err.(*ssh.PassphraseMissingError); ok {
+		passphrase, err2 := a.term.ReadPassword("Enter passphrase for " + key.Name + ": ")
+		if err2 != nil {
+			return nil, fmt.Errorf("ReadPassword: %w", err2)
+		}
+		priv, err = ssh.ParseRawPrivateKeyWithPassphrase(key.Private, []byte(passphrase))
+	}
+	return priv, err
 }
