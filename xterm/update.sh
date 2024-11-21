@@ -10,3 +10,4 @@ if ! which browserify >& /dev/null; then
 fi
 browserify browser.js > ../docroot/xterm.js
 cp node_modules/@xterm/xterm/css/xterm.css ../docroot/xterm.css
+cp node_modules/@xterm/xterm/LICENSE ../docroot/LICENSE.xterm.txt
