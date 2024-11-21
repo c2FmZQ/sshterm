@@ -1,0 +1,45 @@
+name: Tests
+on: 
+  pull_request:
+    paths:
+      - '.github/workflows/*'
+      - 'go.*'
+      - '**.go'
+      - '**.sh'
+      - '**.js'
+      - '**.html'
+  push:
+    branches:
+      - main
+
+jobs:
+  build-all:
+    name: Build everything
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      # https://github.com/actions/checkout/tree/v4.1.1
+      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+    - name: Get GO version
+      id: goversion
+      run: echo "goversion=$(<.goversion)" > "${GITHUB_OUTPUT}"
+    - name: Set up Go
+      # https://github.com/actions/setup-go/tree/v5.0.0
+      uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491
+      with:
+        go-version: ${{steps.goversion.outputs.goversion}}
+    - name: Install browserify
+      run: npm install -g browserify
+    - name: Build
+      run: ./build.sh
+    - name: Run go vet
+      run: cd go && GOOS=js GOARCH=wasm go vet ./...
+    - name: Run go fmt
+      run: |
+        out="$(cd go && GOOS=js GOARCH=wasm go fmt ./...)"
+        if [[ -n "${out}" ]]; then
+          echo "Need to run `go fmt` on:"
+          echo "${out}"
+          exit 1
+        fi
