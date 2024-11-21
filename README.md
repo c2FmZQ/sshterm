@@ -24,7 +24,7 @@ Not implemented:
 
 ## How to install
 
-Check out the repo and build everything:
+### Check out the repo and build everything yourself:
 
 ```bash
 git clone https://github.com/c2FmZQ/sshterm.git
@@ -38,6 +38,10 @@ If all goes well, all the needed files will be in the `docroot` directory.
 $ ls docroot/
 index.html  ssh.js  ssh.wasm  wasm_exec.js  xterm.css  xterm.js
 ```
+
+### Download a release package
+
+Check out the [release page](https://github.com/c2FmZQ/sshterm/releases). The `sshterm-docroot-${VERSION}.tar.gz` files contain everything ready to go.
 
 ## Configure tlsproxy
 
