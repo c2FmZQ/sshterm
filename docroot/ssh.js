@@ -29,6 +29,12 @@ window.addEventListener('load', () => {
       navigator.clipboard.writeText(v);
     }
   });
+  // Override the right-click to paste instead of bring up the context menu.
+  term.element.addEventListener('contextmenu', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    navigator.clipboard.readText().then(t => term.paste(t));
+  });
   window.addEventListener('resize', () => fitAddon.fit())
   fitAddon.fit();
   sshApp.ready
