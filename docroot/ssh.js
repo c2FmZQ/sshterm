@@ -23,6 +23,18 @@ window.addEventListener('load', () => {
   term.loadAddon(fitAddon);
   term.open(document.getElementById('terminal'));
   term.onTitleChange(t => document.querySelector('head title').textContent = t);
+  term.onSelectionChange(() => {
+    const v = term.getSelection();
+    if (v !== '') {
+      navigator.clipboard.writeText(v);
+    }
+  });
+  // Override the right-click to paste instead of bring up the context menu.
+  term.element.addEventListener('contextmenu', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    navigator.clipboard.readText().then(t => term.paste(t));
+  });
   window.addEventListener('resize', () => fitAddon.fit())
   fitAddon.fit();
   sshApp.ready
