@@ -1,0 +1,78 @@
+name: Release
+on: 
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build-all:
+    name: Build and create release
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      # https://github.com/actions/checkout/tree/v4.1.1
+      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+    - name: Get GO version
+      id: goversion
+      run: echo "goversion=$(<.goversion)" > "${GITHUB_OUTPUT}"
+    - name: Set up Go
+      # https://github.com/actions/setup-go/tree/v5.0.0
+      uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491
+      with:
+        go-version: ${{steps.goversion.outputs.goversion}}
+    - name: Install browserify
+      run: npm install -g browserify@17.0.0
+    - name: Build
+      run: ./build.sh
+    - name: Run go vet
+      run: cd go && GOOS=js GOARCH=wasm go vet ./...
+    - name: Run go fmt
+      run: |
+        out="$(cd go && GOOS=js GOARCH=wasm go fmt ./...)"
+        if [[ -n "${out}" ]]; then
+          echo "Need to run `go fmt` on:"
+          echo "${out}"
+          exit 1
+        fi
+
+    - name: Extract release notes
+      run: |
+        ./scripts/release-notes.sh "${GITHUB_REF_NAME}" > release-notes.md
+        if [[ $(stat -c %s release-notes.md) == 0 ]]; then
+          echo "No release notes for ${GITHUB_REF_NAME}. Please update CHANGELOG.md"
+          exit 1
+        fi
+
+    - name: Create tar file
+      run: |
+        export GNUPGHOME="$(mktemp -d)"
+        chmod 700 "${GNUPGHOME}"
+        cleanup() {
+          rm -rf "${GNUPGHOME}"
+        }
+        trap cleanup EXIT
+        echo "${GPG_PRIVATE_KEY}" | base64 -d | gpg --batch --pinentry-mode loopback --passphrase "${GPG_PASSPHRASE}" --import
+
+        basename="sshterm-docroot-${GITHUB_REF_NAME}"
+        mkdir bin
+        cp -r docroot "bin/${basename}"
+        cd bin
+        rm -f .gitignore
+        tar --owner=nobody --group=nogroup -zcvf "${basename}.tar.gz" "${basename}"
+        rm -rf "${basename}"
+        sha256sum "${basename}.tar.gz" | cut -d " " -f1 > "${basename}.tar.gz.sha256"
+        gpg --batch --pinentry-mode loopback --yes --passphrase "${GPG_PASSPHRASE}" --detach-sig --local-user c2FmZQ-bot --output "${basename}.tar.gz.sig" "${basename}.tar.gz"
+      env:
+        GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+    - name: Create release
+      # https://github.com/softprops/action-gh-release/releases/tag/v2.0.4
+      uses: softprops/action-gh-release@9d7c94cfd0a1f3ed45544c887983e9fa900f0564
+      with:
+        token: ${{ secrets.UPDATE_TOKEN }}
+        draft: false
+        prerelease: ${{ contains(github.ref, '-') }}
+        body_path: release-notes.md
+        fail_on_unmatched_files: true
+        files: bin/*
