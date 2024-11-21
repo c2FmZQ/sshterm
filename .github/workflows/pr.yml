@@ -29,6 +29,8 @@ jobs:
       uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491
       with:
         go-version: ${{steps.goversion.outputs.goversion}}
+    - name: Install browserify
+      run: npm install -g browserify
     - name: Build
       run: ./build.sh
     - name: Run go vet
