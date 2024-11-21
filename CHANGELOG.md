@@ -1,6 +1,6 @@
 # SSH Term Release Notes
 
-## v0.1.0-test
+## v0.1.0
 
 ### :star2: First release
 
