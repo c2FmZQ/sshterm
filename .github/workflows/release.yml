@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-all:
-    name: Build everything
+    name: Build and create release
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
@@ -57,6 +57,7 @@ jobs:
         mkdir bin
         cp -r docroot "bin/${basename}"
         cd bin
+        rm -f .gitignore
         tar --owner=nobody --group=nogroup -zcvf "${basename}.tar.gz" "${basename}"
         rm -rf "${basename}"
         sha256sum "${basename}.tar.gz" | cut -d " " -f1 > "${basename}.tar.gz.sha256"
