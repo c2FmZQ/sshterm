@@ -330,7 +330,7 @@ func (a *App) Run() error {
 		{
 			Name:            "agent",
 			Usage:           "Manage keys in SSH agent",
-			UsageText:       "agent <list|add|remove>",
+			UsageText:       "agent <list|add|remove|lock|unlock>",
 			Description:     "The agent command adds or removes keys from the in-memory\nSSH agent. Keys can be used without entering a passphrase while\nin the agent. Access to the agent can be forwarded to remote\nsessions with ssh -A.\n\nKeys remain in the agent until they are removed or the page\nis reloaded.",
 			HideHelpCommand: true,
 			Commands: []*cli.Command{
@@ -427,6 +427,38 @@ func (a *App) Run() error {
 							return nil
 						}
 						return nil
+					},
+				},
+				{
+					Name:      "lock",
+					Usage:     "Lock the SSH agent",
+					UsageText: "agent lock",
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 0 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						passphrase, err := a.term.ReadPassword("Enter lock passphrase: ")
+						if err != nil {
+							return err
+						}
+						return a.agent.Lock([]byte(passphrase))
+					},
+				},
+				{
+					Name:      "unlock",
+					Usage:     "Unlock the SSH agent",
+					UsageText: "agent unlock",
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 0 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						passphrase, err := a.term.ReadPassword("Enter lock passphrase: ")
+						if err != nil {
+							return err
+						}
+						return a.agent.Unlock([]byte(passphrase))
 					},
 				},
 			},
@@ -531,7 +563,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 
 	signers, err := a.agent.Signers()
 	if err != nil {
-		return fmt.Errorf("agent.Signers: %w", err)
+		t.Errorf("%v", err)
 	}
 	if len(signers) == 0 || keyName != "" {
 		if keyName == "" {

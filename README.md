@@ -13,13 +13,13 @@ Supported features:
 * [x] Connect to any WebSocket endpoints configured in tlsproxy.
 * [x] Generate and use SSH keys.
 * [x] Keyboard interactive authentication.
+* [x] In-memory SSH agent and agent forwarding.
 
 Not implemented:
 
 * [ ] File transfers.
 * [ ] Port forwarding.
 * [ ] Certificates.
-* [ ] Agent.
 * [ ] Security keys.
 
 ## How to install
