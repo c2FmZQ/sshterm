@@ -30,7 +30,7 @@ jobs:
       with:
         go-version: ${{steps.goversion.outputs.goversion}}
     - name: Install browserify
-      run: npm install -g browserify
+      run: npm install -g browserify@17.0.0
     - name: Build
       run: ./build.sh
     - name: Run go vet
