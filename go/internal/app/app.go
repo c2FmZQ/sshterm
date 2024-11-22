@@ -29,10 +29,8 @@ import (
 	"bytes"
 	"context"
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/rsa"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -357,17 +355,13 @@ func (a *App) Run() error {
 						if err != nil {
 							return fmt.Errorf("%q: %w", f.Name, err)
 						}
+						type privateKey interface {
+							Public() crypto.PublicKey
+						}
 						var pub crypto.PublicKey
-						switch key := priv.(type) {
-						case *rsa.PrivateKey:
-							pub = key.Public()
-						case *ecdsa.PrivateKey:
-							pub = key.Public()
-						case ed25519.PrivateKey:
-							pub = key.Public()
-						case *ed25519.PrivateKey:
-							pub = key.Public()
-						default:
+						if k, ok := priv.(privateKey); ok {
+							pub = k.Public()
+						} else {
 							return fmt.Errorf("key type %T is not supported", priv)
 						}
 						sshPub, err := ssh.NewPublicKey(pub)
