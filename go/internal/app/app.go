@@ -28,8 +28,11 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -45,6 +48,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/c2FmZQ/sshterm/internal/indexeddb"
+	"github.com/c2FmZQ/sshterm/internal/jsutil"
 	"github.com/c2FmZQ/sshterm/internal/terminal"
 	"github.com/c2FmZQ/sshterm/internal/websocket"
 )
@@ -232,7 +236,7 @@ func (a *App) Run() error {
 		{
 			Name:            "keys",
 			Usage:           "Manage keys",
-			UsageText:       "keys <list|generate|delete>",
+			UsageText:       "keys <list|generate|delete|import|export>",
 			Description:     "The keys command is used to manage private and public keys.",
 			HideHelpCommand: true,
 			DefaultCommand:  "list",
@@ -307,7 +311,7 @@ func (a *App) Run() error {
 						if err := a.saveKeys(); err != nil {
 							return err
 						}
-						t.Printf("New key %q saved\n", name)
+						t.Printf("New key %q added\n", name)
 						return nil
 					},
 				},
@@ -323,6 +327,85 @@ func (a *App) Run() error {
 						name := ctx.Args().Get(0)
 						delete(a.keys, name)
 						return a.saveKeys()
+					},
+				},
+				{
+					Name:      "import",
+					Usage:     "Import private key",
+					UsageText: "keys import <name>",
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 1 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						name := ctx.Args().Get(0)
+
+						files := jsutil.ImportFiles("", false)
+						if len(files) == 0 {
+							return nil
+						}
+						f := files[0]
+						if f.Size > 20480 {
+							return fmt.Errorf("file %q is too large: %d", f.Name, f.Size)
+						}
+						content, err := f.ReadAll()
+						if err != nil {
+							return fmt.Errorf("%q: %w", f.Name, err)
+						}
+						key := key{Name: name, Private: content}
+						priv, err := a.privKey(key)
+						if err != nil {
+							return fmt.Errorf("%q: %w", f.Name, err)
+						}
+						var pub crypto.PublicKey
+						switch key := priv.(type) {
+						case *rsa.PrivateKey:
+							pub = key.Public()
+						case *ecdsa.PrivateKey:
+							pub = key.Public()
+						case ed25519.PrivateKey:
+							pub = key.Public()
+						case *ed25519.PrivateKey:
+							pub = key.Public()
+						default:
+							return fmt.Errorf("key type %T is not supported", priv)
+						}
+						sshPub, err := ssh.NewPublicKey(pub)
+						if err != nil {
+							return fmt.Errorf("ssh.NewPublicKey: %w", err)
+						}
+						key.Public = sshPub.Marshal()
+						a.keys[name] = key
+						if err := a.saveKeys(); err != nil {
+							return err
+						}
+						t.Printf("New key %q imported from %q\n", name, f.Name)
+						return nil
+					},
+				},
+				{
+					Name:      "export",
+					Usage:     "Export a private key",
+					UsageText: "keys export <name>",
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 1 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						name := ctx.Args().Get(0)
+						key, exists := a.keys[name]
+						if !exists {
+							return fmt.Errorf("unknown key %q", name)
+						}
+						line, err := t.Prompt(fmt.Sprintf("You are about to export the PRIVATE key %q\nContinue? [y/N] ", name))
+						if err != nil {
+							return err
+						}
+						if v := strings.ToUpper(line); v != "Y" && v != "YES" {
+							return errors.New("aborted")
+						}
+						jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
+						return nil
 					},
 				},
 			},
@@ -341,8 +424,7 @@ func (a *App) Run() error {
 					Action: func(ctx *cli.Context) error {
 						keys, err := a.agent.List()
 						if err != nil {
-							t.Errorf("agent.List: %v", err)
-							return nil
+							return fmt.Errorf("agent.List: %w", err)
 						}
 						if len(keys) == 0 {
 							t.Printf("<none>\n")
@@ -371,20 +453,17 @@ func (a *App) Run() error {
 						name := ctx.Args().Get(0)
 						key, exists := a.keys[name]
 						if !exists {
-							t.Errorf("key %q not found", name)
-							return nil
+							return fmt.Errorf("key %q not found", name)
 						}
 						priv, err := a.privKey(key)
 						if err != nil {
-							t.Errorf("private key: %v", err)
-							return nil
+							return fmt.Errorf("private key: %w", err)
 						}
 						if err := a.agent.Add(agent.AddedKey{
 							PrivateKey: priv,
 							Comment:    name,
 						}); err != nil {
-							t.Errorf("agent.Add: %v", err)
-							return nil
+							return fmt.Errorf("agent.Add: %w", err)
 						}
 						return nil
 					},
@@ -407,24 +486,21 @@ func (a *App) Run() error {
 						}
 						if ctx.Bool("all") {
 							if err := a.agent.RemoveAll(); err != nil {
-								t.Errorf("agent.RemoveAll: %v", err)
+								return fmt.Errorf("agent.RemoveAll: %w", err)
 							}
 							return nil
 						}
 						name := ctx.Args().Get(0)
 						key, exists := a.keys[name]
 						if !exists {
-							t.Errorf("key %q not found", name)
-							return nil
+							return fmt.Errorf("key %q not found", name)
 						}
 						pub, err := ssh.ParsePublicKey(key.Public)
 						if err != nil {
-							t.Errorf("ssh.ParsePublicKey: %v", err)
-							return nil
+							return fmt.Errorf("ssh.ParsePublicKey: %w", err)
 						}
 						if err := a.agent.Remove(pub); err != nil {
-							t.Errorf("agent.Remove: %v", err)
-							return nil
+							return fmt.Errorf("agent.Remove: %w", err)
 						}
 						return nil
 					},
@@ -539,8 +615,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 	}
 	ep, exists := a.endpoints[epName]
 	if !exists {
-		t.Errorf("Unknown endpoint %q", epName)
-		return nil
+		return fmt.Errorf("unknown endpoint %q", epName)
 	}
 
 	cctx, cancel := context.WithCancel(a.ctx)
@@ -551,8 +626,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 
 	ws, err := websocket.New(cctx, ep.URL, t)
 	if err != nil {
-		t.Errorf("%v", err)
-		return nil
+		return err
 	}
 
 	defer func() {
@@ -619,7 +693,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 					return nil
 				} else {
 					t.Errorf("Host key changed. New fingerprint: %s", ssh.FingerprintSHA256(key))
-					return errors.New("Host key changed")
+					return errors.New("host key changed")
 				}
 			}
 			line, err := t.Prompt(fmt.Sprintf("Host key for %s\n%s %s\n\nContinue? [Y/n] ", hostname, key.Type(), ssh.FingerprintSHA256(key)))

@@ -27,14 +27,20 @@ package jsutil
 
 import (
 	"fmt"
+	"io"
 	"syscall/js"
 )
 
 var (
 	Uint8Array = js.Global().Get("Uint8Array")
-	Response   = js.Global().Get("Response")
 	Error      = js.Global().Get("Error")
+	Array      = js.Global().Get("Array")
+	Object     = js.Global().Get("Object")
 	Promise    = js.Global().Get("Promise")
+	Blob       = js.Global().Get("Blob")
+	URL        = js.Global().Get("URL")
+	Document   = js.Global().Get("document")
+	Body       = Document.Get("body")
 )
 
 func NewResolvedPromise(v any) js.Value {
@@ -87,4 +93,115 @@ func Uint8ArrayFromBytes(in []byte) js.Value {
 	out := Uint8Array.New(js.ValueOf(len(in)))
 	js.CopyBytesToJS(out, in)
 	return out
+}
+
+func Uint8ArrayToBytes(v js.Value) []byte {
+	buf := make([]byte, v.Length())
+	js.CopyBytesToGo(buf, v)
+	return buf
+}
+
+func NewStreamReader(stream js.Value) *StreamReader {
+	return &StreamReader{
+		reader: stream.Call("getReader"),
+	}
+}
+
+var _ io.ReadCloser = (*StreamReader)(nil)
+
+type StreamReader struct {
+	reader js.Value // ReadableStreamDefaultReader
+	buf    []byte
+}
+
+func (r *StreamReader) Read(b []byte) (int, error) {
+	if len(r.buf) == 0 {
+		chunk, err := Await(r.reader.Call("read"))
+		if err != nil {
+			return 0, err
+		}
+		if chunk.Get("done").Bool() {
+			return 0, io.EOF
+		}
+		r.buf = Uint8ArrayToBytes(chunk.Get("value"))
+	}
+	n := copy(b, r.buf)
+	r.buf = r.buf[n:]
+	return n, nil
+}
+
+func (r *StreamReader) Close() error {
+	Await(r.reader.Call("cancel"))
+	return nil
+}
+
+type ImportedFile struct {
+	Name    string
+	Type    string
+	Size    int64
+	Content io.ReadCloser
+}
+
+func (f *ImportedFile) ReadAll() ([]byte, error) {
+	b, err := io.ReadAll(f.Content)
+	if err != nil {
+		f.Content.Close()
+	}
+	return b, err
+}
+
+func ImportFiles(accept string, multiple bool) []ImportedFile {
+	input := Document.Call("createElement", "input")
+	input.Set("type", "file")
+	input.Set("name", "files")
+	if multiple {
+		input.Set("multiple", "true")
+	}
+	if accept != "" {
+		input.Set("accept", accept)
+	}
+
+	ch := make(chan ImportedFile)
+	input.Call("addEventListener", "cancel", js.FuncOf(func(this js.Value, args []js.Value) any {
+		close(ch)
+		return nil
+	}))
+	input.Call("addEventListener", "change", js.FuncOf(func(this js.Value, args []js.Value) any {
+		event := args[0]
+		files := event.Get("target").Get("files")
+		length := files.Length()
+		for i := 0; i < length; i++ {
+			f := files.Index(i)
+			ch <- ImportedFile{
+				Name:    f.Get("name").String(),
+				Type:    f.Get("type").String(),
+				Size:    int64(f.Get("size").Float()),
+				Content: NewStreamReader(f.Call("stream")),
+			}
+		}
+		close(ch)
+		return nil
+	}))
+	Body.Call("appendChild", input)
+	input.Call("click")
+	Body.Call("removeChild", input)
+
+	var out []ImportedFile
+	for f := range ch {
+		out = append(out, f)
+	}
+	return out
+}
+
+func ExportFile(data []byte, filename, mimeType string) {
+	blobOpts := Object.New()
+	blobOpts.Set("type", js.ValueOf("mimeType"))
+	blob := Blob.New(Array.New(Uint8ArrayFromBytes(data)), blobOpts)
+
+	anchor := Document.Call("createElement", "a")
+	anchor.Set("href", URL.Call("createObjectURL", blob))
+	anchor.Call("setAttribute", "download", js.ValueOf(filename))
+	Body.Call("appendChild", anchor)
+	anchor.Call("click")
+	Body.Call("removeChild", anchor)
 }
