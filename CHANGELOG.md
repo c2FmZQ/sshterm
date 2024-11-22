@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :star2: New features
+
+* Import and export SSH keys (rsa, dsa, ecdsa, ed25519).
+
 ## v0.1.0
 
 ### :star2: First release
