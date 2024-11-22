@@ -202,6 +202,26 @@ func (t *Terminal) Prompt(prompt string) (line string, err error) {
 	return
 }
 
+func (t *Terminal) Confirm(prompt string, defaultYes bool) bool {
+	if defaultYes {
+		prompt += " [Y/n] "
+	} else {
+		prompt += " [y/N] "
+	}
+	line, err := t.Prompt(prompt)
+	if err != nil {
+		return false
+	}
+	switch strings.ToUpper(line) {
+	case "Y", "YES":
+		return true
+	case "N", "NO":
+		return false
+	default:
+		return defaultYes
+	}
+}
+
 func (t *Terminal) ReadLine() (line string, err error) {
 	line, err = t.vt.ReadLine()
 	line = strings.TrimRight(line, "\r\n")

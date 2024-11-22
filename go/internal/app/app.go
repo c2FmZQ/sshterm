@@ -429,11 +429,7 @@ func (a *App) Run() error {
 						if !exists {
 							return fmt.Errorf("unknown key %q", name)
 						}
-						line, err := t.Prompt(fmt.Sprintf("You are about to export the PRIVATE key %q\nContinue? [y/N] ", name))
-						if err != nil {
-							return err
-						}
-						if v := strings.ToUpper(line); v != "Y" && v != "YES" {
+						if !t.Confirm(fmt.Sprintf("You are about to export the PRIVATE key %q\nContinue?", name), false) {
 							return errors.New("aborted")
 						}
 						jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
@@ -621,11 +617,7 @@ func (a *App) Run() error {
 							cli.ShowSubcommandHelp(ctx)
 							return nil
 						}
-						line, err := t.Prompt("You are about to WIPE the database.\nContinue? [y/N] ")
-						if err != nil {
-							return err
-						}
-						if v := strings.ToUpper(line); v != "Y" && v != "YES" {
+						if !t.Confirm("You are about to WIPE the database.\nContinue? ", false) {
 							return errors.New("aborted")
 						}
 						a.agent = agent.NewKeyring()
@@ -700,11 +692,7 @@ func (a *App) Run() error {
 							return nil
 						}
 						if len(a.data.Endpoints) > 0 || len(a.data.Keys) > 0 {
-							line, err := t.Prompt("Restoring a backup will OVERWRITE the database. Data might be lost.\nContinue? [y/N] ")
-							if err != nil {
-								return err
-							}
-							if v := strings.ToUpper(line); v != "Y" && v != "YES" {
+							if !t.Confirm("Restoring a backup will OVERWRITE the database. Data may be lost.\nContinue? ", false) {
 								return errors.New("aborted")
 							}
 						}
@@ -925,11 +913,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 					return errors.New("host key changed")
 				}
 			}
-			line, err := t.Prompt(fmt.Sprintf("Host key for %s\n%s %s\n\nContinue? [Y/n] ", hostname, key.Type(), ssh.FingerprintSHA256(key)))
-			if err != nil {
-				return fmt.Errorf("ReadLine: %w", err)
-			}
-			if line == "" || line == "Y" || line == "y" {
+			if t.Confirm(fmt.Sprintf("Host key for %s\n%s %s\n\nContinue? ", hostname, key.Type(), ssh.FingerprintSHA256(key)), true) {
 				ep.HostKey = key.Marshal()
 				a.data.Endpoints[ep.Name] = ep
 				return a.saveEndpoints()
