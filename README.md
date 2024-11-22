@@ -11,7 +11,8 @@ The connection between the client and the server uses [WebSocket](https://develo
 Supported features:
 
 * [x] Connect to any WebSocket endpoints configured in tlsproxy.
-* [x] Generate and use SSH keys.
+* [x] Generate SSH keys (ed25519).
+* [x] Import and export SSH keys (rsa, dsa, ecdsa, ed25519).
 * [x] Keyboard interactive authentication.
 * [x] In-memory SSH agent and agent forwarding.
 
