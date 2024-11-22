@@ -14,6 +14,7 @@ Supported features:
 * [x] Generate SSH keys (ed25519).
 * [x] Import and export SSH keys (rsa, dsa, ecdsa, ed25519).
 * [x] Backup & restore.
+* [x] Persist data to local storage (optional, on by default).
 * [x] Keyboard interactive authentication.
 * [x] In-memory SSH agent and agent forwarding.
 
