@@ -72,6 +72,7 @@ func New(cfg *Config) (*App, error) {
 			Endpoints: make(map[string]endpoint),
 			Keys:      make(map[string]key),
 		},
+		streamHelper: jsutil.NewStreamHelper(),
 	}
 	return app, nil
 }
@@ -89,6 +90,8 @@ type App struct {
 	agent agent.Agent
 	db    *indexeddb.DB
 	data  appData
+
+	streamHelper *jsutil.StreamHelper
 }
 
 type endpoint struct {
@@ -432,7 +435,11 @@ func (a *App) Run() error {
 						if !t.Confirm(fmt.Sprintf("You are about to export the PRIVATE key %q\nContinue?", name), false) {
 							return errors.New("aborted")
 						}
-						jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
+						if a.streamHelper != nil {
+							a.streamHelper.StartStreamDownload(io.NopCloser(bytes.NewReader(key.Private)), name+".key", "application/octet-stream")
+						} else {
+							jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
+						}
 						return nil
 					},
 				},

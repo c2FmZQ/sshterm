@@ -101,40 +101,6 @@ func Uint8ArrayToBytes(v js.Value) []byte {
 	return buf
 }
 
-func NewStreamReader(stream js.Value) *StreamReader {
-	return &StreamReader{
-		reader: stream.Call("getReader"),
-	}
-}
-
-var _ io.ReadCloser = (*StreamReader)(nil)
-
-type StreamReader struct {
-	reader js.Value // ReadableStreamDefaultReader
-	buf    []byte
-}
-
-func (r *StreamReader) Read(b []byte) (int, error) {
-	if len(r.buf) == 0 {
-		chunk, err := Await(r.reader.Call("read"))
-		if err != nil {
-			return 0, err
-		}
-		if chunk.Get("done").Bool() {
-			return 0, io.EOF
-		}
-		r.buf = Uint8ArrayToBytes(chunk.Get("value"))
-	}
-	n := copy(b, r.buf)
-	r.buf = r.buf[n:]
-	return n, nil
-}
-
-func (r *StreamReader) Close() error {
-	Await(r.reader.Call("cancel"))
-	return nil
-}
-
 type ImportedFile struct {
 	Name    string
 	Type    string
