@@ -670,7 +670,7 @@ func (a *App) Run() error {
 						if iter < 0 || iter > 1000000 {
 							return fmt.Errorf("invalid iter value")
 						}
-						copy(salt, backupMagic)
+						copy(salt[:4], backupMagic)
 						binary.BigEndian.PutUint32(salt[12:16], uint32(iter))
 						dk := pbkdf2.Key([]byte(passphrase), salt[4:12], iter, 32, sha256.New)
 						var nonce [24]byte
@@ -711,7 +711,7 @@ func (a *App) Run() error {
 						if !bytes.Equal(enc[:4], backupMagic) {
 							return fmt.Errorf("invalid backup file")
 						}
-						passphrase, err := a.term.ReadPassword("Enter a passphrase for the backup: ")
+						passphrase, err := a.term.ReadPassword("Enter the passphrase for the backup: ")
 						if err != nil {
 							return fmt.Errorf("ReadPassword: %w", err)
 						}
