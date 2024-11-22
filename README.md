@@ -13,6 +13,7 @@ Supported features:
 * [x] Connect to any WebSocket endpoints configured in tlsproxy.
 * [x] Generate SSH keys (ed25519).
 * [x] Import and export SSH keys (rsa, dsa, ecdsa, ed25519).
+* [x] Backup & restore.
 * [x] Keyboard interactive authentication.
 * [x] In-memory SSH agent and agent forwarding.
 

@@ -5,6 +5,7 @@
 ### :star2: New features
 
 * Import and export SSH keys (rsa, dsa, ecdsa, ed25519).
+* Backup and restore the database. Optionally turn off local storage and keep data in memory only.
 
 ## v0.1.0
 
