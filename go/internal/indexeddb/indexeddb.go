@@ -29,7 +29,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"syscall/js"
 )
 
@@ -40,7 +39,21 @@ const (
 
 var ErrNotFound = errors.New("not found")
 
-func New(name string, log io.Writer) (*DB, error) {
+func Delete(name string) error {
+	req := js.Global().Get("indexedDB").Call("deleteDatabase", js.ValueOf(name))
+	ch := make(chan error, 1)
+	req.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) any {
+		ch <- errors.New("error deleting database")
+		return nil
+	}))
+	req.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) any {
+		ch <- nil
+		return nil
+	}))
+	return <-ch
+}
+
+func New(name string) (*DB, error) {
 	req := js.Global().Get("indexedDB").Call("open", js.ValueOf(name), js.ValueOf(dbVersion))
 
 	type result struct {
@@ -78,14 +91,12 @@ func New(name string, log io.Writer) (*DB, error) {
 		return nil, r.err
 	}
 	return &DB{
-		db:  r.v,
-		log: log,
+		db: r.v,
 	}, nil
 }
 
 type DB struct {
-	db  js.Value
-	log io.Writer
+	db js.Value
 }
 
 func (db *DB) Close() {

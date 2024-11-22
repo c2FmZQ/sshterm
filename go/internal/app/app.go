@@ -31,6 +31,9 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -39,9 +42,12 @@ import (
 	"sort"
 	"strings"
 	"syscall/js"
+	"time"
 
 	"github.com/mattn/go-shellwords"
 	"github.com/urfave/cli/v2"
+	"golang.org/x/crypto/nacl/secretbox"
+	"golang.org/x/crypto/pbkdf2"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
@@ -51,18 +57,29 @@ import (
 	"github.com/c2FmZQ/sshterm/internal/websocket"
 )
 
+var backupMagic = []byte{0xe2, 0x9b, 0x94, '0'}
+
 type Config struct {
 	Term js.Value
 }
 
 func New(cfg *Config) (*App, error) {
 	app := &App{
-		cfg:       *cfg,
-		agent:     agent.NewKeyring(),
-		endpoints: make(map[string]endpoint),
-		keys:      make(map[string]key),
+		cfg:   *cfg,
+		agent: agent.NewKeyring(),
+		data: appData{
+			Persist:   true,
+			Endpoints: make(map[string]endpoint),
+			Keys:      make(map[string]key),
+		},
 	}
 	return app, nil
+}
+
+type appData struct {
+	Persist   bool                `json:"persist"`
+	Endpoints map[string]endpoint `json:"endpoints"`
+	Keys      map[string]key      `json:"keys"`
 }
 
 type App struct {
@@ -71,9 +88,7 @@ type App struct {
 	term  *terminal.Terminal
 	agent agent.Agent
 	db    *indexeddb.DB
-
-	endpoints map[string]endpoint
-	keys      map[string]key
+	data  appData
 }
 
 type endpoint struct {
@@ -88,6 +103,35 @@ type key struct {
 	Private []byte `json:"private"`
 }
 
+const dbName = "sshterm"
+
+func (a *App) initDB() error {
+	if !a.data.Persist {
+		if a.db != nil {
+			a.db.Close()
+			a.db = nil
+		}
+		return indexeddb.Delete(dbName)
+	}
+	db, err := indexeddb.New(dbName)
+	if err != nil {
+		return fmt.Errorf("indexeddb.New: %w", err)
+	}
+	a.db = db
+	if len(a.data.Endpoints) > 0 || len(a.data.Keys) > 0 {
+		if err := a.saveAll(); err != nil {
+			a.term.Errorf("%v", err)
+		}
+	}
+	if err := db.Get("endpoints", &a.data.Endpoints); err != nil && err != indexeddb.ErrNotFound {
+		return fmt.Errorf("endpoints load: %w", err)
+	}
+	if err := db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
+		return fmt.Errorf("keys load: %w", err)
+	}
+	return nil
+}
+
 func (a *App) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() {
@@ -96,20 +140,14 @@ func (a *App) Run() error {
 	a.term = terminal.New(ctx, a.cfg.Term)
 	t := a.term
 	a.ctx = ctx
-	db, err := indexeddb.New("sshterm", t)
-	if err != nil {
-		t.Printf("Error opening database: %v\n", err)
-		return fmt.Errorf("indexeddb.New: %w", err)
+	if err := a.initDB(); err != nil {
+		t.Errorf("%v", err)
 	}
-	defer db.Close()
-	a.db = db
-
-	if err := db.Get("endpoints", &a.endpoints); err != nil && err != indexeddb.ErrNotFound {
-		return fmt.Errorf("endpoints load: %w", err)
-	}
-	if err := db.Get("keys", &a.keys); err != nil && err != indexeddb.ErrNotFound {
-		return fmt.Errorf("keys load: %w", err)
-	}
+	defer func() {
+		if a.db != nil {
+			a.db.Close()
+		}
+	}()
 
 	p := shellwords.NewParser()
 
@@ -175,13 +213,13 @@ func (a *App) Run() error {
 					Usage:     "List all server endpoints",
 					UsageText: "ep list",
 					Action: func(ctx *cli.Context) error {
-						if len(a.endpoints) == 0 {
+						if len(a.data.Endpoints) == 0 {
 							t.Printf("<none>\n")
 							return nil
 						}
-						names := make([]string, 0, len(a.endpoints))
+						names := make([]string, 0, len(a.data.Endpoints))
 						szName, szURL := 5, 15
-						for _, ep := range a.endpoints {
+						for _, ep := range a.data.Endpoints {
 							names = append(names, ep.Name)
 							szName = max(szName, len(ep.Name))
 							szURL = max(szURL, len(ep.URL))
@@ -189,7 +227,7 @@ func (a *App) Run() error {
 						sort.Strings(names)
 						t.Printf("%*s %*s %s\n", -szName, "Name", -szURL, "URL", "Fingerprint")
 						for _, n := range names {
-							ep := a.endpoints[n]
+							ep := a.data.Endpoints[n]
 							fp := "n/a"
 							if key, err := ssh.ParsePublicKey(ep.HostKey); err == nil {
 								fp = ssh.FingerprintSHA256(key)
@@ -211,7 +249,7 @@ func (a *App) Run() error {
 						}
 						name := ctx.Args().Get(0)
 						url := ctx.Args().Get(1)
-						a.endpoints[name] = endpoint{Name: name, URL: url}
+						a.data.Endpoints[name] = endpoint{Name: name, URL: url}
 						return a.saveEndpoints()
 					},
 				},
@@ -225,7 +263,7 @@ func (a *App) Run() error {
 							return nil
 						}
 						name := ctx.Args().Get(0)
-						delete(a.endpoints, name)
+						delete(a.data.Endpoints, name)
 						return a.saveEndpoints()
 					},
 				},
@@ -244,17 +282,17 @@ func (a *App) Run() error {
 					Usage:     "List all keys",
 					UsageText: "keys list",
 					Action: func(ctx *cli.Context) error {
-						if len(a.keys) == 0 {
+						if len(a.data.Keys) == 0 {
 							t.Printf("<none>\n")
 							return nil
 						}
-						names := make([]string, 0, len(a.keys))
-						for _, key := range a.keys {
+						names := make([]string, 0, len(a.data.Keys))
+						for _, key := range a.data.Keys {
 							names = append(names, key.Name)
 						}
 						sort.Strings(names)
 						for _, n := range names {
-							key := a.keys[n]
+							key := a.data.Keys[n]
 							pub, err := ssh.ParsePublicKey(key.Public)
 							if err != nil {
 								t.Errorf("ssh.ParsePublicKey: %v", err)
@@ -305,7 +343,7 @@ func (a *App) Run() error {
 						} else if privPEM, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase)); err != nil {
 							return fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
 						}
-						a.keys[name] = key{Name: name, Public: sshPub.Marshal(), Private: pem.EncodeToMemory(privPEM)}
+						a.data.Keys[name] = key{Name: name, Public: sshPub.Marshal(), Private: pem.EncodeToMemory(privPEM)}
 						if err := a.saveKeys(); err != nil {
 							return err
 						}
@@ -323,7 +361,7 @@ func (a *App) Run() error {
 							return nil
 						}
 						name := ctx.Args().Get(0)
-						delete(a.keys, name)
+						delete(a.data.Keys, name)
 						return a.saveKeys()
 					},
 				},
@@ -369,7 +407,7 @@ func (a *App) Run() error {
 							return fmt.Errorf("ssh.NewPublicKey: %w", err)
 						}
 						key.Public = sshPub.Marshal()
-						a.keys[name] = key
+						a.data.Keys[name] = key
 						if err := a.saveKeys(); err != nil {
 							return err
 						}
@@ -387,15 +425,11 @@ func (a *App) Run() error {
 							return nil
 						}
 						name := ctx.Args().Get(0)
-						key, exists := a.keys[name]
+						key, exists := a.data.Keys[name]
 						if !exists {
 							return fmt.Errorf("unknown key %q", name)
 						}
-						line, err := t.Prompt(fmt.Sprintf("You are about to export the PRIVATE key %q\nContinue? [y/N] ", name))
-						if err != nil {
-							return err
-						}
-						if v := strings.ToUpper(line); v != "Y" && v != "YES" {
+						if !t.Confirm(fmt.Sprintf("You are about to export the PRIVATE key %q\nContinue?", name), false) {
 							return errors.New("aborted")
 						}
 						jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
@@ -445,7 +479,7 @@ func (a *App) Run() error {
 							return nil
 						}
 						name := ctx.Args().Get(0)
-						key, exists := a.keys[name]
+						key, exists := a.data.Keys[name]
 						if !exists {
 							return fmt.Errorf("key %q not found", name)
 						}
@@ -485,7 +519,7 @@ func (a *App) Run() error {
 							return nil
 						}
 						name := ctx.Args().Get(0)
-						key, exists := a.keys[name]
+						key, exists := a.data.Keys[name]
 						if !exists {
 							return fmt.Errorf("key %q not found", name)
 						}
@@ -529,6 +563,179 @@ func (a *App) Run() error {
 							return err
 						}
 						return a.agent.Unlock([]byte(passphrase))
+					},
+				},
+			},
+		},
+		{
+			Name:            "db",
+			Usage:           "Manage database",
+			UsageText:       "db <persist|wipe|backup|restore>",
+			Description:     "The db command is used to manage the database.",
+			HideHelpCommand: true,
+			Commands: []*cli.Command{
+				{
+					Name:      "persist",
+					Usage:     "Show or change the database persistence to local storage.",
+					UsageText: "db persist [on|off]",
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() > 1 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						if ctx.Args().Len() == 1 {
+							switch v := ctx.Args().Get(0); v {
+							case "on":
+								a.data.Persist = true
+								if err := a.initDB(); err != nil {
+									t.Errorf("%v", err)
+								}
+							case "off":
+								a.data.Persist = false
+								if err := a.initDB(); err != nil {
+									t.Errorf("%v", err)
+								}
+							default:
+								cli.ShowSubcommandHelp(ctx)
+								return nil
+							}
+						}
+						if a.data.Persist {
+							t.Printf("The database is persisted to local storage.\n")
+						} else {
+							t.Printf("The database is NOT persisted to local storage.\n")
+						}
+						return nil
+					},
+				},
+				{
+					Name:      "wipe",
+					Usage:     "Delete everything from the database.",
+					UsageText: "db wipe",
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 0 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						if !t.Confirm("You are about to WIPE the database.\nContinue? ", false) {
+							return errors.New("aborted")
+						}
+						a.agent = agent.NewKeyring()
+						a.data.Endpoints = make(map[string]endpoint)
+						a.data.Keys = make(map[string]key)
+						if err := a.saveAll(); err != nil {
+							t.Errorf("%v", err)
+						}
+						return nil
+					},
+				},
+				{
+					Name:      "backup",
+					Usage:     "Backup the database.",
+					UsageText: "db backup",
+					Flags: []cli.Flag{
+						&cli.IntFlag{
+							Name:  "iter",
+							Value: 50000,
+							Usage: "The number of pbkdf2 iterations.",
+						},
+					},
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 0 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						passphrase, err := a.term.ReadPassword("Enter a passphrase for the backup: ")
+						if err != nil {
+							return fmt.Errorf("ReadPassword: %w", err)
+						}
+						passphrase2, err := a.term.ReadPassword("Enter the same passphrase: ")
+						if err != nil {
+							return fmt.Errorf("ReadPassword: %w", err)
+						}
+						if passphrase != passphrase2 {
+							return fmt.Errorf("passphrase doesn't match")
+						}
+
+						payload, err := json.Marshal(a.data)
+						if err != nil {
+							return fmt.Errorf("json.Marshal: %w", err)
+						}
+
+						salt := make([]byte, 40)
+						if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+							return fmt.Errorf("rand.ReadFull: %v", err)
+						}
+						iter := ctx.Int("iter")
+						if iter < 0 || iter > 1000000 {
+							return fmt.Errorf("invalid iter value")
+						}
+						copy(salt[:4], backupMagic)
+						binary.BigEndian.PutUint32(salt[12:16], uint32(iter))
+						dk := pbkdf2.Key([]byte(passphrase), salt[4:12], iter, 32, sha256.New)
+						var nonce [24]byte
+						var key [32]byte
+						copy(nonce[:], salt[16:40])
+						copy(key[:], dk)
+						enc := secretbox.Seal(salt, payload, &nonce, &key)
+						jsutil.ExportFile(enc, fmt.Sprintf("sshterm-%s.backup", time.Now().UTC().Format(time.DateOnly)), "application/octet-stream")
+						return nil
+					},
+				},
+				{
+					Name:      "restore",
+					Usage:     "Restore the database from backup.",
+					UsageText: "db restore",
+					Action: func(ctx *cli.Context) error {
+						if ctx.Args().Len() != 0 {
+							cli.ShowSubcommandHelp(ctx)
+							return nil
+						}
+						if len(a.data.Endpoints) > 0 || len(a.data.Keys) > 0 {
+							if !t.Confirm("Restoring a backup will OVERWRITE the database. Data may be lost.\nContinue? ", false) {
+								return errors.New("aborted")
+							}
+						}
+						files := jsutil.ImportFiles(".backup", false)
+						if len(files) == 0 {
+							return nil
+						}
+						f := files[0]
+						if f.Size > 102400 {
+							return fmt.Errorf("file %q is too large: %d", f.Name, f.Size)
+						}
+						enc, err := f.ReadAll()
+						if err != nil {
+							return fmt.Errorf("%q: %w", f.Name, err)
+						}
+						if !bytes.Equal(enc[:4], backupMagic) {
+							return fmt.Errorf("invalid backup file")
+						}
+						passphrase, err := a.term.ReadPassword("Enter the passphrase for the backup: ")
+						if err != nil {
+							return fmt.Errorf("ReadPassword: %w", err)
+						}
+						iter := binary.BigEndian.Uint32(enc[12:16])
+						if iter > 1000000 {
+							return fmt.Errorf("invalid iter value")
+						}
+						dk := pbkdf2.Key([]byte(passphrase), enc[4:12], int(iter), 32, sha256.New)
+
+						var nonce [24]byte
+						var key [32]byte
+						copy(nonce[:], enc[16:40])
+						copy(key[:], dk)
+						payload, ok := secretbox.Open(nil, enc[40:], &nonce, &key)
+						if !ok {
+							return fmt.Errorf("unable to decrypt file")
+						}
+						a.agent = agent.NewKeyring()
+						a.data.Endpoints = nil
+						a.data.Keys = nil
+						if err := json.Unmarshal(payload, &a.data); err != nil {
+							return fmt.Errorf("json.Unmarshal: %w", err)
+						}
+						return a.saveAll()
 					},
 				},
 			},
@@ -584,12 +791,28 @@ func (a *App) Run() error {
 	}
 }
 
+func (a *App) saveAll() error {
+	if err := a.saveEndpoints(); err != nil {
+		return err
+	}
+	if err := a.saveKeys(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (a *App) saveEndpoints() error {
-	return a.db.Set("endpoints", a.endpoints)
+	if a.db == nil {
+		return nil
+	}
+	return a.db.Set("endpoints", a.data.Endpoints)
 }
 
 func (a *App) saveKeys() error {
-	return a.db.Set("keys", a.keys)
+	if a.db == nil {
+		return nil
+	}
+	return a.db.Set("keys", a.data.Keys)
 }
 
 func (a *App) ssh(ctx *cli.Context) error {
@@ -607,7 +830,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 		cli.ShowSubcommandHelp(ctx)
 		return nil
 	}
-	ep, exists := a.endpoints[epName]
+	ep, exists := a.data.Endpoints[epName]
 	if !exists {
 		return fmt.Errorf("unknown endpoint %q", epName)
 	}
@@ -637,7 +860,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 		if keyName == "" {
 			keyName = "default"
 		}
-		if key, exists := a.keys[keyName]; exists {
+		if key, exists := a.data.Keys[keyName]; exists {
 			priv, err := a.privKey(key)
 			if err != nil {
 				return fmt.Errorf("private key: %w", err)
@@ -690,13 +913,9 @@ func (a *App) ssh(ctx *cli.Context) error {
 					return errors.New("host key changed")
 				}
 			}
-			line, err := t.Prompt(fmt.Sprintf("Host key for %s\n%s %s\n\nContinue? [Y/n] ", hostname, key.Type(), ssh.FingerprintSHA256(key)))
-			if err != nil {
-				return fmt.Errorf("ReadLine: %w", err)
-			}
-			if line == "" || line == "Y" || line == "y" {
+			if t.Confirm(fmt.Sprintf("Host key for %s\n%s %s\n\nContinue? ", hostname, key.Type(), ssh.FingerprintSHA256(key)), true) {
 				ep.HostKey = key.Marshal()
-				a.endpoints[ep.Name] = ep
+				a.data.Endpoints[ep.Name] = ep
 				return a.saveEndpoints()
 			}
 			return errors.New("host key rejected by user")
