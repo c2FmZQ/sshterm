@@ -62,10 +62,10 @@ type Config struct {
 
 func New(cfg *Config) (*App, error) {
 	app := &App{
-		cfg:     *cfg,
-		agent:   agent.NewKeyring(),
-		persist: true,
+		cfg:   *cfg,
+		agent: agent.NewKeyring(),
 		data: appData{
+			Persist:   true,
 			Endpoints: make(map[string]endpoint),
 			Keys:      make(map[string]key),
 		},
@@ -74,18 +74,18 @@ func New(cfg *Config) (*App, error) {
 }
 
 type appData struct {
+	Persist   bool                `json:"persist"`
 	Endpoints map[string]endpoint `json:"endpoints"`
 	Keys      map[string]key      `json:"keys"`
 }
 
 type App struct {
-	cfg     Config
-	ctx     context.Context
-	term    *terminal.Terminal
-	agent   agent.Agent
-	db      *indexeddb.DB
-	persist bool
-	data    appData
+	cfg   Config
+	ctx   context.Context
+	term  *terminal.Terminal
+	agent agent.Agent
+	db    *indexeddb.DB
+	data  appData
 }
 
 type endpoint struct {
@@ -103,7 +103,7 @@ type key struct {
 const dbName = "sshterm"
 
 func (a *App) initDB() error {
-	if !a.persist {
+	if !a.data.Persist {
 		if a.db != nil {
 			a.db.Close()
 			a.db = nil
@@ -587,12 +587,12 @@ func (a *App) Run() error {
 						if ctx.Args().Len() == 1 {
 							switch v := ctx.Args().Get(0); v {
 							case "on":
-								a.persist = true
+								a.data.Persist = true
 								if err := a.initDB(); err != nil {
 									t.Errorf("%v", err)
 								}
 							case "off":
-								a.persist = false
+								a.data.Persist = false
 								if err := a.initDB(); err != nil {
 									t.Errorf("%v", err)
 								}
@@ -601,7 +601,7 @@ func (a *App) Run() error {
 								return nil
 							}
 						}
-						if a.persist {
+						if a.data.Persist {
 							t.Printf("The database is persisted to local storage.\n")
 						} else {
 							t.Printf("The database is NOT persisted to local storage.\n")
