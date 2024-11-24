@@ -72,30 +72,44 @@ func (r *StreamReader) Close() error {
 	return nil
 }
 
-func NewReadableStream(r io.ReadCloser) js.Value {
+func NewReadableStream(r io.ReadCloser, done chan struct{}) js.Value {
+	var once sync.Once
+	allDone := func() {
+		once.Do(func() {
+			close(done)
+			go r.Close()
+		})
+	}
 	s := Object.New()
 	s.Set("pull", js.FuncOf(func(this js.Value, args []js.Value) any {
-		controller := args[0]
-		size := 4096
-		if ds := controller.Get("desiredSize"); !ds.IsUndefined() {
-			size = ds.Int()
-		}
-		buf := make([]byte, size)
-		n, err := r.Read(buf)
-		if n > 0 {
-			controller.Call("enqueue", Uint8ArrayFromBytes(buf[:n]))
-		}
-		if err == io.EOF {
-			controller.Call("close")
-			r.Close()
-		} else if err != nil {
-			controller.Call("error", Error.New(err.Error()))
-			r.Close()
-		}
-		return nil
+		return NewPromise(func() (any, error) {
+			controller := args[0]
+			size := 16384
+			if ds := controller.Get("desiredSize"); !ds.IsUndefined() {
+				size = max(size, ds.Int())
+			}
+			buf := make([]byte, size)
+			n, err := r.Read(buf)
+			if n > 0 {
+				select {
+				case <-done:
+					return nil, nil
+				default:
+					controller.Call("enqueue", Uint8ArrayFromBytes(buf[:n]))
+				}
+			}
+			if err == io.EOF {
+				controller.Call("close")
+				allDone()
+			} else if err != nil {
+				controller.Call("error", Error.New(err.Error()))
+				allDone()
+			}
+			return nil, nil
+		})
 	}))
 	s.Set("cancel", js.FuncOf(func(this js.Value, args []js.Value) any {
-		r.Close()
+		allDone()
 		return nil
 	}))
 	return ReadableStream.New(s)
@@ -111,7 +125,7 @@ func NewStreamHelper() *StreamHelper {
 	}
 
 	h := &StreamHelper{
-		streams: make(map[string]Stream),
+		streams: make(map[string]stream),
 	}
 
 	container.Set("onmessage", js.FuncOf(
@@ -126,13 +140,13 @@ func NewStreamHelper() *StreamHelper {
 			n := sid.String()
 			if s, exists := h.streams[n]; exists {
 				hdr := Object.New()
-				for k, v := range s.Headers {
+				for k, v := range s.headers {
 					hdr.Set(k, v)
 				}
 				msg := Object.New()
 				msg.Set("streamId", n)
 				msg.Set("headers", hdr)
-				rs := NewReadableStream(s.Reader)
+				rs := NewReadableStream(s.reader, s.done)
 				msg.Set("readableStream", rs)
 				event.Get("source").Call("postMessage", msg, Array.New(rs))
 				delete(h.streams, n)
@@ -150,36 +164,45 @@ func NewStreamHelper() *StreamHelper {
 
 type StreamHelper struct {
 	mu      sync.Mutex
-	streams map[string]Stream
+	streams map[string]stream
 }
 
-type Stream struct {
-	Reader  io.ReadCloser
-	Headers map[string]string
+type stream struct {
+	reader  io.ReadCloser
+	headers map[string]string
+	done    chan struct{}
 }
 
-func (h *StreamHelper) AddStream(rc io.ReadCloser, headers map[string]string) (string, error) {
+func (h *StreamHelper) addStream(rc io.ReadCloser, headers map[string]string) (string, <-chan struct{}, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	b := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	id := hex.EncodeToString(b)
-	h.streams[id] = Stream{
-		Reader:  rc,
-		Headers: headers,
+	ch := make(chan struct{})
+	h.streams[id] = stream{
+		reader:  rc,
+		headers: headers,
+		done:    ch,
 	}
-	return id, nil
+	return id, ch, nil
 }
 
-func (h *StreamHelper) StartStreamDownload(rc io.ReadCloser, filename, mimeType string) error {
-	id, err := h.AddStream(rc, map[string]string{
+func (h *StreamHelper) Download(rc io.ReadCloser, filename, mimeType string, size int64) (err error) {
+	hdr := map[string]string{
 		"Content-Disposition": fmt.Sprintf("attachment; filename=%q", filename),
-		"Content-Type":        mimeType,
 		"Cache-Control":       "no-store",
-	})
+	}
+	if mimeType != "" {
+		hdr["Content-Type"] = mimeType
+	}
+	if size > 0 {
+		hdr["Content-Length"] = fmt.Sprintf("%d", size)
+	}
+	id, done, err := h.addStream(rc, hdr)
 	if err != nil {
 		return err
 	}
@@ -188,5 +211,6 @@ func (h *StreamHelper) StartStreamDownload(rc io.ReadCloser, filename, mimeType 
 	Body.Call("appendChild", anchor)
 	anchor.Call("click")
 	Body.Call("removeChild", anchor)
+	<-done
 	return nil
 }
