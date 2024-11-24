@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"syscall/js"
 )
 
@@ -73,14 +74,16 @@ func (r *StreamReader) Close() error {
 	return nil
 }
 
-func NewReadableStream(r io.ReadCloser, done chan struct{}) js.Value {
+func NewReadableStream(r io.ReadCloser, done chan<- error, progress func(int64)) js.Value {
 	var once sync.Once
-	allDone := func() {
+	cancelCh := make(chan struct{})
+	allDone := func(err error) {
 		once.Do(func() {
-			close(done)
+			done <- err
 			go r.Close()
 		})
 	}
+	offset := new(atomic.Int64)
 	s := Object.New()
 	s.Set("pull", js.FuncOf(func(this js.Value, args []js.Value) any {
 		return NewPromise(func() (any, error) {
@@ -93,24 +96,29 @@ func NewReadableStream(r io.ReadCloser, done chan struct{}) js.Value {
 			n, err := r.Read(buf)
 			if n > 0 {
 				select {
-				case <-done:
+				case <-cancelCh:
 					return nil, nil
 				default:
 					controller.Call("enqueue", Uint8ArrayFromBytes(buf[:n]))
+					offset.Add(int64(n))
+					if progress != nil {
+						progress(offset.Load())
+					}
 				}
 			}
 			if err == io.EOF {
 				controller.Call("close")
-				allDone()
+				allDone(nil)
 			} else if err != nil {
 				controller.Call("error", Error.New(err.Error()))
-				allDone()
+				allDone(err)
 			}
 			return nil, nil
 		})
 	}))
 	s.Set("cancel", js.FuncOf(func(this js.Value, args []js.Value) any {
-		allDone()
+		close(cancelCh)
+		allDone(errors.New("canceled"))
 		return nil
 	}))
 	return ReadableStream.New(s)
@@ -147,7 +155,7 @@ func NewStreamHelper() *StreamHelper {
 				msg := Object.New()
 				msg.Set("streamId", n)
 				msg.Set("headers", hdr)
-				rs := NewReadableStream(s.reader, s.done)
+				rs := NewReadableStream(s.reader, s.done, s.progress)
 				msg.Set("readableStream", rs)
 				event.Get("source").Call("postMessage", msg, Array.New(rs))
 				delete(h.streams, n)
@@ -169,12 +177,13 @@ type StreamHelper struct {
 }
 
 type stream struct {
-	reader  io.ReadCloser
-	headers map[string]string
-	done    chan struct{}
+	reader   io.ReadCloser
+	headers  map[string]string
+	done     chan error
+	progress func(int64)
 }
 
-func (h *StreamHelper) addStream(rc io.ReadCloser, headers map[string]string) (string, <-chan struct{}, error) {
+func (h *StreamHelper) addStream(rc io.ReadCloser, headers map[string]string, progress func(int64)) (string, <-chan error, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -183,16 +192,17 @@ func (h *StreamHelper) addStream(rc io.ReadCloser, headers map[string]string) (s
 		return "", nil, err
 	}
 	id := hex.EncodeToString(b)
-	ch := make(chan struct{})
+	ch := make(chan error)
 	h.streams[id] = stream{
-		reader:  rc,
-		headers: headers,
-		done:    ch,
+		reader:   rc,
+		headers:  headers,
+		done:     ch,
+		progress: progress,
 	}
 	return id, ch, nil
 }
 
-func (h *StreamHelper) Download(rc io.ReadCloser, filename, mimeType string, size int64) (err error) {
+func (h *StreamHelper) Download(rc io.ReadCloser, filename, mimeType string, size int64, progress func(int64)) (err error) {
 	if h == nil {
 		return errors.New("streaming download unavailable")
 	}
@@ -206,7 +216,7 @@ func (h *StreamHelper) Download(rc io.ReadCloser, filename, mimeType string, siz
 	if size > 0 {
 		hdr["Content-Length"] = fmt.Sprintf("%d", size)
 	}
-	id, done, err := h.addStream(rc, hdr)
+	id, done, err := h.addStream(rc, hdr, progress)
 	if err != nil {
 		return err
 	}
@@ -215,6 +225,5 @@ func (h *StreamHelper) Download(rc io.ReadCloser, filename, mimeType string, siz
 	Body.Call("appendChild", anchor)
 	anchor.Call("click")
 	Body.Call("removeChild", anchor)
-	<-done
-	return nil
+	return <-done
 }

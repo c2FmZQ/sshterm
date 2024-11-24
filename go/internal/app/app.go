@@ -464,7 +464,7 @@ func (a *App) Run() error {
 							return errors.New("aborted")
 						}
 						if a.streamHelper != nil {
-							a.streamHelper.Download(io.NopCloser(bytes.NewReader(key.Private)), name+".key", "application/octet-stream", int64(len(key.Private)))
+							a.streamHelper.Download(io.NopCloser(bytes.NewReader(key.Private)), name+".key", "application/octet-stream", int64(len(key.Private)), nil)
 						} else {
 							jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
 						}
@@ -956,22 +956,45 @@ func (a *App) sftpUpload(ctx *cli.Context) error {
 		if err != nil {
 			return fmt.Errorf("%s: %v", fn, err)
 		}
-		if _, err := io.Copy(w, f.Content); err != nil {
-			return err
+		buf := make([]byte, 16384)
+		var total int64
+		for loop := 0; ; loop++ {
+			n, err := f.Content.Read(buf)
+			if n > 0 {
+				if nn, err := w.Write(buf[:n]); err != nil {
+					w.Close()
+					return err
+				} else if n != nn {
+					return io.ErrShortWrite
+				}
+				total += int64(n)
+				if loop%100 == 0 {
+					t.Printf("%3.0f%%\b\b\b\b", 100*float64(total)/float64(f.Size))
+				}
+			}
+			if err == io.EOF {
+				t.Printf("%3.0f%%\n", 100*float64(total)/float64(f.Size))
+				break
+			}
+			if err != nil {
+				w.Close()
+				return err
+			}
+
 		}
 		return w.Close()
 	}
 	for _, f := range files {
-		t.Printf("%s => %s...", f.Name, p)
+		t.Printf("%s ", f.Name)
 		if err := cp(f); err != nil {
 			return err
 		}
-		t.Printf(" done\n")
 	}
 	return nil
 }
 
 func (a *App) sftpDownload(ctx *cli.Context) error {
+	t := a.term
 	if ctx.Args().Len() != 1 {
 		cli.ShowSubcommandHelp(ctx)
 		return nil
@@ -1006,10 +1029,20 @@ func (a *App) sftpDownload(ctx *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("%s: %v", p, err)
 	}
+	size := st.Size()
 	_, name := path.Split(r.Name())
-	if err := a.streamHelper.Download(r, name, "application/octet-stream", st.Size()); err != nil {
-		return fmt.Errorf("Download: %w", err)
+	loop := 0
+	progress := func(total int64) {
+		if loop%100 == 0 {
+			t.Printf("%3.0f%%\b\b\b\b", 100*float64(total)/float64(size))
+		}
 	}
+	t.Printf("%s ", name)
+	if err := a.streamHelper.Download(r, name, "application/octet-stream", size, progress); err != nil {
+		return err
+	}
+	progress(size)
+	t.Printf("\n")
 	return nil
 }
 
