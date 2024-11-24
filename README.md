@@ -17,10 +17,10 @@ Supported features:
 * [x] Persist data to local storage (optional, on by default).
 * [x] Keyboard interactive authentication.
 * [x] In-memory SSH agent and agent forwarding.
+* [x] Streaming upload and download.
 
 Not implemented:
 
-* [ ] File transfers.
 * [ ] Port forwarding.
 * [ ] Certificates.
 * [ ] Security keys.
