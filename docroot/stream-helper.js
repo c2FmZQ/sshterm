@@ -29,10 +29,10 @@ self.oninstall = e => e.waitUntil(self.skipWaiting());
 self.onactivate = e => e.waitUntil(self.clients.claim());
 
 function makeResponse(data) {
-  if (!data || !data.readableStream) {
+  if (!data || !data.body) {
     return new Response('Errrrr!', {'status': 500, 'statusText': 'Internal Server Error'});
   }
-  return new Response(data.readableStream, {'status': 200, 'statusText': 'OK', 'headers': data.headers});
+  return new Response(data.body, data.options);
 }
 
 let appStreams = {};

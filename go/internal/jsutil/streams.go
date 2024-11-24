@@ -151,11 +151,15 @@ func NewStreamHelper() *StreamHelper {
 				for k, v := range s.headers {
 					hdr.Set(k, v)
 				}
+				opt := Object.New()
+				opt.Set("status", "200")
+				opt.Set("statusText", "OK")
+				opt.Set("headers", hdr)
+				rs := NewReadableStream(s.reader, s.done, s.progress)
 				msg := Object.New()
 				msg.Set("streamId", n)
-				msg.Set("headers", hdr)
-				rs := NewReadableStream(s.reader, s.done, s.progress)
-				msg.Set("readableStream", rs)
+				msg.Set("body", rs)
+				msg.Set("options", opt)
 				event.Get("source").Call("postMessage", msg, Array.New(rs))
 				delete(h.streams, n)
 			} else {
