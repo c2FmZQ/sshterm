@@ -43,6 +43,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall/js"
 	"time"
 
@@ -464,7 +465,7 @@ func (a *App) Run() error {
 							return errors.New("aborted")
 						}
 						if a.streamHelper != nil {
-							a.streamHelper.Download(io.NopCloser(bytes.NewReader(key.Private)), name+".key", "application/octet-stream", int64(len(key.Private)), nil)
+							a.streamHelper.Download(io.NopCloser(bytes.NewReader(key.Private)), name+".key", int64(len(key.Private)), nil)
 						} else {
 							jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
 						}
@@ -1032,18 +1033,18 @@ func (a *App) sftpDownload(ctx *cli.Context) error {
 	}
 	size := st.Size()
 	_, name := path.Split(r.Name())
-	calls := 0
+	calls := new(atomic.Int32)
 	progress := func(total int64) {
-		if calls%100 == 0 {
+		if calls.Load()%100 == 0 {
 			t.Printf("%3d%%\b\b\b\b", 100*total/size)
 		}
-		calls++
+		calls.Add(1)
 	}
 	t.Printf("%s ", name)
-	if err := a.streamHelper.Download(r, name, "application/octet-stream", size, progress); err != nil {
+	if err := a.streamHelper.Download(r, name, size, progress); err != nil {
 		return err
 	}
-	calls = 0
+	calls.Store(0)
 	progress(size)
 	t.Printf("\n")
 	return nil

@@ -74,14 +74,13 @@ func (r *StreamReader) Close() error {
 	return nil
 }
 
-func NewReadableStream(r io.ReadCloser, done chan<- error, progress func(int64)) js.Value {
-	var once sync.Once
+func NewReadableStream(r io.Reader, done chan<- error, progress func(int64)) js.Value {
 	cancelCh := make(chan struct{})
 	allDone := func(err error) {
-		once.Do(func() {
-			done <- err
-			go r.Close()
-		})
+		select {
+		case done <- err:
+		default:
+		}
 	}
 	offset := new(atomic.Int64)
 	s := Object.New()
@@ -177,13 +176,13 @@ type StreamHelper struct {
 }
 
 type stream struct {
-	reader   io.ReadCloser
+	reader   io.Reader
 	headers  map[string]string
 	done     chan error
 	progress func(int64)
 }
 
-func (h *StreamHelper) addStream(rc io.ReadCloser, headers map[string]string, progress func(int64)) (string, <-chan error, error) {
+func (h *StreamHelper) addStream(rc io.Reader, headers map[string]string, progress func(int64)) (string, <-chan error, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -192,7 +191,7 @@ func (h *StreamHelper) addStream(rc io.ReadCloser, headers map[string]string, pr
 		return "", nil, err
 	}
 	id := hex.EncodeToString(b)
-	ch := make(chan error)
+	ch := make(chan error, 1)
 	h.streams[id] = stream{
 		reader:   rc,
 		headers:  headers,
@@ -202,16 +201,15 @@ func (h *StreamHelper) addStream(rc io.ReadCloser, headers map[string]string, pr
 	return id, ch, nil
 }
 
-func (h *StreamHelper) Download(rc io.ReadCloser, filename, mimeType string, size int64, progress func(int64)) (err error) {
+func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, progress func(int64)) (err error) {
+	defer rc.Close()
 	if h == nil {
 		return errors.New("streaming download unavailable")
 	}
 	hdr := map[string]string{
 		"Content-Disposition": fmt.Sprintf("attachment; filename=%q", filename),
 		"Cache-Control":       "no-store",
-	}
-	if mimeType != "" {
-		hdr["Content-Type"] = mimeType
+		"Content-Type":        "application/octet-stream",
 	}
 	if size > 0 {
 		hdr["Content-Length"] = fmt.Sprintf("%d", size)
