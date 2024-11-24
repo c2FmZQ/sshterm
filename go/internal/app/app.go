@@ -965,15 +965,16 @@ func (a *App) sftpUpload(ctx *cli.Context) error {
 					w.Close()
 					return err
 				} else if n != nn {
+					w.Close()
 					return io.ErrShortWrite
 				}
 				total += int64(n)
 				if loop%100 == 0 {
-					t.Printf("%3.0f%%\b\b\b\b", 100*float64(total)/float64(f.Size))
+					t.Printf("%3d%%\b\b\b\b", 100*total/f.Size)
 				}
 			}
 			if err == io.EOF {
-				t.Printf("%3.0f%%\n", 100*float64(total)/float64(f.Size))
+				t.Printf("%3d%%\n", 100*total/f.Size)
 				break
 			}
 			if err != nil {
@@ -1031,16 +1032,18 @@ func (a *App) sftpDownload(ctx *cli.Context) error {
 	}
 	size := st.Size()
 	_, name := path.Split(r.Name())
-	loop := 0
+	calls := 0
 	progress := func(total int64) {
-		if loop%100 == 0 {
-			t.Printf("%3.0f%%\b\b\b\b", 100*float64(total)/float64(size))
+		if calls%100 == 0 {
+			t.Printf("%3d%%\b\b\b\b", 100*total/size)
 		}
+		calls++
 	}
 	t.Printf("%s ", name)
 	if err := a.streamHelper.Download(r, name, "application/octet-stream", size, progress); err != nil {
 		return err
 	}
+	calls = 0
 	progress(size)
 	t.Printf("\n")
 	return nil
