@@ -28,6 +28,7 @@ package jsutil
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -192,6 +193,9 @@ func (h *StreamHelper) addStream(rc io.ReadCloser, headers map[string]string) (s
 }
 
 func (h *StreamHelper) Download(rc io.ReadCloser, filename, mimeType string, size int64) (err error) {
+	if h == nil {
+		return errors.New("streaming download unavailable")
+	}
 	hdr := map[string]string{
 		"Content-Disposition": fmt.Sprintf("attachment; filename=%q", filename),
 		"Cache-Control":       "no-store",
