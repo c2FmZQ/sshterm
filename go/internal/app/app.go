@@ -819,11 +819,11 @@ func (a *App) Run() error {
 
 		default:
 			if cmd, ok := commandMap[name]; ok {
-				if v, err := jsutil.TryCatch(func() any {
-					return cmd.Run(args)
-				}); err != nil {
-					t.Errorf("%v", err)
-				} else if err := v; err != nil {
+				var err error
+				if e := jsutil.TryCatch(func() { err = cmd.Run(args) }); e != nil {
+					t.Errorf("%v", e)
+				}
+				if err != nil {
 					t.Errorf("%v", err)
 				}
 			} else {

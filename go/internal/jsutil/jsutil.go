@@ -47,14 +47,15 @@ var (
 	ErrException = errors.New("exception")
 )
 
-func TryCatch(f func() any) (ret any, err error) {
+func TryCatch(f func()) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			stack := debug.Stack()
 			err = fmt.Errorf("%w: %v\n%s", ErrException, r, stack)
 		}
 	}()
-	return f(), nil
+	f()
+	return nil
 }
 
 func NewObject(m map[string]any) js.Value {

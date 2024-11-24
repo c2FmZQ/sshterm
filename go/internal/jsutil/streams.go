@@ -158,8 +158,8 @@ func NewStreamHelper() *StreamHelper {
 						"headers":    NewObject(s.headers),
 					}),
 				})
-				if _, err := TryCatch(func() any {
-					return event.Get("source").Call("postMessage", msg, Array.New(rs))
+				if err := TryCatch(func() {
+					event.Get("source").Call("postMessage", msg, Array.New(rs))
 				}); err != nil {
 					s.done <- err
 					event.Get("source").Call("postMessage", NewObject(map[string]any{
