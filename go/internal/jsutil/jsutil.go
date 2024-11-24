@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"syscall/js"
 )
 
@@ -49,7 +50,8 @@ var (
 func TryCatch(f func() any) (ret any, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%w: %v", ErrException, r)
+			stack := debug.Stack()
+			err = fmt.Errorf("%w: %v\n%s", ErrException, r, stack)
 		}
 	}()
 	return f(), nil
