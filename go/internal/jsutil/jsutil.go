@@ -26,6 +26,7 @@
 package jsutil
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"syscall/js"
@@ -41,7 +42,26 @@ var (
 	URL        = js.Global().Get("URL")
 	Document   = js.Global().Get("document")
 	Body       = Document.Get("body")
+
+	ErrPanic = errors.New("panic")
 )
+
+func TryCatch(f func() any) (ret any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrPanic, r)
+		}
+	}()
+	return f(), nil
+}
+
+func NewObject(m map[string]any) js.Value {
+	obj := Object.New()
+	for k, v := range m {
+		obj.Set(k, v)
+	}
+	return obj
+}
 
 func NewResolvedPromise(v any) js.Value {
 	return Promise.Call("resolve", v)

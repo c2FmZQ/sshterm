@@ -137,35 +137,47 @@ func NewStreamHelper() *StreamHelper {
 	}
 
 	container.Set("onmessage", js.FuncOf(
-		func(this js.Value, args []js.Value) any {
-			h.mu.Lock()
-			defer h.mu.Unlock()
+		func(this js.Value, args []js.Value) (ret any) {
 			event := args[0]
 			sid := event.Get("data").Get("streamId")
 			if !sid.Truthy() {
 				return nil
 			}
-			n := sid.String()
-			if s, exists := h.streams[n]; exists {
-				hdr := Object.New()
-				for k, v := range s.headers {
-					hdr.Set(k, v)
-				}
-				opt := Object.New()
-				opt.Set("status", "200")
-				opt.Set("statusText", "OK")
-				opt.Set("headers", hdr)
+			id := sid.String()
+			h.mu.Lock()
+			defer h.mu.Unlock()
+
+			if s, exists := h.streams[id]; exists {
 				rs := NewReadableStream(s.reader, s.done, s.progress)
-				msg := Object.New()
-				msg.Set("streamId", n)
-				msg.Set("body", rs)
-				msg.Set("options", opt)
-				event.Get("source").Call("postMessage", msg, Array.New(rs))
-				delete(h.streams, n)
+				msg := NewObject(map[string]any{
+					"streamId": id,
+					"body":     rs,
+					"options": NewObject(map[string]any{
+						"status":     "200",
+						"statusText": "OK",
+						"headers":    NewObject(s.headers),
+					}),
+				})
+				if _, err := TryCatch(func() any {
+					return event.Get("source").Call("postMessage", msg, Array.New(rs))
+				}); err != nil {
+					s.done <- err
+					event.Get("source").Call("postMessage", NewObject(map[string]any{
+						"streamId": id,
+						"body":     err.Error(),
+						"options": NewObject(map[string]any{
+							"status": "500",
+							"headers": NewObject(map[string]any{
+								"Content-Type": "text/plain",
+							}),
+						}),
+					}))
+				}
+				delete(h.streams, id)
 			} else {
-				msg := Object.New()
-				msg.Set("streamId", n)
-				event.Get("source").Call("postMessage", msg)
+				event.Get("source").Call("postMessage", NewObject(map[string]any{
+					"streamId": id,
+				}))
 			}
 			return nil
 		},
@@ -181,12 +193,12 @@ type StreamHelper struct {
 
 type stream struct {
 	reader   io.Reader
-	headers  map[string]string
+	headers  map[string]any
 	done     chan error
 	progress func(int64)
 }
 
-func (h *StreamHelper) addStream(rc io.Reader, headers map[string]string, progress func(int64)) (string, <-chan error, error) {
+func (h *StreamHelper) addStream(rc io.Reader, headers map[string]any, progress func(int64)) (string, <-chan error, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -210,7 +222,7 @@ func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, p
 	if h == nil {
 		return errors.New("streaming download unavailable")
 	}
-	hdr := map[string]string{
+	hdr := map[string]any{
 		"Content-Disposition": fmt.Sprintf("attachment; filename=%q", filename),
 		"Cache-Control":       "no-store",
 		"Content-Type":        "application/octet-stream",

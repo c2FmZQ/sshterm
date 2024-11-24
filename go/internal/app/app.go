@@ -465,7 +465,9 @@ func (a *App) Run() error {
 							return errors.New("aborted")
 						}
 						if a.streamHelper != nil {
-							a.streamHelper.Download(io.NopCloser(bytes.NewReader(key.Private)), name+".key", int64(len(key.Private)), nil)
+							if err := a.streamHelper.Download(io.NopCloser(bytes.NewReader(key.Private)), name+".key", int64(len(key.Private)), nil); err != nil {
+								return err
+							}
 						} else {
 							jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
 						}
