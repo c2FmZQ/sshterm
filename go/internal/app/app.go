@@ -917,6 +917,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 		return fmt.Errorf("session.RequestPty: %w", err)
 	}
 	t.OnResize(session.WindowChange)
+	defer t.OnResize(nil)
 	if err := session.Shell(); err != nil {
 		return fmt.Errorf("session.Shell: %w", err)
 	}
