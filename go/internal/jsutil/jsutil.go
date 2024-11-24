@@ -43,13 +43,13 @@ var (
 	Document   = js.Global().Get("document")
 	Body       = Document.Get("body")
 
-	ErrPanic = errors.New("panic")
+	ErrException = errors.New("exception")
 )
 
 func TryCatch(f func() any) (ret any, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%w: %v", ErrPanic, r)
+			err = fmt.Errorf("%w: %v", ErrException, r)
 		}
 	}()
 	return f(), nil
