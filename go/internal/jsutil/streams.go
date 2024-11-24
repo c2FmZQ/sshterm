@@ -147,22 +147,35 @@ func NewStreamHelper() *StreamHelper {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 
-			if s, exists := h.streams[id]; exists {
+			s, exists := h.streams[id]
+			if !exists {
+				event.Get("source").Call("postMessage",
+					NewObject(map[string]any{
+						"streamId": id},
+					),
+				)
+				return nil
+			}
+			delete(h.streams, id)
+
+			if err := TryCatch(func() {
 				rs := NewReadableStream(s.reader, s.done, s.progress)
-				msg := NewObject(map[string]any{
-					"streamId": id,
-					"body":     rs,
-					"options": NewObject(map[string]any{
-						"status":     "200",
-						"statusText": "OK",
-						"headers":    NewObject(s.headers),
+				event.Get("source").Call("postMessage",
+					NewObject(map[string]any{
+						"streamId": id,
+						"body":     rs,
+						"options": NewObject(map[string]any{
+							"status":     "200",
+							"statusText": "OK",
+							"headers":    NewObject(s.headers),
+						}),
 					}),
-				})
-				if err := TryCatch(func() {
-					event.Get("source").Call("postMessage", msg, Array.New(rs))
-				}); err != nil {
-					s.done <- err
-					event.Get("source").Call("postMessage", NewObject(map[string]any{
+					Array.New(rs),
+				)
+			}); err != nil {
+				s.done <- err
+				event.Get("source").Call("postMessage",
+					NewObject(map[string]any{
 						"streamId": id,
 						"body":     err.Error(),
 						"options": NewObject(map[string]any{
@@ -171,13 +184,8 @@ func NewStreamHelper() *StreamHelper {
 								"Content-Type": "text/plain",
 							}),
 						}),
-					}))
-				}
-				delete(h.streams, id)
-			} else {
-				event.Get("source").Call("postMessage", NewObject(map[string]any{
-					"streamId": id,
-				}))
+					}),
+				)
 			}
 			return nil
 		},
