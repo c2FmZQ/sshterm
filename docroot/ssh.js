@@ -26,6 +26,17 @@
 'use strict';
 
 window.sshApp = {};
+window.sshApp.exited = null;
+sshApp.onExit = result => {
+  window.sshApp.exited = result;
+  const b = document.createElement('button');
+  b.id = 'done';
+  b.addEventListener('click', () => window.location.reload());
+  b.textContent = 'reload';
+  b.style = 'position: fixed; top: 0; right: 0;';
+  document.body.appendChild(b);
+  console.log('SSH', result);
+};
 window.sshApp.ready = new Promise(resolve => {
   sshApp.sshIsReady = () => {
     console.log('SSH WASM is ready');
@@ -34,7 +45,8 @@ window.sshApp.ready = new Promise(resolve => {
 });
 
 const go = new Go();
-WebAssembly.instantiateStreaming(fetch('ssh.wasm'), go.importObject)
+const wasmFile = window.location.pathname.indexOf('tests.html') !== -1 ? 'tests.wasm' : 'ssh.wasm';
+WebAssembly.instantiateStreaming(fetch(wasmFile), go.importObject)
   .then(r => go.run(r.instance));
 
 window.addEventListener('load', () => {
@@ -67,9 +79,10 @@ window.addEventListener('load', () => {
   fitAddon.fit();
   sshApp.ready
     .then(() => sshApp.start({term}))
-    .then(v => console.log('SSH', v))
+    .then(v => sshApp.onExit(v))
     .catch(e => {
       console.log('SSH ERROR', e);
       term.writeln(e.message);
+      sshApp.onExit(e.message);
     });
 });

@@ -176,9 +176,9 @@ func ImportFiles(accept string, multiple bool) []ImportedFile {
 	return out
 }
 
-func ExportFile(data []byte, filename, mimeType string) {
+func ExportFile(data []byte, filename, mimeType string) error {
 	blobOpts := Object.New()
-	blobOpts.Set("type", js.ValueOf("mimeType"))
+	blobOpts.Set("type", mimeType)
 	blob := Blob.New(Array.New(Uint8ArrayFromBytes(data)), blobOpts)
 
 	anchor := Document.Call("createElement", "a")
@@ -187,4 +187,5 @@ func ExportFile(data []byte, filename, mimeType string) {
 	Body.Call("appendChild", anchor)
 	anchor.Call("click")
 	Body.Call("removeChild", anchor)
+	return nil
 }
