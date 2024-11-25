@@ -26,10 +26,8 @@
 package jsutil
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"runtime/debug"
 	"syscall/js"
 )
 
@@ -43,19 +41,15 @@ var (
 	URL        = js.Global().Get("URL")
 	Document   = js.Global().Get("document")
 	Body       = Document.Get("body")
-
-	ErrException = errors.New("exception")
 )
 
-func TryCatch(f func()) (err error) {
+func TryCatch(try func(), catch func(any)) {
 	defer func() {
-		if r := recover(); r != nil {
-			stack := debug.Stack()
-			err = fmt.Errorf("%w: %v\n%s", ErrException, r, stack)
+		if e := recover(); e != nil {
+			catch(e)
 		}
 	}()
-	f()
-	return nil
+	try()
 }
 
 func NewObject(m map[string]any) js.Value {

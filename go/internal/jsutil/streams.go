@@ -158,35 +158,44 @@ func NewStreamHelper() *StreamHelper {
 			}
 			delete(h.streams, id)
 
-			if err := TryCatch(func() {
-				rs := NewReadableStream(s.reader, s.done, s.progress)
-				event.Get("source").Call("postMessage",
-					NewObject(map[string]any{
-						"streamId": id,
-						"body":     rs,
-						"options": NewObject(map[string]any{
-							"status":     "200",
-							"statusText": "OK",
-							"headers":    NewObject(s.headers),
-						}),
-					}),
-					Array.New(rs),
-				)
-			}); err != nil {
-				s.done <- err
-				event.Get("source").Call("postMessage",
-					NewObject(map[string]any{
-						"streamId": id,
-						"body":     err.Error(),
-						"options": NewObject(map[string]any{
-							"status": "500",
-							"headers": NewObject(map[string]any{
-								"Content-Type": "text/plain",
+			TryCatch(
+				// try
+				func() {
+					rs := NewReadableStream(s.reader, s.done, s.progress)
+					event.Get("source").Call("postMessage",
+						NewObject(map[string]any{
+							"streamId": id,
+							"body":     rs,
+							"options": NewObject(map[string]any{
+								"status":     "200",
+								"statusText": "OK",
+								"headers":    NewObject(s.headers),
 							}),
 						}),
-					}),
-				)
-			}
+						Array.New(rs),
+					)
+				},
+				// catch
+				func(e any) {
+					err, ok := e.(error)
+					if !ok {
+						err = fmt.Errorf("panic: %T %v", e, e)
+					}
+					s.done <- err
+					event.Get("source").Call("postMessage",
+						NewObject(map[string]any{
+							"streamId": id,
+							"body":     err.Error(),
+							"options": NewObject(map[string]any{
+								"status": "500",
+								"headers": NewObject(map[string]any{
+									"Content-Type": "text/plain",
+								}),
+							}),
+						}),
+					)
+				},
+			)
 			return nil
 		},
 	))

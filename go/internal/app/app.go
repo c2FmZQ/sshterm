@@ -41,6 +41,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -818,17 +819,22 @@ func (a *App) Run() error {
 			return nil
 
 		default:
-			if cmd, ok := commandMap[name]; ok {
-				var err error
-				if e := jsutil.TryCatch(func() { err = cmd.Run(args) }); e != nil {
-					t.Errorf("%v", e)
-				}
-				if err != nil {
-					t.Errorf("%v", err)
-				}
-			} else {
+			cmd, ok := commandMap[name]
+			if !ok {
 				t.Errorf("Unknown command %q. Try \"help\"", name)
+				continue
 			}
+			jsutil.TryCatch(
+				func() { // try
+					if err := cmd.Run(args); err != nil {
+						t.Errorf("%v", err)
+					}
+				},
+				func(err any) { // catch
+					t.Errorf("%T %v", err, err)
+					t.Errorf("%s", debug.Stack())
+				},
+			)
 		}
 	}
 }
