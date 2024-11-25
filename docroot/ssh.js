@@ -38,6 +38,9 @@ WebAssembly.instantiateStreaming(fetch('ssh.wasm'), go.importObject)
   .then(r => go.run(r.instance));
 
 window.addEventListener('load', () => {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('stream-helper.js').then(r => r.update());
+  }
   const term = new Terminal({
     convertEol: true,
     cursorBlink: true,

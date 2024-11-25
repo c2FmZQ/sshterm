@@ -39,12 +39,17 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path"
+	"runtime/debug"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall/js"
 	"time"
 
 	"github.com/mattn/go-shellwords"
+	"github.com/pkg/sftp"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/nacl/secretbox"
 	"golang.org/x/crypto/pbkdf2"
@@ -72,6 +77,7 @@ func New(cfg *Config) (*App, error) {
 			Endpoints: make(map[string]endpoint),
 			Keys:      make(map[string]key),
 		},
+		streamHelper: jsutil.NewStreamHelper(),
 	}
 	return app, nil
 }
@@ -89,6 +95,8 @@ type App struct {
 	agent agent.Agent
 	db    *indexeddb.DB
 	data  appData
+
+	streamHelper *jsutil.StreamHelper
 }
 
 type endpoint struct {
@@ -182,21 +190,46 @@ func (a *App) Run() error {
 			HideHelpCommand: true,
 			Action:          a.ssh,
 			Flags: []cli.Flag{
-				&cli.BoolFlag{
-					Name:    "verbose",
-					Aliases: []string{"v"},
-					Value:   false,
-					Usage:   "Verbose logging.",
-				},
 				&cli.StringFlag{
 					Name:    "identity",
-					Aliases: []string{"i", "key"},
+					Aliases: []string{"i"},
 					Usage:   "The key to use for authentication.",
 				},
 				&cli.BoolFlag{
-					Name:  "A",
-					Value: false,
-					Usage: "Forward access to the local SSH agent. Use with caution.",
+					Name:    "forward-agent",
+					Aliases: []string{"A"},
+					Value:   false,
+					Usage:   "Forward access to the local SSH agent. Use with caution.",
+				},
+			},
+		},
+		{
+			Name:            "file",
+			Usage:           "Copy files to or from a remote server.",
+			UsageText:       "file [-i <keyname>] <upload|download> username@<endpoint>:<path>",
+			Description:     "The file command copies files to or from a remote server.",
+			HideHelpCommand: true,
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:    "identity",
+					Aliases: []string{"i"},
+					Usage:   "The key to use for authentication.",
+				},
+			},
+			Commands: []*cli.Command{
+				{
+					Name:      "upload",
+					Aliases:   []string{"up"},
+					Usage:     "Copies files to a remote server.",
+					UsageText: "file [-i <keyname>] upload username@<endpoint>:<dir>",
+					Action:    a.sftpUpload,
+				},
+				{
+					Name:      "download",
+					Aliases:   []string{"down"},
+					Usage:     "Copies a file from a remote server.",
+					UsageText: "file [-i <keyname>] download username@<endpoint>:<file>",
+					Action:    a.sftpDownload,
 				},
 			},
 		},
@@ -432,7 +465,13 @@ func (a *App) Run() error {
 						if !t.Confirm(fmt.Sprintf("You are about to export the PRIVATE key %q\nContinue?", name), false) {
 							return errors.New("aborted")
 						}
-						jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
+						if a.streamHelper != nil {
+							if err := a.streamHelper.Download(io.NopCloser(bytes.NewReader(key.Private)), name+".key", int64(len(key.Private)), nil); err != nil {
+								return err
+							}
+						} else {
+							jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
+						}
 						return nil
 					},
 				},
@@ -780,13 +819,22 @@ func (a *App) Run() error {
 			return nil
 
 		default:
-			if cmd, ok := commandMap[name]; ok {
-				if err := cmd.Run(args); err != nil {
-					t.Errorf("%v", err)
-				}
-			} else {
+			cmd, ok := commandMap[name]
+			if !ok {
 				t.Errorf("Unknown command %q. Try \"help\"", name)
+				continue
 			}
+			jsutil.TryCatch(
+				func() { // try
+					if err := cmd.Run(args); err != nil {
+						t.Errorf("%v", err)
+					}
+				},
+				func(err any) { // catch
+					t.Errorf("%T %v", err, err)
+					t.Errorf("%s", debug.Stack())
+				},
+			)
 		}
 	}
 }
@@ -822,55 +870,235 @@ func (a *App) ssh(ctx *cli.Context) error {
 		return nil
 	}
 	target := ctx.Args().Get(0)
-	verbose := ctx.Bool("verbose")
 	keyName := ctx.String("identity")
-
-	username, epName, ok := strings.Cut(target, "@")
-	if !ok {
-		cli.ShowSubcommandHelp(ctx)
-		return nil
-	}
-	ep, exists := a.data.Endpoints[epName]
-	if !exists {
-		return fmt.Errorf("unknown endpoint %q", epName)
-	}
 
 	cctx, cancel := context.WithCancel(a.ctx)
 	defer cancel()
-	if verbose {
-		t.Printf("Connecting to %s (%s)\n\n", ep.Name, ep.URL)
-	}
 
-	ws, err := websocket.New(cctx, ep.URL, t)
+	client, err := a.sshClient(cctx, target, keyName)
 	if err != nil {
 		return err
 	}
 
+	session, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("client.NewSession: %w", err)
+	}
 	defer func() {
-		if verbose {
-			t.Print("\nDisconnected\n")
-		}
+		session.Close()
 	}()
+
+	if ctx.Bool("A") {
+		if err := agent.ForwardToAgent(client, a.agent); err != nil {
+			return fmt.Errorf("agent.ForwardToAgent: %w", err)
+		}
+		if err := agent.RequestAgentForwarding(session); err != nil {
+			return fmt.Errorf("agent.RequestAgentForwarding: %w", err)
+		}
+	}
+
+	session.Stdin = t
+	session.Stdout = t
+	session.Stderr = t
+
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          1,
+		ssh.ICRNL:         1,
+		ssh.IXON:          1,
+		ssh.IXANY:         1,
+		ssh.IMAXBEL:       1,
+		ssh.OPOST:         1,
+		ssh.ONLCR:         1,
+		ssh.ISIG:          1,
+		ssh.ICANON:        1,
+		ssh.IEXTEN:        1,
+		ssh.ECHOE:         1,
+		ssh.ECHOK:         1,
+		ssh.ECHOCTL:       1,
+		ssh.ECHOKE:        1,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
+	}
+	if err := session.RequestPty("xterm", t.Rows(), t.Cols(), modes); err != nil {
+		return fmt.Errorf("session.RequestPty: %w", err)
+	}
+	t.OnResize(session.WindowChange)
+	defer t.OnResize(nil)
+	if err := session.Shell(); err != nil {
+		return fmt.Errorf("session.Shell: %w", err)
+	}
+	return session.Wait()
+}
+
+func (a *App) sftpUpload(ctx *cli.Context) error {
+	t := a.term
+	if ctx.Args().Len() != 1 {
+		cli.ShowSubcommandHelp(ctx)
+		return nil
+	}
+	targetPath := ctx.Args().Get(0)
+	keyName := ctx.String("identity")
+
+	target, p, ok := strings.Cut(targetPath, ":")
+	if !ok {
+		return fmt.Errorf("invalid target %q", target)
+	}
+
+	cctx, cancel := context.WithCancel(a.ctx)
+	defer cancel()
+
+	c, err := a.sshClient(cctx, target, keyName)
+	if err != nil {
+		return err
+	}
+	client, err := sftp.NewClient(c)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	st, err := client.Stat(p)
+	if err != nil || !st.IsDir() {
+		return fmt.Errorf("remote path %q is not a directory", p)
+	}
+
+	files := jsutil.ImportFiles("", true)
+	cp := func(f jsutil.ImportedFile) error {
+		defer f.Content.Close()
+		fn := path.Join(p, f.Name)
+		w, err := client.OpenFile(fn, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+		if err != nil {
+			return fmt.Errorf("%s: %v", fn, err)
+		}
+		buf := make([]byte, 16384)
+		var total int64
+		for loop := 0; ; loop++ {
+			n, err := f.Content.Read(buf)
+			if n > 0 {
+				if nn, err := w.Write(buf[:n]); err != nil {
+					w.Close()
+					return err
+				} else if n != nn {
+					w.Close()
+					return io.ErrShortWrite
+				}
+				total += int64(n)
+				if loop%100 == 0 {
+					t.Printf("%3d%%\b\b\b\b", 100*total/f.Size)
+				}
+			}
+			if err == io.EOF {
+				t.Printf("%3d%%\n", 100*total/f.Size)
+				break
+			}
+			if err != nil {
+				w.Close()
+				return err
+			}
+
+		}
+		return w.Close()
+	}
+	for _, f := range files {
+		t.Printf("%s ", f.Name)
+		if err := cp(f); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) sftpDownload(ctx *cli.Context) error {
+	t := a.term
+	if ctx.Args().Len() != 1 {
+		cli.ShowSubcommandHelp(ctx)
+		return nil
+	}
+	targetPath := ctx.Args().Get(0)
+	keyName := ctx.String("identity")
+
+	target, p, ok := strings.Cut(targetPath, ":")
+	if !ok {
+		return fmt.Errorf("invalid target %q", target)
+	}
+
+	cctx, cancel := context.WithCancel(a.ctx)
+	defer cancel()
+
+	c, err := a.sshClient(cctx, target, keyName)
+	if err != nil {
+		return err
+	}
+	client, err := sftp.NewClient(c)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	r, err := client.Open(p)
+	if err != nil {
+		return fmt.Errorf("%s: %v", p, err)
+	}
+	defer r.Close()
+	st, err := r.Stat()
+	if err != nil {
+		return fmt.Errorf("%s: %v", p, err)
+	}
+	size := st.Size()
+	_, name := path.Split(r.Name())
+	calls := new(atomic.Int32)
+	progress := func(total int64) {
+		if calls.Load()%100 == 0 {
+			t.Printf("%3d%%\b\b\b\b", 100*total/size)
+		}
+		calls.Add(1)
+	}
+	t.Printf("%s ", name)
+	if err := a.streamHelper.Download(r, name, size, progress); err != nil {
+		return err
+	}
+	calls.Store(0)
+	progress(size)
+	t.Printf("\n")
+	return nil
+}
+
+func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Client, error) {
+	t := a.term
+	username, epName, ok := strings.Cut(target, "@")
+	if !ok {
+		return nil, fmt.Errorf("invalid target %q", target)
+	}
+	ep, exists := a.data.Endpoints[epName]
+	if !exists {
+		return nil, fmt.Errorf("unknown endpoint %q", epName)
+	}
+
+	ws, err := websocket.New(ctx, ep.URL, t)
+	if err != nil {
+		return nil, err
+	}
 
 	signers, err := a.agent.Signers()
 	if err != nil {
 		t.Errorf("%v", err)
 	}
 	if len(signers) == 0 || keyName != "" {
+		origKeyName := keyName
 		if keyName == "" {
 			keyName = "default"
 		}
 		if key, exists := a.data.Keys[keyName]; exists {
 			priv, err := a.privKey(key)
 			if err != nil {
-				return fmt.Errorf("private key: %w", err)
+				return nil, fmt.Errorf("private key: %w", err)
 			}
 			signer, err := ssh.NewSignerFromKey(priv)
 			if err != nil {
-				return fmt.Errorf("NewSignerFromKey: %w", err)
+				return nil, fmt.Errorf("NewSignerFromKey: %w", err)
 			}
 			signers = append(signers, signer)
-		} else if ctx.String("identity") != "" {
+		} else if origKeyName != "" {
 			t.Errorf("unknown key %q", keyName)
 		}
 	}
@@ -927,62 +1155,12 @@ func (a *App) ssh(ctx *cli.Context) error {
 	})
 	if err != nil {
 		if errors.Is(err, io.EOF) {
-			return io.EOF
+			return nil, io.EOF
 		}
-		return err
+		return nil, err
 	}
 
-	client := ssh.NewClient(conn, chans, reqs)
-	session, err := client.NewSession()
-	if err != nil {
-		return fmt.Errorf("client.NewSession: %w", err)
-	}
-	defer func() {
-		session.Close()
-	}()
-
-	if ctx.Bool("A") {
-		if verbose {
-			t.Printf("Requesting agent forwarding")
-		}
-		if err := agent.ForwardToAgent(client, a.agent); err != nil {
-			return fmt.Errorf("agent.ForwardToAgent: %w", err)
-		}
-		if err := agent.RequestAgentForwarding(session); err != nil {
-			return fmt.Errorf("agent.RequestAgentForwarding: %w", err)
-		}
-	}
-
-	session.Stdin = t
-	session.Stdout = t
-	session.Stderr = t
-
-	modes := ssh.TerminalModes{
-		ssh.ECHO:          1,
-		ssh.ICRNL:         1,
-		ssh.IXON:          1,
-		ssh.IXANY:         1,
-		ssh.IMAXBEL:       1,
-		ssh.OPOST:         1,
-		ssh.ONLCR:         1,
-		ssh.ISIG:          1,
-		ssh.ICANON:        1,
-		ssh.IEXTEN:        1,
-		ssh.ECHOE:         1,
-		ssh.ECHOK:         1,
-		ssh.ECHOCTL:       1,
-		ssh.ECHOKE:        1,
-		ssh.TTY_OP_ISPEED: 14400,
-		ssh.TTY_OP_OSPEED: 14400,
-	}
-	if err := session.RequestPty("xterm", t.Rows(), t.Cols(), modes); err != nil {
-		return fmt.Errorf("session.RequestPty: %w", err)
-	}
-	t.OnResize(session.WindowChange)
-	if err := session.Shell(); err != nil {
-		return fmt.Errorf("session.Shell: %w", err)
-	}
-	return session.Wait()
+	return ssh.NewClient(conn, chans, reqs), nil
 }
 
 func (a *App) privKey(key key) (any, error) {

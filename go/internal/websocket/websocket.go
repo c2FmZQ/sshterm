@@ -119,33 +119,35 @@ func (ws *WebSocket) Close() error {
 	return nil
 }
 
-func (ws *WebSocket) Read(b []byte) (int, error) {
-	if ws.isClosed() {
-		return 0, ws.err
+func (ws *WebSocket) readChunk() error {
+	select {
+	case <-ws.ctx.Done():
+		return ws.ctx.Err()
+	case p := <-ws.ch:
+		data, err := jsutil.Await(p)
+		if err != nil {
+			return err
+		}
+		vv := jsutil.Uint8Array.New(data)
+		n := len(ws.r)
+		ws.r = append(ws.r, make([]byte, vv.Length())...)
+		js.CopyBytesToGo(ws.r[n:], vv)
+		return nil
+	case <-ws.closeCh:
+		return ws.err
 	}
-	if len(ws.r) == 0 {
-		select {
-		case <-ws.ctx.Done():
-			return 0, ws.ctx.Err()
-		case <-ws.closeCh:
-			return 0, ws.err
-		case p, ok := <-ws.ch:
-			if !ok {
-				return 0, ws.err
-			}
-			data, err := jsutil.Await(p)
-			if err != nil {
-				return 0, err
-			}
-			vv := jsutil.Uint8Array.New(data)
-			sz := vv.Length()
-			ws.r = make([]byte, sz)
-			js.CopyBytesToGo(ws.r, vv)
+}
+
+func (ws *WebSocket) Read(b []byte) (int, error) {
+	var err error
+	for len(ws.r) == 0 || (len(ws.r) < len(b) && len(ws.ch) > 0) {
+		if err = ws.readChunk(); err != nil {
+			break
 		}
 	}
 	n := copy(b, ws.r)
 	ws.r = ws.r[n:]
-	return n, nil
+	return n, err
 }
 
 func (ws *WebSocket) Write(b []byte) (int, error) {

@@ -43,6 +43,23 @@ var (
 	Body       = Document.Get("body")
 )
 
+func TryCatch(try func(), catch func(any)) {
+	defer func() {
+		if e := recover(); e != nil {
+			catch(e)
+		}
+	}()
+	try()
+}
+
+func NewObject(m map[string]any) js.Value {
+	obj := Object.New()
+	for k, v := range m {
+		obj.Set(k, v)
+	}
+	return obj
+}
+
 func NewResolvedPromise(v any) js.Value {
 	return Promise.Call("resolve", v)
 }
@@ -99,40 +116,6 @@ func Uint8ArrayToBytes(v js.Value) []byte {
 	buf := make([]byte, v.Length())
 	js.CopyBytesToGo(buf, v)
 	return buf
-}
-
-func NewStreamReader(stream js.Value) *StreamReader {
-	return &StreamReader{
-		reader: stream.Call("getReader"),
-	}
-}
-
-var _ io.ReadCloser = (*StreamReader)(nil)
-
-type StreamReader struct {
-	reader js.Value // ReadableStreamDefaultReader
-	buf    []byte
-}
-
-func (r *StreamReader) Read(b []byte) (int, error) {
-	if len(r.buf) == 0 {
-		chunk, err := Await(r.reader.Call("read"))
-		if err != nil {
-			return 0, err
-		}
-		if chunk.Get("done").Bool() {
-			return 0, io.EOF
-		}
-		r.buf = Uint8ArrayToBytes(chunk.Get("value"))
-	}
-	n := copy(b, r.buf)
-	r.buf = r.buf[n:]
-	return n, nil
-}
-
-func (r *StreamReader) Close() error {
-	Await(r.reader.Call("cancel"))
-	return nil
 }
 
 type ImportedFile struct {

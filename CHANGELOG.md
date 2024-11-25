@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :star2: New features
+
+* Streaming upload and download with the `file` command.
+
 ## v0.2.0
 
 ### :star2: New features
