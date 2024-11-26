@@ -26,8 +26,11 @@
 'use strict';
 
 window.sshApp = {};
-window.sshApp.exited = null;
+sshApp.exited = null;
 sshApp.onExit = result => {
+  for (let i = 0; i < sshApp.disposables; i++) {
+    sshApp.disposables[i]('dispose');
+  }
   window.sshApp.exited = result;
   const b = document.createElement('button');
   b.id = 'done';
@@ -62,13 +65,15 @@ window.addEventListener('load', () => {
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
   term.open(document.getElementById('terminal'));
-  term.onTitleChange(t => document.querySelector('head title').textContent = t);
-  term.onSelectionChange(() => {
-    const v = term.getSelection();
-    if (v !== '') {
-      navigator.clipboard.writeText(v);
-    }
-  });
+  sshApp.disposables = [
+    term.onTitleChange(t => document.querySelector('head title').textContent = t),
+    term.onSelectionChange(() => {
+      const v = term.getSelection();
+      if (v !== '' && navigator.clipboard) {
+        navigator.clipboard.writeText(v);
+      }
+    }),
+  ];
   // Override the right-click to paste instead of bring up the context menu.
   term.element.addEventListener('contextmenu', event => {
     event.preventDefault();
@@ -77,6 +82,7 @@ window.addEventListener('load', () => {
   });
   window.addEventListener('resize', () => fitAddon.fit())
   fitAddon.fit();
+  sshApp.term = term;
   sshApp.ready
     .then(() => sshApp.start({term}))
     .then(v => sshApp.onExit(v))

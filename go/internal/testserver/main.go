@@ -113,14 +113,16 @@ func main() {
 	ctx, cancel = chromedp.NewContext(ctx, chromedp.WithLogf(log.Printf))
 	defer cancel()
 
-	var res string
+	var res, output string
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate("http://devtest:8880/tests.html"),
 		chromedp.WaitVisible("#done"),
 		chromedp.Evaluate(`window.sshApp.exited`, &res),
+		chromedp.Evaluate(`window.sshApp.term.selectAll(), window.sshApp.term.getSelection()`, &output),
 	); err != nil {
 		log.Fatal(err)
 	}
+	fmt.Println(output)
 	fmt.Println(res)
 	if res != "PASS" {
 		os.Exit(1)
