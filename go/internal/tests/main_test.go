@@ -204,7 +204,11 @@ func newTermIO(term js.Value) *termIO {
 		} else {
 			t.Write(jsutil.Uint8ArrayToBytes(args[0]))
 		}
-		return appConfig.Term.Call("origWrite", args[0])
+		aa := make([]any, len(args))
+		for i := range args {
+			aa[i] = args[i]
+		}
+		return appConfig.Term.Call("origWrite", aa...)
 	}))
 	return t
 }

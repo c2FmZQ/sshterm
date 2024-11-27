@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"syscall/js"
@@ -49,19 +50,39 @@ func New(ctx context.Context, t js.Value) *Terminal {
 			dataCh:   make(chan []byte, 100),
 			closeCh:  make(chan struct{}),
 			resizeCh: make(chan resizeEvent, 10),
+			keyCh:    make(chan string, 10),
 		},
 	}
 	tt.vt = term.NewTerminal(tt.tw, "")
 	tt.setDefaultPrompt()
 
-	disp := t.Call("onData", js.FuncOf(func(this js.Value, args []js.Value) any {
+	disp := t.Call("onKey", js.FuncOf(func(this js.Value, args []js.Value) any {
+		event := args[0]
+		select {
+		case <-tt.tw.ctx.Done():
+		case <-tt.tw.closeCh:
+		case tt.tw.keyCh <- event.Get("key").String():
+		default:
+			fmt.Fprintf(os.Stderr, "onkey buffer full\n")
+			return nil
+		}
+		return nil
+	}))
+	tt.tw.dispose = append(tt.tw.dispose, disp)
+	disp = t.Call("onBell", js.FuncOf(func(this js.Value, args []js.Value) any {
+		fmt.Fprintf(os.Stderr, "onBell\n")
+		return nil
+	}))
+	tt.tw.dispose = append(tt.tw.dispose, disp)
+	disp = t.Call("onData", js.FuncOf(func(this js.Value, args []js.Value) any {
 		select {
 		case <-tt.tw.ctx.Done():
 			return tt.tw.Close()
 		case <-tt.tw.closeCh:
 		case tt.tw.dataCh <- []byte(args[0].String()):
 		default:
-			return errors.New("input buffer full")
+			fmt.Fprintf(os.Stderr, "input buffer full\n")
+			return nil
 		}
 		return nil
 	}))
@@ -72,6 +93,9 @@ func New(ctx context.Context, t js.Value) *Terminal {
 		case <-tt.tw.ctx.Done():
 		case <-tt.tw.closeCh:
 		case tt.tw.resizeCh <- resizeEvent{cols: event.Get("cols").Int(), rows: event.Get("rows").Int()}:
+		default:
+			fmt.Fprintf(os.Stderr, "onresize buffer full\n")
+			return nil
 		}
 		return nil
 	}))
@@ -80,12 +104,29 @@ func New(ctx context.Context, t js.Value) *Terminal {
 	tt.vt.SetSize(tt.Cols(), tt.Rows())
 	go func() {
 		for resize := range tt.tw.resizeCh {
-			tt.tw.resizeMu.Lock()
-			defer tt.tw.resizeMu.Unlock()
+			tt.tw.mu.Lock()
 			tt.vt.SetSize(resize.cols, resize.rows)
 			if tt.tw.onResize != nil {
-				tt.tw.onResize(resize.rows, resize.cols)
+				select {
+				case <-tt.tw.onResizeCtx.Done():
+				default:
+					tt.tw.onResize(resize.rows, resize.cols)
+				}
 			}
+			tt.tw.mu.Unlock()
+		}
+	}()
+	go func() {
+		for key := range tt.tw.keyCh {
+			tt.tw.mu.Lock()
+			if tt.tw.onKey != nil {
+				select {
+				case <-tt.tw.onKeyCtx.Done():
+				default:
+					tt.tw.onKey(key)
+				}
+			}
+			tt.tw.mu.Unlock()
 		}
 	}()
 	return tt
@@ -109,11 +150,16 @@ type termWrapper struct {
 	xt       js.Value // xterm.Terminal
 	dataCh   chan []byte
 	closeCh  chan struct{}
-	resizeMu sync.Mutex
 	resizeCh chan resizeEvent
-	onResize func(h, w int) error
+	keyCh    chan string
 	dispose  []js.Value
 	r        []byte
+
+	mu          sync.Mutex
+	onResizeCtx context.Context
+	onResize    func(h, w int) error
+	onKeyCtx    context.Context
+	onKey       func(k string) error
 }
 
 func (t *termWrapper) isClosed() bool {
@@ -132,6 +178,7 @@ func (t *termWrapper) Close() error {
 	t.dispose = nil
 	if !t.isClosed() {
 		close(t.resizeCh)
+		close(t.keyCh)
 		close(t.closeCh)
 	}
 	return nil
@@ -162,7 +209,12 @@ func (t *termWrapper) Write(b []byte) (int, error) {
 	if t.isClosed() {
 		return 0, ErrClosed
 	}
-	t.xt.Call("write", jsutil.Uint8ArrayFromBytes(b))
+	ch := make(chan struct{})
+	t.xt.Call("write", jsutil.Uint8ArrayFromBytes(b), js.FuncOf(func(this js.Value, args []js.Value) any {
+		close(ch)
+		return nil
+	}))
+	<-ch
 	return len(b), nil
 }
 
@@ -175,10 +227,18 @@ func (t *Terminal) setDefaultPrompt() {
 	t.vt.SetPrompt(string(t.vt.Escape.Green) + "sshterm> " + string(t.vt.Escape.Reset))
 }
 
-func (t *Terminal) OnResize(f func(h, w int) error) {
-	t.tw.resizeMu.Lock()
-	defer t.tw.resizeMu.Unlock()
+func (t *Terminal) OnResize(ctx context.Context, f func(h, w int) error) {
+	t.tw.mu.Lock()
+	defer t.tw.mu.Unlock()
+	t.tw.onResizeCtx = ctx
 	t.tw.onResize = f
+}
+
+func (t *Terminal) OnKey(ctx context.Context, f func(string) error) {
+	t.tw.mu.Lock()
+	defer t.tw.mu.Unlock()
+	t.tw.onKeyCtx = ctx
+	t.tw.onKey = f
 }
 
 func (t *Terminal) Close() error {

@@ -163,6 +163,14 @@ func (a *App) Run() error {
 			a.db.Close()
 		}
 	}()
+	t.OnKey(ctx, func(k string) error {
+		switch k {
+		case "\x12": // CTRL-R
+			js.Global().Get("window").Get("location").Call("reload")
+		default:
+		}
+		return nil
+	})
 
 	p := shellwords.NewParser()
 
@@ -825,7 +833,9 @@ func (a *App) Run() error {
 			}
 			jsutil.TryCatch(
 				func() { // try
-					if err := cmd.Run(args); err != nil {
+					ctx, cancel := context.WithCancel(a.ctx)
+					defer cancel()
+					if err := cmd.RunContext(ctx, args); err != nil {
 						t.Errorf("%v", err)
 					}
 				},
@@ -885,7 +895,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 	target := ctx.Args().Get(0)
 	keyName := ctx.String("identity")
 
-	cctx, cancel := context.WithCancel(a.ctx)
+	cctx, cancel := context.WithCancel(ctx.Context)
 	defer cancel()
 
 	client, err := a.sshClient(cctx, target, keyName)
@@ -935,9 +945,8 @@ func (a *App) ssh(ctx *cli.Context) error {
 	if err := session.RequestPty("xterm", t.Rows(), t.Cols(), modes); err != nil {
 		t.Errorf("%v", err)
 	} else {
-		t.OnResize(session.WindowChange)
+		t.OnResize(cctx, session.WindowChange)
 	}
-	defer t.OnResize(nil)
 	if err := session.Shell(); err != nil {
 		return fmt.Errorf("session.Shell: %w", err)
 	}
@@ -958,7 +967,7 @@ func (a *App) sftpUpload(ctx *cli.Context) error {
 		return fmt.Errorf("invalid target %q", target)
 	}
 
-	cctx, cancel := context.WithCancel(a.ctx)
+	cctx, cancel := context.WithCancel(ctx.Context)
 	defer cancel()
 
 	c, err := a.sshClient(cctx, target, keyName)
@@ -1036,7 +1045,7 @@ func (a *App) sftpDownload(ctx *cli.Context) error {
 		return fmt.Errorf("invalid target %q", target)
 	}
 
-	cctx, cancel := context.WithCancel(a.ctx)
+	cctx, cancel := context.WithCancel(ctx.Context)
 	defer cancel()
 
 	c, err := a.sshClient(cctx, target, keyName)
