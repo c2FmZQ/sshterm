@@ -234,7 +234,7 @@ func (h *StreamHelper) addStream(rc io.Reader, headers map[string]any, progress 
 	return id, ch, nil
 }
 
-func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, progress func(int64)) (err error) {
+func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, progress func(int64), hook func(string) error) (err error) {
 	defer rc.Close()
 	if h == nil {
 		return errors.New("streaming download unavailable")
@@ -251,10 +251,17 @@ func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, p
 	if err != nil {
 		return err
 	}
-	anchor := Document.Call("createElement", "a")
-	anchor.Set("href", "./stream/"+id)
-	Body.Call("appendChild", anchor)
-	anchor.Call("click")
-	Body.Call("removeChild", anchor)
+	url := "./stream/" + id
+	if hook != nil {
+		if err := hook(url); err != nil {
+			return err
+		}
+	} else {
+		anchor := Document.Call("createElement", "a")
+		anchor.Set("href", url)
+		Body.Call("appendChild", anchor)
+		anchor.Call("click")
+		Body.Call("removeChild", anchor)
+	}
 	return <-done
 }

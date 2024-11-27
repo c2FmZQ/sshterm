@@ -71,6 +71,7 @@ type Config struct {
 	DBName       string
 	UploadHook   func(accept string, multiple bool) []jsutil.ImportedFile
 	DownloadHook func(content []byte, name, typ string) error
+	StreamHook   func(url string) error
 }
 
 func New(cfg *Config) (*App, error) {
@@ -1067,7 +1068,7 @@ func (a *App) sftpDownload(ctx *cli.Context) error {
 		calls.Add(1)
 	}
 	t.Printf("%s ", name)
-	if err := a.streamHelper.Download(r, name, size, progress); err != nil {
+	if err := a.streamHelper.Download(r, name, size, progress, a.cfg.StreamHook); err != nil {
 		return err
 	}
 	calls.Store(0)

@@ -28,6 +28,7 @@ package tests
 import (
 	"bytes"
 	"net/http"
+	"syscall/js"
 	"testing"
 	"time"
 
@@ -213,12 +214,52 @@ func TestSSH(t *testing.T) {
 		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "file upload testuser@test-server:.\n", Expect: "100%"},
-		// download doesn't work with headless-shell
-		//{Type: "file download testuser@test-server:hello.txt\n", Expect: "100%"},
 
 		{Expect: prompt},
 		{Type: "exit\n"},
 	})
+	if err := <-result; err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+}
+
+func TestDownload(t *testing.T) {
+	if js.Global().Get("navigator").Get("serviceWorker").IsUndefined() {
+		t.Skip("Service Worker not available")
+	}
+	a, err := app.New(appConfig)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	result := make(chan error)
+	go func() {
+		result <- a.Run()
+	}()
+
+	txt := []byte("Hello World!")
+	fileUploader.enqueue("hello-again.txt", "text/plain", int64(len(txt)), txt)
+
+	downloadCh := fileDownloader.wait()
+
+	script(t, []line{
+		{Expect: prompt},
+		{Type: "db wipe\n", Expect: "Continue[?]"},
+		{Type: "Y\n", Expect: prompt},
+		{Type: "ep add test-server websocket\n", Expect: prompt},
+		{Type: "file upload testuser@test-server:.\n", Expect: "(?s)Host key for websocket.*Continue"},
+		{Type: "\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "100%"},
+
+		{Type: "file download testuser@test-server:hello-again.txt\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "100%"},
+
+		{Expect: prompt},
+		{Type: "exit\n"},
+	})
+	file := <-downloadCh
+	if got, want := file.Name, "hello-again.txt"; got != want {
+		t.Errorf("filename = %q, want %q", got, want)
+	}
 	if err := <-result; err != nil {
 		t.Fatalf("Run(): %v", err)
 	}

@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"regexp"
 	"sync"
 	"syscall/js"
@@ -87,6 +88,7 @@ func start(this js.Value, args []js.Value) any {
 		DBName:       "sshtermtest",
 		UploadHook:   fileUploader.upload,
 		DownloadHook: fileDownloader.download,
+		StreamHook:   fileDownloader.stream,
 	}
 	terminalIO = newTermIO(appConfig.Term)
 
@@ -159,6 +161,26 @@ func (d *downloader) download(data []byte, filename, mimeType string) error {
 		return errors.New("not ready for download")
 	}
 	d.receiver <- downloadedFile{filename, mimeType, data}
+	return nil
+}
+
+func (d *downloader) stream(url string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.receiver == nil {
+		return errors.New("not ready for download")
+	}
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var filename string
+	if m := regexp.MustCompile(`^attachment; filename="(.*)"`).FindStringSubmatch(resp.Header.Get("Content-Disposition")); len(m) > 1 {
+		filename = m[1]
+	}
+	d.receiver <- downloadedFile{filename, resp.Header.Get("Content-Type"), body}
 	return nil
 }
 
