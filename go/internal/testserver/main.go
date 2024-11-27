@@ -79,6 +79,11 @@ func main() {
 		defer conn.Close()
 		sshServer.handle(&netConn{conn: conn})
 	})
+	mux.HandleFunc("/reset", func(w http.ResponseWriter, req *http.Request) {
+		os.RemoveAll(tmpDir)
+		os.Mkdir(tmpDir, 0o755)
+		fmt.Fprintln(w, "OK")
+	})
 	mux.HandleFunc("/addkey", func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != "POST" {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)

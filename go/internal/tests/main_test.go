@@ -104,6 +104,10 @@ func start(this js.Value, args []js.Value) any {
 	}
 
 	return jsutil.NewPromise(func() (any, error) {
+		if _, err := http.Get("/reset"); err != nil {
+			appConfig.Term.Call("writeln", "reset: "+err.Error())
+		}
+
 		out := "PASS"
 		if res := testingM.Run(); res != 0 {
 			out = "FAIL"
