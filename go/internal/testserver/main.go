@@ -93,7 +93,11 @@ func main() {
 	})
 	mux.HandleFunc("/deletekey", func(w http.ResponseWriter, req *http.Request) {
 	})
-	mux.Handle("/", http.FileServer(http.Dir(*docRoot)))
+	fs := http.FileServer(http.Dir(*docRoot))
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		fs.ServeHTTP(w, req)
+	})
 
 	httpServer := http.Server{
 		Handler: mux,

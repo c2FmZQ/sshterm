@@ -28,6 +28,7 @@ package tests
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,6 +53,8 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	flag.Parse()
+	flag.Set("test.failfast", "true")
 	sshApp := js.Global().Get("sshApp")
 	if sshApp.Type() != js.TypeObject {
 		panic("sshApp object not found")

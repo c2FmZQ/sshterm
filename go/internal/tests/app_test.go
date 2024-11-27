@@ -150,10 +150,10 @@ func TestKeys(t *testing.T) {
 	script(t, []line{
 		{Type: "keys import samekey\n", Expect: "Enter passphrase for samekey"},
 		{Type: "foobar\n", Expect: prompt},
-		{Type: "keys list\n", Expect: "(?s)ssh-ed25519 .* samekey\nssh-ed25519 .* test\n"},
+		{Type: "keys list\n", Expect: "(?s)ssh-ed25519 .* samekey\r\nssh-ed25519 .* test\r\n"},
 		{Expect: prompt},
 		{Type: "keys delete test\n", Expect: prompt},
-		{Type: "keys list\n", Expect: "ssh-ed25519 .* samekey\n"},
+		{Type: "keys list\n", Expect: "ssh-ed25519 .* samekey\r\n"},
 		{Expect: prompt},
 		{Type: "keys delete samekey\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "<none>"},
@@ -193,7 +193,7 @@ func TestSSH(t *testing.T) {
 		{Type: "keys add test\n", Expect: "Enter passphrase"},
 		{Type: "foobar\n", Expect: "Re-enter the same passphrase"},
 		{Type: "foobar\n", Expect: prompt},
-		{Type: "keys list\n", Expect: "ssh-ed25519 .* test\n", Do: func(m []string) {
+		{Type: "keys list\n", Expect: "ssh-ed25519 .* test\r\n", Do: func(m []string) {
 			pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(m[0]))
 			if err != nil {
 				t.Fatalf("ssh.ParseAuthorizedKey: %v", err)

@@ -59,7 +59,6 @@ window.addEventListener('load', () => {
     console.log('ServiceWorker not available');
   }
   const term = new Terminal({
-    convertEol: true,
     cursorBlink: true,
     cursorInactiveStyle: 'outline',
     cursorStyle: 'block',
