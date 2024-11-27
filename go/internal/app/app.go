@@ -200,7 +200,7 @@ func (a *App) Run() error {
 		{
 			Name:            "ssh",
 			Usage:           "Start an SSH connection",
-			UsageText:       "ssh [-i <keyname>] username@<endpoint>",
+			UsageText:       "ssh [-i <keyname>] username@<endpoint> [command]",
 			Description:     "The ssh command starts an SSH connection with a remote server.\nUse the -i flag to select a key (see the keys command). If a key\nwith the name 'default' exists, it will be used by default.\n\nThe <endpoint> must have been configured with the ep command.",
 			HideHelpCommand: true,
 			Action:          a.ssh,
@@ -888,11 +888,15 @@ func (a *App) exportFile(data []byte, filename, mimeType string) error {
 
 func (a *App) ssh(ctx *cli.Context) error {
 	t := a.term
-	if ctx.Args().Len() != 1 {
+	if ctx.Args().Len() == 0 {
 		cli.ShowSubcommandHelp(ctx)
 		return nil
 	}
 	target := ctx.Args().Get(0)
+	var command string
+	if ctx.Args().Len() >= 2 {
+		command = strings.Join(ctx.Args().Slice()[1:], " ")
+	}
 	keyName := ctx.String("identity")
 
 	cctx, cancel := context.WithCancel(ctx.Context)
@@ -924,6 +928,9 @@ func (a *App) ssh(ctx *cli.Context) error {
 	session.Stdout = t
 	session.Stderr = t
 
+	if command != "" {
+		return session.Run(command)
+	}
 	modes := ssh.TerminalModes{
 		ssh.ECHO:          1,
 		ssh.ICRNL:         1,
