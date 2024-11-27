@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"syscall/js"
 
 	"golang.org/x/term"
@@ -59,6 +60,8 @@ func New(ctx context.Context, t js.Value) *Terminal {
 			return tt.tw.Close()
 		case <-tt.tw.closeCh:
 		case tt.tw.dataCh <- []byte(args[0].String()):
+		default:
+			return errors.New("input buffer full")
 		}
 		return nil
 	}))
@@ -77,6 +80,8 @@ func New(ctx context.Context, t js.Value) *Terminal {
 	tt.vt.SetSize(tt.Cols(), tt.Rows())
 	go func() {
 		for resize := range tt.tw.resizeCh {
+			tt.tw.resizeMu.Lock()
+			defer tt.tw.resizeMu.Unlock()
 			tt.vt.SetSize(resize.cols, resize.rows)
 			if tt.tw.onResize != nil {
 				tt.tw.onResize(resize.rows, resize.cols)
@@ -104,6 +109,7 @@ type termWrapper struct {
 	xt       js.Value // xterm.Terminal
 	dataCh   chan []byte
 	closeCh  chan struct{}
+	resizeMu sync.Mutex
 	resizeCh chan resizeEvent
 	onResize func(h, w int) error
 	dispose  []js.Value
@@ -131,18 +137,21 @@ func (t *termWrapper) Close() error {
 	return nil
 }
 
-func (t *termWrapper) Read(b []byte) (int, error) {
-	if t.isClosed() {
-		return 0, ErrClosed
+func (t *termWrapper) readChunk() error {
+	select {
+	case <-t.ctx.Done():
+		return t.ctx.Err()
+	case b := <-t.dataCh:
+		t.r = append(t.r, b...)
+		return nil
+	case <-t.closeCh:
+		return io.EOF
 	}
-	if len(t.r) == 0 {
-		select {
-		case <-t.ctx.Done():
-			return 0, t.ctx.Err()
-		case <-t.closeCh:
-			return 0, ErrClosed
-		case t.r = <-t.dataCh:
-		}
+}
+
+func (t *termWrapper) Read(b []byte) (int, error) {
+	for len(t.r) == 0 || (len(b) > len(t.r) && len(t.dataCh) > 0) {
+		t.readChunk()
 	}
 	n := copy(b, t.r)
 	t.r = t.r[n:]
@@ -167,6 +176,8 @@ func (t *Terminal) setDefaultPrompt() {
 }
 
 func (t *Terminal) OnResize(f func(h, w int) error) {
+	t.tw.resizeMu.Lock()
+	defer t.tw.resizeMu.Unlock()
 	t.tw.onResize = f
 }
 
