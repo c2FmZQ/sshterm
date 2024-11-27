@@ -100,7 +100,7 @@ func TestEndpoint(t *testing.T) {
 
 	script(t, []line{
 		{Expect: prompt},
-		{Type: "db wipe\n", Expect: "Continue[?]"},
+		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 		{Type: "ep list\n", Expect: "<none>"},
 		{Type: "ep add test foobar\n", Expect: prompt},
@@ -129,7 +129,7 @@ func TestKeys(t *testing.T) {
 
 	script(t, []line{
 		{Expect: prompt},
-		{Type: "db wipe\n", Expect: "Continue[?]"},
+		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "<none>"},
 		{Type: "keys add test\n", Expect: "Enter passphrase"},
@@ -137,7 +137,7 @@ func TestKeys(t *testing.T) {
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
 		{Expect: prompt},
-		{Type: "keys export test\n", Expect: "Continue?"},
+		{Type: "keys export test\n", Expect: `Continue\?`},
 		{Type: "Y\n"},
 	})
 	file := <-downloadCh
@@ -181,10 +181,10 @@ func TestSSH(t *testing.T) {
 
 	script(t, []line{
 		{Expect: prompt},
-		{Type: "db wipe\n", Expect: "Continue[?]"},
+		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 		{Type: "ep add test-server websocket\n", Expect: prompt},
-		{Type: "ssh testuser@test-server\n", Expect: "(?s)Host key for websocket.*Continue?"},
+		{Type: "ssh testuser@test-server\n", Expect: `(?s)Host key for websocket.*Continue\?`},
 		{Type: "Y\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "remote> "},
 		{Type: "exit\n", Expect: prompt},
@@ -243,10 +243,10 @@ func TestDownload(t *testing.T) {
 
 	script(t, []line{
 		{Expect: prompt},
-		{Type: "db wipe\n", Expect: "Continue[?]"},
+		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 		{Type: "ep add test-server websocket\n", Expect: prompt},
-		{Type: "file upload testuser@test-server:.\n", Expect: "(?s)Host key for websocket.*Continue"},
+		{Type: "file upload testuser@test-server:.\n", Expect: `(?s)Host key for websocket.*Continue\?`},
 		{Type: "\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "100%"},
 
