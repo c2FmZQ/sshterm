@@ -1,6 +1,6 @@
 # SSH Term Release Notes
 
-## next
+## v0.3.1
 
 ### :wrench: Bug fixes
 
