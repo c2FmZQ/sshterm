@@ -2,7 +2,7 @@
 
 ## next
 
-### :star1: Feature improvements
+### :star: Feature improvements
 
 * Add the optional [command] argument to the ssh command, which runs a command on the remote server instead of opening a shell.
 
