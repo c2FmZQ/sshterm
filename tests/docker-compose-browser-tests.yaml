@@ -13,6 +13,8 @@ services:
     container_name: "devtest"
     image: "sshterm-testserver"
     working_dir: "/"
+    volumes:
+      - "/tmp:/tmp"
     depends_on:
       chrome:
         condition: service_healthy

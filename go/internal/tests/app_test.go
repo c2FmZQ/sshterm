@@ -175,6 +175,9 @@ func TestSSH(t *testing.T) {
 		result <- a.Run()
 	}()
 
+	txt := []byte("Hello World!")
+	fileUploader.enqueue("hello.txt", "text/plain", int64(len(txt)), txt)
+
 	script(t, []line{
 		{Expect: prompt},
 		{Type: "db wipe\n", Expect: "Continue[?]"},
@@ -209,6 +212,11 @@ func TestSSH(t *testing.T) {
 		{Type: "exit\n", Expect: prompt},
 		{Wait: time.Second, Type: "\n\n"},
 
+		{Type: "file upload testuser@test-server:.\n", Expect: "100%"},
+		// download doesn't work with headless-shell
+		//{Type: "file download testuser@test-server:hello.txt\n", Expect: "100%"},
+
+		{Expect: prompt},
 		{Type: "exit\n"},
 	})
 	if err := <-result; err != nil {

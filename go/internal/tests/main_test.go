@@ -94,6 +94,10 @@ func start(this js.Value, args []js.Value) any {
 	appConfig.Term.Call("writeln", "\x1b[32m║ SSH TERM TESTS ║\x1b[0m")
 	appConfig.Term.Call("writeln", "\x1b[32m╚════════════════╝\x1b[0m")
 
+	if js.Global().Get("navigator").Get("serviceWorker").IsUndefined() {
+		appConfig.Term.Call("writeln", "navigator.serviceWorker is undefined")
+	}
+
 	return jsutil.NewPromise(func() (any, error) {
 		out := "PASS"
 		if res := testingM.Run(); res != 0 {

@@ -39,6 +39,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 	"github.com/gorilla/websocket"
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
 )
@@ -47,6 +48,12 @@ func main() {
 	addr := flag.String("addr", ":8880", "The TCP address to listen to")
 	docRoot := flag.String("document-root", "", "The document root directory")
 	withChromeDP := flag.String("with-chromedp", "", "The url of the remote debugging port")
+
+	tmpDir, err := os.MkdirTemp("", "sshterm-test")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
 
 	flag.Parse()
 	if *docRoot == "" {
@@ -57,7 +64,7 @@ func main() {
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}
-	sshServer, err := newSSHServer()
+	sshServer, err := newSSHServer(tmpDir)
 	if err != nil {
 		log.Fatalf("SSH Server: %v", err)
 	}
@@ -88,9 +95,7 @@ func main() {
 	})
 	mux.Handle("/", http.FileServer(http.Dir(*docRoot)))
 
-	log.Printf("HTTP Server listening on %s. Document root is %s\n", *addr, *docRoot)
 	httpServer := http.Server{
-		Addr:    *addr,
 		Handler: mux,
 	}
 
@@ -98,7 +103,12 @@ func main() {
 	defer cancel()
 
 	go func() {
-		if err := httpServer.ListenAndServe(); err != nil {
+		l, err := net.Listen("tcp", *addr)
+		if err != nil {
+			log.Fatalf("listen: %v", err)
+		}
+		log.Printf("HTTP Server listening on %s. Document root is %s\n", l.Addr(), *docRoot)
+		if err := httpServer.Serve(l); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
 	}()
@@ -182,12 +192,13 @@ type sshServer struct {
 	mu             sync.Mutex
 	authorizedKeys map[string]bool
 	config         *ssh.ServerConfig
+	dir            string
 
 	signer ssh.Signer
 	pubKey ssh.PublicKey
 }
 
-func newSSHServer() (*sshServer, error) {
+func newSSHServer(dir string) (*sshServer, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("ed25519.GenerateKey: %w", err)
@@ -203,6 +214,7 @@ func newSSHServer() (*sshServer, error) {
 
 	server := &sshServer{
 		authorizedKeys: make(map[string]bool),
+		dir:            dir,
 		signer:         signer,
 		pubKey:         sshPub,
 	}
@@ -268,26 +280,54 @@ func (s *sshServer) handle(nConn net.Conn) error {
 			defer wg.Done()
 			for req := range in {
 				log.Printf("request type: %s", req.Type)
-				req.Reply(req.Type == "shell", nil)
+				switch req.Type {
+				case "shell":
+					req.Reply(true, nil)
+					term := terminal.NewTerminal(channel, "remote> ")
+
+					wg.Add(1)
+					go func() {
+						defer func() {
+							channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
+							channel.Close()
+							wg.Done()
+						}()
+						for {
+							line, err := term.ReadLine()
+							if err != nil || line == "exit" {
+								break
+							}
+						}
+					}()
+
+				case "subsystem":
+					if len(req.Payload) < 4 || string(req.Payload[4:]) != "sftp" {
+						req.Reply(false, nil)
+						return
+					}
+					req.Reply(true, nil)
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						server, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(s.dir))
+						if err != nil {
+							log.Fatal(err)
+						}
+						if err := server.Serve(); err != nil {
+							if err != io.EOF {
+								log.Fatal("sftp server completed with error:", err)
+							}
+						}
+						server.Close()
+						log.Print("sftp client exited session.")
+					}()
+
+				default:
+					req.Reply(false, nil)
+				}
 			}
 		}(requests)
 
-		term := terminal.NewTerminal(channel, "remote> ")
-
-		wg.Add(1)
-		go func() {
-			defer func() {
-				channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
-				channel.Close()
-				wg.Done()
-			}()
-			for {
-				line, err := term.ReadLine()
-				if err != nil || line == "exit" {
-					break
-				}
-			}
-		}()
 	}
 	return nil
 }
