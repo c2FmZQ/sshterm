@@ -4,7 +4,7 @@
 
 ### :wrench: Bug fixes
 
-* Fixed handling of CR in terminal.
+* Fixed handling of CR, and other terminal issues.
 
 ## v0.3.0
 
