@@ -26,6 +26,20 @@
 'use strict';
 
 window.sshApp = {};
+sshApp.exited = null;
+sshApp.onExit = result => {
+  for (let i = 0; i < sshApp.disposables; i++) {
+    sshApp.disposables[i]('dispose');
+  }
+  window.sshApp.exited = result;
+  const b = document.createElement('button');
+  b.id = 'done';
+  b.addEventListener('click', () => window.location.reload());
+  b.textContent = 'reload';
+  b.style = 'position: fixed; top: 0; right: 0;';
+  document.body.appendChild(b);
+  console.log('SSH', result);
+};
 window.sshApp.ready = new Promise(resolve => {
   sshApp.sshIsReady = () => {
     console.log('SSH WASM is ready');
@@ -34,15 +48,17 @@ window.sshApp.ready = new Promise(resolve => {
 });
 
 const go = new Go();
-WebAssembly.instantiateStreaming(fetch('ssh.wasm'), go.importObject)
+const wasmFile = window.location.pathname.indexOf('tests.html') !== -1 ? 'tests.wasm' : 'ssh.wasm';
+WebAssembly.instantiateStreaming(fetch(wasmFile), go.importObject)
   .then(r => go.run(r.instance));
 
 window.addEventListener('load', () => {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('stream-helper.js').then(r => r.update());
+  } else {
+    console.log('ServiceWorker not available');
   }
   const term = new Terminal({
-    convertEol: true,
     cursorBlink: true,
     cursorInactiveStyle: 'outline',
     cursorStyle: 'block',
@@ -50,13 +66,15 @@ window.addEventListener('load', () => {
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
   term.open(document.getElementById('terminal'));
-  term.onTitleChange(t => document.querySelector('head title').textContent = t);
-  term.onSelectionChange(() => {
-    const v = term.getSelection();
-    if (v !== '') {
-      navigator.clipboard.writeText(v);
-    }
-  });
+  sshApp.disposables = [
+    term.onTitleChange(t => document.querySelector('head title').textContent = t),
+    term.onSelectionChange(() => {
+      const v = term.getSelection();
+      if (v !== '' && navigator.clipboard) {
+        navigator.clipboard.writeText(v);
+      }
+    }),
+  ];
   // Override the right-click to paste instead of bring up the context menu.
   term.element.addEventListener('contextmenu', event => {
     event.preventDefault();
@@ -65,11 +83,13 @@ window.addEventListener('load', () => {
   });
   window.addEventListener('resize', () => fitAddon.fit())
   fitAddon.fit();
+  sshApp.term = term;
   sshApp.ready
     .then(() => sshApp.start({term}))
-    .then(v => console.log('SSH', v))
+    .then(v => sshApp.onExit(v))
     .catch(e => {
       console.log('SSH ERROR', e);
       term.writeln(e.message);
+      sshApp.onExit(e.message);
     });
 });

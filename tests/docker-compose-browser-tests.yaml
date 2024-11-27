@@ -1,0 +1,20 @@
+services:
+  chrome:
+    container_name: "headless-shell"
+    image: "chromedp/headless-shell:133.0.6847.2"
+    shm_size: "2gb"
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 5s
+      retries: 5
+      start_period: 5s
+
+  devtest:
+    container_name: "devtest"
+    image: "sshterm-testserver"
+    working_dir: "/"
+    volumes:
+      - "/tmp:/tmp"
+    depends_on:
+      chrome:
+        condition: service_healthy

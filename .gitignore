@@ -1,4 +1,5 @@
 ssh.wasm
+tests.wasm
 wasm_exec.js
 node_modules
 xterm.css

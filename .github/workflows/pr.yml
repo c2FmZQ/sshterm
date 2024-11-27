@@ -43,3 +43,5 @@ jobs:
           echo "${out}"
           exit 1
         fi
+    - name: Run headless tests
+      run: ./tests/run-headlead-tests.sh

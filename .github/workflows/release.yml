@@ -57,7 +57,7 @@ jobs:
         mkdir bin
         cp -r docroot "bin/${basename}"
         cd bin
-        rm -f .gitignore
+        rm -f .gitignore test*
         tar --owner=nobody --group=nogroup -zcvf "${basename}.tar.gz" "${basename}"
         rm -rf "${basename}"
         sha256sum "${basename}.tar.gz" | cut -d " " -f1 > "${basename}.tar.gz.sha256"

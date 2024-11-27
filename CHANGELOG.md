@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :wrench: Bug fixes
+
+* Fixed handling of CR, and other terminal issues.
+
 ## v0.3.0
 
 ### :star2: New features

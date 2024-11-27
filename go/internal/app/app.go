@@ -64,8 +64,14 @@ import (
 
 var backupMagic = []byte{0xe2, 0x9b, 0x94, '0'}
 
+const defaultDBName = "sshterm"
+
 type Config struct {
-	Term js.Value
+	Term         js.Value
+	DBName       string
+	UploadHook   func(accept string, multiple bool) []jsutil.ImportedFile
+	DownloadHook func(content []byte, name, typ string) error
+	StreamHook   func(url string) error
 }
 
 func New(cfg *Config) (*App, error) {
@@ -111,17 +117,18 @@ type key struct {
 	Private []byte `json:"private"`
 }
 
-const dbName = "sshterm"
-
 func (a *App) initDB() error {
+	if a.cfg.DBName == "" {
+		a.cfg.DBName = defaultDBName
+	}
 	if !a.data.Persist {
 		if a.db != nil {
 			a.db.Close()
 			a.db = nil
 		}
-		return indexeddb.Delete(dbName)
+		return indexeddb.Delete(a.cfg.DBName)
 	}
-	db, err := indexeddb.New(dbName)
+	db, err := indexeddb.New(a.cfg.DBName)
 	if err != nil {
 		return fmt.Errorf("indexeddb.New: %w", err)
 	}
@@ -156,6 +163,14 @@ func (a *App) Run() error {
 			a.db.Close()
 		}
 	}()
+	t.OnKey(ctx, func(k string) error {
+		switch k {
+		case "\x12": // CTRL-R
+			js.Global().Get("window").Get("location").Call("reload")
+		default:
+		}
+		return nil
+	})
 
 	p := shellwords.NewParser()
 
@@ -409,7 +424,7 @@ func (a *App) Run() error {
 						}
 						name := ctx.Args().Get(0)
 
-						files := jsutil.ImportFiles("", false)
+						files := a.importFiles("", false)
 						if len(files) == 0 {
 							return nil
 						}
@@ -465,14 +480,7 @@ func (a *App) Run() error {
 						if !t.Confirm(fmt.Sprintf("You are about to export the PRIVATE key %q\nContinue?", name), false) {
 							return errors.New("aborted")
 						}
-						if a.streamHelper != nil {
-							if err := a.streamHelper.Download(io.NopCloser(bytes.NewReader(key.Private)), name+".key", int64(len(key.Private)), nil); err != nil {
-								return err
-							}
-						} else {
-							jsutil.ExportFile(key.Private, name+".key", "application/octet-stream")
-						}
-						return nil
+						return a.exportFile(key.Private, name+".key", "application/octet-stream")
 					},
 				},
 			},
@@ -717,8 +725,7 @@ func (a *App) Run() error {
 						copy(nonce[:], salt[16:40])
 						copy(key[:], dk)
 						enc := secretbox.Seal(salt, payload, &nonce, &key)
-						jsutil.ExportFile(enc, fmt.Sprintf("sshterm-%s.backup", time.Now().UTC().Format(time.DateOnly)), "application/octet-stream")
-						return nil
+						return a.exportFile(enc, fmt.Sprintf("sshterm-%s.backup", time.Now().UTC().Format(time.DateOnly)), "application/octet-stream")
 					},
 				},
 				{
@@ -735,7 +742,7 @@ func (a *App) Run() error {
 								return errors.New("aborted")
 							}
 						}
-						files := jsutil.ImportFiles(".backup", false)
+						files := a.importFiles(".backup", false)
 						if len(files) == 0 {
 							return nil
 						}
@@ -826,7 +833,9 @@ func (a *App) Run() error {
 			}
 			jsutil.TryCatch(
 				func() { // try
-					if err := cmd.Run(args); err != nil {
+					ctx, cancel := context.WithCancel(a.ctx)
+					defer cancel()
+					if err := cmd.RunContext(ctx, args); err != nil {
 						t.Errorf("%v", err)
 					}
 				},
@@ -863,6 +872,20 @@ func (a *App) saveKeys() error {
 	return a.db.Set("keys", a.data.Keys)
 }
 
+func (a *App) importFiles(accept string, multiple bool) []jsutil.ImportedFile {
+	if a.cfg.UploadHook != nil {
+		return a.cfg.UploadHook(accept, multiple)
+	}
+	return jsutil.ImportFiles(accept, multiple)
+}
+
+func (a *App) exportFile(data []byte, filename, mimeType string) error {
+	if a.cfg.DownloadHook != nil {
+		return a.cfg.DownloadHook(data, filename, mimeType)
+	}
+	return a.exportFile(data, filename, mimeType)
+}
+
 func (a *App) ssh(ctx *cli.Context) error {
 	t := a.term
 	if ctx.Args().Len() != 1 {
@@ -872,7 +895,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 	target := ctx.Args().Get(0)
 	keyName := ctx.String("identity")
 
-	cctx, cancel := context.WithCancel(a.ctx)
+	cctx, cancel := context.WithCancel(ctx.Context)
 	defer cancel()
 
 	client, err := a.sshClient(cctx, target, keyName)
@@ -920,10 +943,10 @@ func (a *App) ssh(ctx *cli.Context) error {
 		ssh.TTY_OP_OSPEED: 14400,
 	}
 	if err := session.RequestPty("xterm", t.Rows(), t.Cols(), modes); err != nil {
-		return fmt.Errorf("session.RequestPty: %w", err)
+		t.Errorf("%v", err)
+	} else {
+		t.OnResize(cctx, session.WindowChange)
 	}
-	t.OnResize(session.WindowChange)
-	defer t.OnResize(nil)
 	if err := session.Shell(); err != nil {
 		return fmt.Errorf("session.Shell: %w", err)
 	}
@@ -944,7 +967,7 @@ func (a *App) sftpUpload(ctx *cli.Context) error {
 		return fmt.Errorf("invalid target %q", target)
 	}
 
-	cctx, cancel := context.WithCancel(a.ctx)
+	cctx, cancel := context.WithCancel(ctx.Context)
 	defer cancel()
 
 	c, err := a.sshClient(cctx, target, keyName)
@@ -962,7 +985,7 @@ func (a *App) sftpUpload(ctx *cli.Context) error {
 		return fmt.Errorf("remote path %q is not a directory", p)
 	}
 
-	files := jsutil.ImportFiles("", true)
+	files := a.importFiles("", true)
 	cp := func(f jsutil.ImportedFile) error {
 		defer f.Content.Close()
 		fn := path.Join(p, f.Name)
@@ -1022,7 +1045,7 @@ func (a *App) sftpDownload(ctx *cli.Context) error {
 		return fmt.Errorf("invalid target %q", target)
 	}
 
-	cctx, cancel := context.WithCancel(a.ctx)
+	cctx, cancel := context.WithCancel(ctx.Context)
 	defer cancel()
 
 	c, err := a.sshClient(cctx, target, keyName)
@@ -1054,7 +1077,7 @@ func (a *App) sftpDownload(ctx *cli.Context) error {
 		calls.Add(1)
 	}
 	t.Printf("%s ", name)
-	if err := a.streamHelper.Download(r, name, size, progress); err != nil {
+	if err := a.streamHelper.Download(r, name, size, progress, a.cfg.StreamHook); err != nil {
 		return err
 	}
 	calls.Store(0)
