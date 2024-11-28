@@ -208,9 +208,9 @@ func NewStreamHelper() *StreamHelper {
 }
 
 func UnregisterServiceWorker() {
-	if container := js.Global().Get("navigator").Get("serviceWorker"); container.Truthy() {
-		if registration, err := Await(container.Call("getRegistration")); err == nil {
-			registration.Call("unregister")
+	if c := js.Global().Get("navigator").Get("serviceWorker"); c.Truthy() {
+		if r, err := Await(c.Call("getRegistration")); err == nil && r.Truthy() {
+			r.Call("unregister")
 		}
 	}
 }
