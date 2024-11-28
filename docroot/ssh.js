@@ -53,11 +53,6 @@ WebAssembly.instantiateStreaming(fetch(wasmFile), go.importObject)
   .then(r => go.run(r.instance));
 
 window.addEventListener('load', () => {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('stream-helper.js').then(r => r.update());
-  } else {
-    console.log('ServiceWorker not available');
-  }
   const term = new Terminal({
     cursorBlink: true,
     cursorInactiveStyle: 'outline',

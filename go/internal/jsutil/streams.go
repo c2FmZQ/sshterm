@@ -128,7 +128,11 @@ func NewStreamHelper() *StreamHelper {
 	if !container.Truthy() {
 		return nil
 	}
-	if r, err := Await(container.Call("getRegistration")); err != nil || !r.Truthy() {
+	registration, err := Await(container.Call("getRegistration"))
+	if err != nil || !registration.Truthy() {
+		registration, err = Await(container.Call("register", "stream-helper.js"))
+	}
+	if err != nil || !registration.Truthy() {
 		return nil
 	}
 
@@ -201,6 +205,14 @@ func NewStreamHelper() *StreamHelper {
 	))
 
 	return h
+}
+
+func UnregisterServiceWorker() {
+	if c := js.Global().Get("navigator").Get("serviceWorker"); c.Truthy() {
+		if r, err := Await(c.Call("getRegistration")); err == nil && r.Truthy() {
+			r.Call("unregister")
+		}
+	}
 }
 
 type StreamHelper struct {
