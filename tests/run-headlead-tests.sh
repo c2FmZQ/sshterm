@@ -11,7 +11,6 @@ export CGO_ENABLED=0
 docker build -f tests/Dockerfile -t sshterm-testserver .
 rm -f testserver
 
-export USERID=65534
 docker compose -f tests/docker-compose-browser-tests.yaml up \
   --abort-on-container-exit \
   --exit-code-from=devtest

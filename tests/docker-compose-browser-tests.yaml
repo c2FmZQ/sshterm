@@ -17,7 +17,10 @@ services:
     command: "--with-chromedp=ws://chrome:9222"
     working_dir: "/"
     volumes:
-      - "/tmp:/tmp"
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 100M
     depends_on:
       chrome:
         condition: service_healthy

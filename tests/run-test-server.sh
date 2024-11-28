@@ -12,9 +12,9 @@ docker build -f tests/Dockerfile -t sshterm-testserver .
 rm -f testserver
 
 docker run \
-  --user=65534:65534 \
-  --volume=/tmp:/tmp \
-  --publish=8880:8880 \
   --rm -it \
+  --user=65534:65534 \
+  --mount=type=tmpfs,destination=/tmp,tmpfs-mode=1777 \
+  --publish=8880:8880 \
   --name=testserver \
   sshterm-testserver
