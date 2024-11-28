@@ -5,6 +5,11 @@
 ### :star: Feature improvements
 
 * Add the optional [command] argument to the ssh command, which runs a command on the remote server instead of opening a shell.
+* Add keyboard shortcuts.
+
+### :wrench: Bug fixes
+
+* Fix db backup.
 
 ## v0.3.1
 

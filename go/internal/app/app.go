@@ -84,6 +84,7 @@ func New(cfg *Config) (*App, error) {
 			Keys:      make(map[string]key),
 		},
 		streamHelper: jsutil.NewStreamHelper(),
+		inShell:      new(atomic.Bool),
 	}
 	return app, nil
 }
@@ -103,6 +104,8 @@ type App struct {
 	data  appData
 
 	streamHelper *jsutil.StreamHelper
+
+	inShell *atomic.Bool
 }
 
 type endpoint struct {
@@ -163,11 +166,28 @@ func (a *App) Run() error {
 			a.db.Close()
 		}
 	}()
-	t.OnKey(ctx, func(k string) error {
-		switch k {
-		case "\x12": // CTRL-R
+
+	shortcuts := map[string]struct {
+		cmd, desc string
+	}{
+		"\x12":     {"reload\r", "CTRL-R"},
+		"\x0c":     {"clear\r", "CTRL-L"},
+		"\x1bh":    {"help shortcuts\r", "ALT-H"},
+		"\x1bp":    {"db persist toggle\r", "ALT-P"},
+		"\x1bb":    {"db restore\r", "ALT-B"},
+		"\x1b\x02": {"db backup\r", "CTRL-ALT-B"},
+		"\x1b\x17": {"db wipe\rYES\r", "CTRL-ALT-W"},
+	}
+	t.OnData(ctx, func(k string) any {
+		if a.inShell.Load() {
+			return nil
+		}
+		if k == "\x12" {
 			js.Global().Get("window").Get("location").Call("reload")
-		default:
+			return nil
+		}
+		if v, exists := shortcuts[k]; exists {
+			return v.cmd
 		}
 		return nil
 	})
@@ -624,7 +644,7 @@ func (a *App) Run() error {
 				{
 					Name:      "persist",
 					Usage:     "Show or change the database persistence to local storage.",
-					UsageText: "db persist [on|off]",
+					UsageText: "db persist [on|off|toggle]",
 					Action: func(ctx *cli.Context) error {
 						if ctx.Args().Len() > 1 {
 							cli.ShowSubcommandHelp(ctx)
@@ -639,6 +659,11 @@ func (a *App) Run() error {
 								}
 							case "off":
 								a.data.Persist = false
+								if err := a.initDB(); err != nil {
+									t.Errorf("%v", err)
+								}
+							case "toggle":
+								a.data.Persist = !a.data.Persist
 								if err := a.initDB(); err != nil {
 									t.Errorf("%v", err)
 								}
@@ -815,9 +840,33 @@ func (a *App) Run() error {
 		}
 		switch name := args[0]; name {
 		case "help", "?":
+			if len(args) == 2 && args[1] == "shortcuts" {
+				t.Printf("Available shortcuts:\n")
+				type pair struct {
+					a, b string
+				}
+				var h []pair
+				maxLen := 0
+				for _, v := range shortcuts {
+					cmd := strings.Trim(fmt.Sprintf("%q", v.cmd), `"`)
+					maxLen = max(maxLen, len(cmd))
+					h = append(h, pair{cmd, v.desc})
+				}
+				sort.Slice(h, func(i, j int) bool {
+					return h[i].a < h[j].a
+				})
+				for _, c := range h {
+					t.Printf("  %*s - %s\n", -maxLen, c.a, c.b)
+				}
+				continue
+			}
 			t.Printf("Available commands:\n")
+			maxLen := 0
 			for _, c := range commands {
-				t.Printf("  %s - %s\n", c.Name, c.Usage)
+				maxLen = max(maxLen, len(c.Name))
+			}
+			for _, c := range commands {
+				t.Printf("  %*s - %s\n", -maxLen, c.Name, c.Usage)
 			}
 			t.Printf("Run any command with --help for more details.\n")
 
@@ -883,7 +932,7 @@ func (a *App) exportFile(data []byte, filename, mimeType string) error {
 	if a.cfg.DownloadHook != nil {
 		return a.cfg.DownloadHook(data, filename, mimeType)
 	}
-	return a.exportFile(data, filename, mimeType)
+	return jsutil.ExportFile(data, filename, mimeType)
 }
 
 func (a *App) ssh(ctx *cli.Context) error {
@@ -954,6 +1003,8 @@ func (a *App) ssh(ctx *cli.Context) error {
 	} else {
 		t.OnResize(cctx, session.WindowChange)
 	}
+	a.inShell.Store(true)
+	defer a.inShell.Store(false)
 	if err := session.Shell(); err != nil {
 		return fmt.Errorf("session.Shell: %w", err)
 	}
