@@ -309,6 +309,14 @@ func (s *sshServer) handle(nConn net.Conn) error {
 						}
 					}()
 
+				case "exec":
+					req.Reply(true, nil)
+					if len(req.Payload) > 4 {
+						fmt.Fprintf(channel, "exec: %s\n", req.Payload[4:])
+					}
+					channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
+					channel.Close()
+
 				case "subsystem":
 					if len(req.Payload) < 4 || string(req.Payload[4:]) != "sftp" {
 						req.Reply(false, nil)

@@ -212,6 +212,8 @@ func TestSSH(t *testing.T) {
 		{Type: "ssh testuser@test-server\n", Expect: "remote> "},
 		{Type: "exit\n", Expect: prompt},
 		{Wait: time.Second, Type: "\n\n"},
+		{Type: "ssh testuser@test-server foo bar\n", Expect: "exec: foo bar"},
+		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "file upload testuser@test-server:.\n", Expect: "100%"},
 

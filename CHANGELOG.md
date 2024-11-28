@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :star: Feature improvements
+
+* Add the optional [command] argument to the ssh command, which runs a command on the remote server instead of opening a shell.
+
 ## v0.3.1
 
 ### :wrench: Bug fixes
