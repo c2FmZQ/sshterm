@@ -83,8 +83,7 @@ func New(cfg *Config) (*App, error) {
 			Endpoints: make(map[string]endpoint),
 			Keys:      make(map[string]key),
 		},
-		streamHelper: jsutil.NewStreamHelper(),
-		inShell:      new(atomic.Bool),
+		inShell: new(atomic.Bool),
 	}
 	return app, nil
 }
@@ -164,6 +163,9 @@ func (a *App) Run() error {
 	defer func() {
 		if a.db != nil {
 			a.db.Close()
+		}
+		if a.streamHelper != nil {
+			a.streamHelper.Unregister()
 		}
 	}()
 
@@ -1103,6 +1105,12 @@ func (a *App) sftpDownload(ctx *cli.Context) error {
 		return fmt.Errorf("invalid target %q", target)
 	}
 
+	if a.streamHelper == nil {
+		a.streamHelper = jsutil.NewStreamHelper()
+		if a.streamHelper == nil {
+			return errors.New("streaming download unavailable")
+		}
+	}
 	cctx, cancel := context.WithCancel(ctx.Context)
 	defer cancel()
 

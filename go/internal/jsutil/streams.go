@@ -128,7 +128,11 @@ func NewStreamHelper() *StreamHelper {
 	if !container.Truthy() {
 		return nil
 	}
-	if r, err := Await(container.Call("getRegistration")); err != nil || !r.Truthy() {
+	registration, err := Await(container.Call("getRegistration"))
+	if err != nil || !registration.Truthy() {
+		registration, err = Await(container.Call("register", "stream-helper.js"))
+	}
+	if err != nil || !registration.Truthy() {
 		return nil
 	}
 
@@ -232,6 +236,14 @@ func (h *StreamHelper) addStream(rc io.Reader, headers map[string]any, progress 
 		progress: progress,
 	}
 	return id, ch, nil
+}
+
+func (StreamHelper) Unregister() {
+	if container := js.Global().Get("navigator").Get("serviceWorker"); container.Truthy() {
+		if registration, err := Await(container.Call("getRegistration")); err == nil {
+			registration.Call("unregister")
+		}
+	}
 }
 
 func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, progress func(int64), hook func(string) error) (err error) {
