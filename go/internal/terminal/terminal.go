@@ -50,36 +50,32 @@ func New(ctx context.Context, t js.Value) *Terminal {
 			dataCh:   make(chan []byte, 100),
 			closeCh:  make(chan struct{}),
 			resizeCh: make(chan resizeEvent, 10),
-			keyCh:    make(chan string, 10),
 		},
 	}
 	tt.vt = term.NewTerminal(tt.tw, "")
 	tt.setDefaultPrompt()
 
-	disp := t.Call("onKey", js.FuncOf(func(this js.Value, args []js.Value) any {
-		event := args[0]
-		select {
-		case <-tt.tw.ctx.Done():
-		case <-tt.tw.closeCh:
-		case tt.tw.keyCh <- event.Get("key").String():
-		default:
-			fmt.Fprintf(os.Stderr, "onkey buffer full\n")
-			return nil
-		}
-		return nil
-	}))
-	tt.tw.dispose = append(tt.tw.dispose, disp)
-	disp = t.Call("onBell", js.FuncOf(func(this js.Value, args []js.Value) any {
+	disp := t.Call("onBell", js.FuncOf(func(this js.Value, args []js.Value) any {
 		fmt.Fprintf(os.Stderr, "onBell\n")
 		return nil
 	}))
 	tt.tw.dispose = append(tt.tw.dispose, disp)
 	disp = t.Call("onData", js.FuncOf(func(this js.Value, args []js.Value) any {
+		key := args[0].String()
+		tt.tw.mu.Lock()
+		if tt.tw.onData != nil {
+			r := tt.tw.onData(key)
+			if r, ok := r.(string); ok {
+				key = r
+			}
+		}
+		tt.tw.mu.Unlock()
+
 		select {
 		case <-tt.tw.ctx.Done():
 			return tt.tw.Close()
 		case <-tt.tw.closeCh:
-		case tt.tw.dataCh <- []byte(args[0].String()):
+		case tt.tw.dataCh <- []byte(key):
 		default:
 			fmt.Fprintf(os.Stderr, "input buffer full\n")
 			return nil
@@ -116,19 +112,6 @@ func New(ctx context.Context, t js.Value) *Terminal {
 			tt.tw.mu.Unlock()
 		}
 	}()
-	go func() {
-		for key := range tt.tw.keyCh {
-			tt.tw.mu.Lock()
-			if tt.tw.onKey != nil {
-				select {
-				case <-tt.tw.onKeyCtx.Done():
-				default:
-					tt.tw.onKey(key)
-				}
-			}
-			tt.tw.mu.Unlock()
-		}
-	}()
 	return tt
 }
 
@@ -151,15 +134,14 @@ type termWrapper struct {
 	dataCh   chan []byte
 	closeCh  chan struct{}
 	resizeCh chan resizeEvent
-	keyCh    chan string
 	dispose  []js.Value
 	r        []byte
 
 	mu          sync.Mutex
 	onResizeCtx context.Context
 	onResize    func(h, w int) error
-	onKeyCtx    context.Context
-	onKey       func(k string) error
+	onDataCtx   context.Context
+	onData      func(k string) any
 }
 
 func (t *termWrapper) isClosed() bool {
@@ -178,7 +160,6 @@ func (t *termWrapper) Close() error {
 	t.dispose = nil
 	if !t.isClosed() {
 		close(t.resizeCh)
-		close(t.keyCh)
 		close(t.closeCh)
 	}
 	return nil
@@ -234,11 +215,11 @@ func (t *Terminal) OnResize(ctx context.Context, f func(h, w int) error) {
 	t.tw.onResize = f
 }
 
-func (t *Terminal) OnKey(ctx context.Context, f func(string) error) {
+func (t *Terminal) OnData(ctx context.Context, f func(string) any) {
 	t.tw.mu.Lock()
 	defer t.tw.mu.Unlock()
-	t.tw.onKeyCtx = ctx
-	t.tw.onKey = f
+	t.tw.onDataCtx = ctx
+	t.tw.onData = f
 }
 
 func (t *Terminal) Close() error {

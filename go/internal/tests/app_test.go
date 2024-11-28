@@ -166,6 +166,56 @@ func TestKeys(t *testing.T) {
 	}
 }
 
+func TestDB(t *testing.T) {
+	a, err := app.New(appConfig)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	result := make(chan error)
+	go func() {
+		result <- a.Run()
+	}()
+
+	downloadCh := fileDownloader.wait()
+
+	script(t, []line{
+		{Expect: prompt},
+		{Type: "db wipe\n", Expect: `Continue\?`},
+		{Type: "Y\n", Expect: prompt},
+		{Type: "ep add test websocket\n", Expect: prompt},
+		{Type: "ep list\n", Expect: "test .* websocket"},
+		{Type: "keys add test\n", Expect: "Enter passphrase"},
+		{Type: "foobar\n", Expect: "Re-enter the same passphrase"},
+		{Type: "foobar\n", Expect: prompt},
+		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
+		{Expect: prompt},
+		{Type: "db backup\n", Expect: "Enter a passphrase for the backup:"},
+		{Type: "foobar\n", Expect: "Enter the same passphrase:"},
+		{Type: "foobar\n", Expect: prompt},
+		{Type: "db wipe\n", Expect: `Continue\?`},
+		{Type: "Y\n", Expect: prompt},
+		{Type: "ep list\n", Expect: "<none>"},
+		{Type: "keys list\n", Expect: "<none>"},
+		{Expect: prompt},
+	})
+	file := <-downloadCh
+
+	fileUploader.enqueue(file.Name, file.Type, int64(len(file.Content)), file.Content)
+
+	script(t, []line{
+		{Type: "db restore\n", Expect: "Enter the passphrase for the backup:"},
+		{Type: "foobar\n", Expect: prompt},
+		{Type: "ep list\n", Expect: "test .* websocket"},
+		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
+		{Expect: prompt},
+		{Type: "exit\n"},
+	})
+
+	if err := <-result; err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+}
+
 func TestSSH(t *testing.T) {
 	a, err := app.New(appConfig)
 	if err != nil {
