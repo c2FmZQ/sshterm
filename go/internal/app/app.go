@@ -160,13 +160,12 @@ func (a *App) Run() error {
 	if err := a.initDB(); err != nil {
 		t.Errorf("%v", err)
 	}
+	jsutil.UnregisterServiceWorker()
 	defer func() {
 		if a.db != nil {
 			a.db.Close()
 		}
-		if a.streamHelper != nil {
-			a.streamHelper.Unregister()
-		}
+		jsutil.UnregisterServiceWorker()
 	}()
 
 	shortcuts := map[string]struct {

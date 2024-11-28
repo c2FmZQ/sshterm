@@ -207,6 +207,14 @@ func NewStreamHelper() *StreamHelper {
 	return h
 }
 
+func UnregisterServiceWorker() {
+	if container := js.Global().Get("navigator").Get("serviceWorker"); container.Truthy() {
+		if registration, err := Await(container.Call("getRegistration")); err == nil {
+			registration.Call("unregister")
+		}
+	}
+}
+
 type StreamHelper struct {
 	mu      sync.Mutex
 	streams map[string]stream
@@ -236,14 +244,6 @@ func (h *StreamHelper) addStream(rc io.Reader, headers map[string]any, progress 
 		progress: progress,
 	}
 	return id, ch, nil
-}
-
-func (StreamHelper) Unregister() {
-	if container := js.Global().Get("navigator").Get("serviceWorker"); container.Truthy() {
-		if registration, err := Await(container.Call("getRegistration")); err == nil {
-			registration.Call("unregister")
-		}
-	}
 }
 
 func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, progress func(int64), hook func(string) error) (err error) {
