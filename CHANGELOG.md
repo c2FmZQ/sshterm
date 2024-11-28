@@ -1,6 +1,6 @@
 # SSH Term Release Notes
 
-## next
+## v0.3.2
 
 ### :star: Feature improvements
 
