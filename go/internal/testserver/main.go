@@ -45,6 +45,10 @@ import (
 )
 
 func main() {
+	if _, err := os.Stat("/home"); err == nil {
+		fmt.Fprintf(os.Stderr, "This tool is intended to run in a container.\n")
+		os.Exit(1)
+	}
 	addr := flag.String("addr", ":8880", "The TCP address to listen to")
 	docRoot := flag.String("document-root", "", "The document root directory")
 	withChromeDP := flag.String("with-chromedp", "", "The url of the remote debugging port")

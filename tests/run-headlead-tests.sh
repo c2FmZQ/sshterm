@@ -1,5 +1,5 @@
 #!/bin/bash -e
-# This script runs the browser tests with selenium in docker containers.
+# This script runs the browser tests with chromedp in docker containers.
 
 cd $(dirname $0)/..
 
@@ -11,7 +11,6 @@ export CGO_ENABLED=0
 docker build -f tests/Dockerfile -t sshterm-testserver .
 rm -f testserver
 
-export USERID=$(id -u)
 docker compose -f tests/docker-compose-browser-tests.yaml up \
   --abort-on-container-exit \
   --exit-code-from=devtest
