@@ -43,5 +43,7 @@ jobs:
           echo "${out}"
           exit 1
         fi
+    - name: Run go test (not wasm)
+      run: cd go && go test ./...
     - name: Run headless tests
       run: ./tests/run-headlead-tests.sh
