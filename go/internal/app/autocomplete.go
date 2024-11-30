@@ -24,8 +24,6 @@
 package app
 
 import (
-	"fmt"
-	"os"
 	"slices"
 	"strings"
 
@@ -52,7 +50,6 @@ func (ac *autoCompleter) autoComplete(line string, pos int, key rune) (newLine s
 func (ac *autoCompleter) autoCompleteLeft(line string) (newLine string, newPos int, options []string, ok bool) {
 	pos := len(line)
 	args, argsRaw := shellwords.Parse(line)
-	fmt.Fprintf(os.Stderr, "args: %q raw: %q\n", args, argsRaw)
 	if pos == 0 {
 		args = append(args, "")
 		argsRaw = append(argsRaw, "")
@@ -65,7 +62,7 @@ func (ac *autoCompleter) autoCompleteLeft(line string) (newLine string, newPos i
 		return
 	case 1:
 		lastWord := argsRaw[len(argsRaw)-1]
-		newLine = line[:len(line)-len(lastWord)] + m[0]
+		newLine = line[:len(line)-len(lastWord)] + maybeQuote(m[0])
 		if !strings.HasSuffix(m[0], "=") {
 			newLine += " "
 		}
@@ -77,7 +74,7 @@ func (ac *autoCompleter) autoCompleteLeft(line string) (newLine string, newPos i
 		lp := longestPrefix(m)
 		if lp > len(lastWord) {
 			lastWordRaw := argsRaw[len(argsRaw)-1]
-			newLine = line[:len(line)-len(lastWordRaw)] + m[0][:lp]
+			newLine = line[:len(line)-len(lastWordRaw)] + maybeQuote(m[0][:lp])
 			newPos = len(newLine)
 			ok = true
 			return
@@ -85,6 +82,23 @@ func (ac *autoCompleter) autoCompleteLeft(line string) (newLine string, newPos i
 		options = m
 	}
 	return
+}
+
+func maybeQuote(s string) string {
+	if strings.IndexAny(s, "\"'\\ \t") == -1 {
+		return s
+	}
+	n := `"`
+	for _, c := range s {
+		switch c {
+		case '"', '\\':
+			n += `\`
+			fallthrough
+		default:
+			n += string(c)
+		}
+	}
+	return n + `"`
 }
 
 func longestPrefix(words []string) int {
