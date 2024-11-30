@@ -110,3 +110,22 @@ func TestAutoComplete(t *testing.T) {
 		}
 	}
 }
+
+func TestMaybeQuote(t *testing.T) {
+	for _, tc := range []struct {
+		in, out string
+	}{
+		{``, ``},
+		{`hello`, `hello`},
+		{`h\ello`, `"h\\ello"`},
+		{`'hello`, `"'hello"`},
+		{`'hello'`, `"'hello'"`},
+		{`"hello"`, `"\"hello\""`},
+		{`hello world`, `"hello world"`},
+		{`1\2`, `"1\\2"`},
+	} {
+		if got, want := maybeQuote(tc.in), tc.out; got != want {
+			t.Errorf("maybeQuote(%q) = %q; want %q", tc.in, got, want)
+		}
+	}
+}

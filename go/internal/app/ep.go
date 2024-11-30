@@ -26,7 +26,9 @@
 package app
 
 import (
+	"errors"
 	"sort"
+	"strings"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
@@ -81,6 +83,9 @@ func (a *App) epCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
+					if strings.Index(name, ":") != -1 {
+						return errors.New("endpoint name cannot contain \":\"")
+					}
 					url := ctx.Args().Get(1)
 					a.data.Endpoints[name] = endpoint{Name: name, URL: url}
 					return a.saveEndpoints()

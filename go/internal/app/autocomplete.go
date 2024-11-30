@@ -48,12 +48,12 @@ func (ac *autoCompleter) autoComplete(line string, pos int, key rune) (newLine s
 }
 
 func (ac *autoCompleter) autoCompleteLeft(line string) (newLine string, newPos int, options []string, ok bool) {
-	pos := len(line)
 	args, argsRaw := shellwords.Parse(line)
-	if pos == 0 {
-		args = append(args, "")
-		argsRaw = append(argsRaw, "")
-	} else if c := line[pos-1]; c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+	var lw string
+	if len(argsRaw) > 0 {
+		lw = argsRaw[len(argsRaw)-1]
+	}
+	if line == "" || lw == "" || line[len(line)-1] != lw[len(lw)-1] {
 		args = append(args, "")
 		argsRaw = append(argsRaw, "")
 	}
@@ -79,7 +79,10 @@ func (ac *autoCompleter) autoCompleteLeft(line string) (newLine string, newPos i
 			ok = true
 			return
 		}
-		options = m
+		options = nil
+		for _, w := range m {
+			options = append(options, maybeQuote(w))
+		}
 	}
 	return
 }
@@ -88,17 +91,16 @@ func maybeQuote(s string) string {
 	if strings.IndexAny(s, "\"'\\ \t") == -1 {
 		return s
 	}
-	n := `"`
+	var n strings.Builder
+	n.WriteRune('"')
 	for _, c := range s {
-		switch c {
-		case '"', '\\':
-			n += `\`
-			fallthrough
-		default:
-			n += string(c)
+		if c == '"' || c == '\\' {
+			n.WriteRune('\\')
 		}
+		n.WriteRune(c)
 	}
-	return n + `"`
+	n.WriteRune('"')
+	return n.String()
 }
 
 func longestPrefix(words []string) int {
