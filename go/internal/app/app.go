@@ -35,12 +35,12 @@ import (
 	"sync/atomic"
 	"syscall/js"
 
-	"github.com/mattn/go-shellwords"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/c2FmZQ/sshterm/internal/indexeddb"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
+	"github.com/c2FmZQ/sshterm/internal/shellwords"
 	"github.com/c2FmZQ/sshterm/internal/terminal"
 )
 
@@ -58,9 +58,8 @@ type Config struct {
 
 func New(cfg *Config) (*App, error) {
 	app := &App{
-		cfg:    *cfg,
-		agent:  agent.NewKeyring(),
-		parser: shellwords.NewParser(),
+		cfg:   *cfg,
+		agent: agent.NewKeyring(),
 		data: appData{
 			Persist:   true,
 			Endpoints: make(map[string]endpoint),
@@ -97,7 +96,6 @@ func New(cfg *Config) (*App, error) {
 		app.dbCommand(),
 	}
 	app.autoCompleter = &autoCompleter{
-		p:         app.parser,
 		cmds:      app.commands,
 		moreWords: app.autoCompleteWords,
 	}
@@ -118,7 +116,6 @@ type App struct {
 	ctx           context.Context
 	term          *terminal.Terminal
 	agent         agent.Agent
-	parser        *shellwords.Parser
 	autoCompleter *autoCompleter
 	db            *indexeddb.DB
 	data          appData
@@ -231,10 +228,7 @@ func (a *App) Run() error {
 		if err != nil {
 			return err
 		}
-		args, err := a.parser.Parse(line)
-		if err != nil {
-			t.Printf("p.Parse: %v\n", err)
-		}
+		args, _ := shellwords.Parse(line)
 		if len(args) == 0 {
 			continue
 		}

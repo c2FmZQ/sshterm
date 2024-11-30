@@ -27,12 +27,10 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/mattn/go-shellwords"
 	"github.com/urfave/cli/v2"
 )
 
 func TestAutoComplete(t *testing.T) {
-	p := shellwords.NewParser()
 	cmds := []*cli.App{
 		{Name: "accept"},
 		{Name: "all"},
@@ -65,7 +63,6 @@ func TestAutoComplete(t *testing.T) {
 		}},
 	}
 	ac := &autoCompleter{
-		p:    p,
 		cmds: cmds,
 	}
 

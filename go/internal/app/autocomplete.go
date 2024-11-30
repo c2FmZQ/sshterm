@@ -29,12 +29,12 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mattn/go-shellwords"
 	"github.com/urfave/cli/v2"
+
+	"github.com/c2FmZQ/sshterm/internal/shellwords"
 )
 
 type autoCompleter struct {
-	p         *shellwords.Parser
 	cmds      []*cli.App
 	moreWords func([]string) []string
 }
@@ -51,21 +51,20 @@ func (ac *autoCompleter) autoComplete(line string, pos int, key rune) (newLine s
 
 func (ac *autoCompleter) autoCompleteLeft(line string) (newLine string, newPos int, options []string, ok bool) {
 	pos := len(line)
-	args, err := ac.p.Parse(line)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Parse: %v\n", err)
-		return
-	}
+	args, argsRaw := shellwords.Parse(line)
+	fmt.Fprintf(os.Stderr, "args: %q raw: %q\n", args, argsRaw)
 	if pos == 0 {
 		args = append(args, "")
+		argsRaw = append(argsRaw, "")
 	} else if c := line[pos-1]; c == ' ' || c == '\t' || c == '\r' || c == '\n' {
 		args = append(args, "")
+		argsRaw = append(argsRaw, "")
 	}
 	switch m := ac.findMatches(args); len(m) {
 	case 0:
 		return
 	case 1:
-		lastWord := args[len(args)-1]
+		lastWord := argsRaw[len(argsRaw)-1]
 		newLine = line[:len(line)-len(lastWord)] + m[0]
 		if !strings.HasSuffix(m[0], "=") {
 			newLine += " "
@@ -77,7 +76,8 @@ func (ac *autoCompleter) autoCompleteLeft(line string) (newLine string, newPos i
 		lastWord := args[len(args)-1]
 		lp := longestPrefix(m)
 		if lp > len(lastWord) {
-			newLine = line[:len(line)-len(lastWord)] + m[0][:lp]
+			lastWordRaw := argsRaw[len(argsRaw)-1]
+			newLine = line[:len(line)-len(lastWordRaw)] + m[0][:lp]
 			newPos = len(newLine)
 			ok = true
 			return
