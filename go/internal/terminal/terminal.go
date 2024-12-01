@@ -120,8 +120,9 @@ var _ io.Writer = (*Terminal)(nil)
 var _ io.Closer = (*Terminal)(nil)
 
 type Terminal struct {
-	tw *termWrapper
-	vt *term.Terminal
+	tw         *termWrapper
+	vt         *term.Terminal
+	lastPrompt string
 }
 
 var _ io.Reader = (*termWrapper)(nil)
@@ -204,8 +205,12 @@ type resizeEvent struct {
 	rows int
 }
 
+func (t *Terminal) defaultPrompt() string {
+	return string(t.vt.Escape.Green) + "sshterm> " + string(t.vt.Escape.Reset)
+}
+
 func (t *Terminal) setDefaultPrompt() {
-	t.vt.SetPrompt(string(t.vt.Escape.Green) + "sshterm> " + string(t.vt.Escape.Reset))
+	t.SetPrompt(t.defaultPrompt())
 }
 
 func (t *Terminal) OnResize(ctx context.Context, f func(h, w int) error) {
@@ -268,9 +273,31 @@ func (t *Terminal) Cols() int {
 	return t.tw.xt.Get("cols").Int()
 }
 
+func (t *Terminal) SetAutoComplete(cb func(line string, pos int, key rune) (string, int, []string, bool)) {
+	t.vt.AutoCompleteCallback = func(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
+		if t.lastPrompt == "" {
+			return
+		}
+		var options []string
+		newLine, newPos, options, ok = cb(line, pos, key)
+		if len(options) > 0 {
+			fmt.Fprintf(t.tw, "\r\n%s\r\n%s%s", strings.Join(options, " "), t.defaultPrompt(), line)
+			if d := len(line) - pos; d > 0 {
+				fmt.Fprintf(t.tw, "\x1b[%dD", d) // Move left d cols (CSI CUB)
+			}
+		}
+		return
+	}
+}
+
+func (t *Terminal) SetPrompt(p string) {
+	t.lastPrompt = p
+	t.vt.SetPrompt(p)
+}
+
 func (t *Terminal) Prompt(prompt string) (line string, err error) {
 	t.Print(prompt)
-	t.vt.SetPrompt("")
+	t.SetPrompt("")
 	line, err = t.ReadLine()
 	t.setDefaultPrompt()
 	return

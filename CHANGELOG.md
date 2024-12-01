@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :star2: New features
+
+* Add tab completion for most commands.
+
 ## v0.3.2
 
 ### :star: Feature improvements
