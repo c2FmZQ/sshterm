@@ -164,7 +164,7 @@ func (a *App) keysCommand() *cli.App {
 						if err != nil {
 							return fmt.Errorf("ssh.ParsePublicKey: %v", err)
 						}
-						a.term.Printf("Certificate:\n  %s %s\nDetails:\n", key.Certificate, name)
+						a.term.Printf("Certificate:\n  %s\nDetails:\n", strings.TrimSpace(string(key.Certificate)))
 						a.printCertificate(cert.(*ssh.Certificate))
 					}
 					return nil
@@ -323,7 +323,10 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 	a.term.Printf("  Type: %s\n", cert.Type())
 	a.term.Printf("  KeyId: %s\n", cert.KeyId)
 	if len(cert.ValidPrincipals) > 0 {
-		a.term.Printf("  ValidPrincipals: %s\n", cert.ValidPrincipals)
+		a.term.Printf("  Principals:\n")
+		for _, p := range cert.ValidPrincipals {
+			a.term.Printf("    %s\n", p)
+		}
 	}
 	a.term.Printf("  Validity: %s - %s (UTC)\n",
 		time.Unix(int64(cert.ValidAfter), 0).UTC().Format(time.DateTime),
