@@ -4,7 +4,7 @@
 
 ### :star2: New features
 
-* Add import of user certificates. After the certificate is imported, it is used automatically when the key is added to the agent.
+* Add import of user certificates. After the certificate is imported, it is used automatically when the key is used for authentication.
 
 ## v0.4.0
 

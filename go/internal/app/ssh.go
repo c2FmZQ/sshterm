@@ -175,6 +175,15 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 			if err != nil {
 				return nil, fmt.Errorf("NewSignerFromKey: %w", err)
 			}
+			if key.Certificate != nil {
+				cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
+				if err != nil {
+					return nil, fmt.Errorf("ssh.ParsePublicKey: %v", err)
+				}
+				if signer, err = ssh.NewCertSigner(cert.(*ssh.Certificate), signer); err != nil {
+					return nil, fmt.Errorf("ssh.NewCertSigner: %v", err)
+				}
+			}
 			signers = append(signers, signer)
 		} else if origKeyName != "" {
 			t.Errorf("unknown key %q", keyName)
