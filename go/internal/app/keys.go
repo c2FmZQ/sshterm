@@ -319,13 +319,16 @@ func (a *App) keysCommand() *cli.App {
 }
 
 func (a *App) printCertificate(cert *ssh.Certificate) {
-	a.term.Printf("  Serial: %x\n", cert.Serial)
+	a.term.Printf("  Serial: 0x%x (%d)\n", cert.Serial, cert.Serial)
 	a.term.Printf("  Type: %s\n", cert.Type())
 	a.term.Printf("  KeyId: %s\n", cert.KeyId)
-	a.term.Printf("  ValidPrincipals: %s\n", cert.ValidPrincipals)
+	if len(cert.ValidPrincipals) > 0 {
+		a.term.Printf("  ValidPrincipals: %s\n", cert.ValidPrincipals)
+	}
 	a.term.Printf("  Validity: %s - %s (UTC)\n",
 		time.Unix(int64(cert.ValidAfter), 0).UTC().Format(time.DateTime),
 		time.Unix(int64(cert.ValidBefore), 0).UTC().Format(time.DateTime))
+	a.term.Printf("  Signed by: %s %s\n", cert.SignatureKey.Type(), ssh.FingerprintSHA256(cert.SignatureKey))
 	if len(cert.CriticalOptions) > 0 {
 		var keys []string
 		for k := range cert.CriticalOptions {
