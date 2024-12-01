@@ -88,9 +88,9 @@ func (a *App) agentCommand() *cli.App {
 						Comment:    name,
 					}
 					if len(key.Certificate) > 0 {
-						cert, err := ssh.ParsePublicKey(key.Certificate)
+						cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
 						if err != nil {
-							return err
+							return fmt.Errorf("ssh.ParsePublicKey: %v", err)
 						}
 						if c, ok := cert.(*ssh.Certificate); ok {
 							addedKey.Certificate = c

@@ -160,11 +160,11 @@ func (a *App) keysCommand() *cli.App {
 					}
 					a.term.Printf("Public key:\n  %s %s\nFingerprint:\n  %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))), name, ssh.FingerprintSHA256(pub))
 					if key.Certificate != nil {
-						cert, err := ssh.ParsePublicKey(key.Certificate)
+						cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
 						if err != nil {
-							return err
+							return fmt.Errorf("ssh.ParsePublicKey: %v", err)
 						}
-						a.term.Printf("Certificate:\n  %s %s\nDetails:\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(cert))), name)
+						a.term.Printf("Certificate:\n  %s %s\nDetails:\n", key.Certificate, name)
 						a.printCertificate(cert.(*ssh.Certificate))
 					}
 					return nil
@@ -288,7 +288,6 @@ func (a *App) keysCommand() *cli.App {
 					if err != nil {
 						return fmt.Errorf("%q: %w", f.Name, err)
 					}
-					fmt.Fprintf(a.term, "CERT:\n%s\n", content)
 					pcert, _, _, _, err := ssh.ParseAuthorizedKey(content)
 					if err != nil {
 						return fmt.Errorf("ssh.ParsePublicKey: %v", err)
@@ -304,7 +303,7 @@ func (a *App) keysCommand() *cli.App {
 					if !bytes.Equal(cert.Key.Marshal(), pub.Marshal()) {
 						return fmt.Errorf("the certificate in %q is for a different key", f.Name)
 					}
-					key.Certificate = cert.Marshal()
+					key.Certificate = content
 					a.data.Keys[name] = key
 
 					if err := a.saveKeys(); err != nil {
