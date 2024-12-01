@@ -45,7 +45,7 @@ func (a *App) keysCommand() *cli.App {
 	return &cli.App{
 		Name:            "keys",
 		Usage:           "Manage keys",
-		UsageText:       "keys <list|generate|delete|import|import-cert|export>",
+		UsageText:       "keys <list|generate|delete|show|import|import-cert|export>",
 		Description:     "The keys command is used to manage private and public keys.",
 		HideHelpCommand: true,
 		DefaultCommand:  "list",
