@@ -58,14 +58,12 @@ func (a *App) fileCommand() *cli.App {
 		Commands: []*cli.Command{
 			{
 				Name:      "upload",
-				Aliases:   []string{"up"},
 				Usage:     "Copies files to a remote server.",
 				UsageText: "file [-i <keyname>] upload username@<endpoint>:<dir>",
 				Action:    a.sftpUpload,
 			},
 			{
 				Name:      "download",
-				Aliases:   []string{"down"},
 				Usage:     "Copies a file from a remote server.",
 				UsageText: "file [-i <keyname>] download username@<endpoint>:<file>",
 				Action:    a.sftpDownload,
