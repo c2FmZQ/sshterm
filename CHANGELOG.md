@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :star2: New features
+
+* Add import of user certificates. After the certificate is imported, it is used automatically when the key is added to the agent.
+
 ## v0.4.0
 
 ### :star2: New features

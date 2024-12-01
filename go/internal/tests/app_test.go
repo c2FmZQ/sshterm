@@ -137,7 +137,7 @@ func TestKeys(t *testing.T) {
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
 		{Expect: prompt},
-		{Type: "keys export test\n", Expect: `Continue\?`},
+		{Type: "keys export --private test\n", Expect: `Continue\?`},
 		{Type: "Y\n"},
 	})
 	file := <-downloadCh

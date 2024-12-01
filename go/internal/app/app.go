@@ -133,9 +133,10 @@ type endpoint struct {
 }
 
 type key struct {
-	Name    string `json:"name"`
-	Public  []byte `json:"public"`
-	Private []byte `json:"private"`
+	Name        string `json:"name"`
+	Public      []byte `json:"public"`
+	Private     []byte `json:"private"`
+	Certificate []byte `json:"certificate,omitempty"`
 }
 
 func (a *App) initDB() error {
@@ -343,7 +344,7 @@ func (a *App) autoCompleteWords(args []string) []string {
 		}
 		return words
 	}
-	if args[0] == "keys" && (slices.Contains(args, "delete") || slices.Contains(args, "export")) {
+	if args[0] == "keys" && (slices.Contains(args, "delete") || slices.Contains(args, "export") || slices.Contains(args, "show") || slices.Contains(args, "import-cert")) {
 		var words []string
 		for _, k := range a.data.Keys {
 			if strings.HasPrefix(k.Name, last) {

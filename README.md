@@ -16,13 +16,14 @@ Supported features:
 * [x] Backup & restore.
 * [x] Persist data to local storage (optional, on by default).
 * [x] Keyboard interactive authentication.
+* [X] Public key authentication, with or without certificates.
 * [x] In-memory SSH agent and agent forwarding.
 * [x] Streaming upload and download.
 
 Not implemented:
 
 * [ ] Port forwarding.
-* [ ] Certificates.
+* [ ] Host certificates.
 * [ ] Security keys.
 
 ## How to install

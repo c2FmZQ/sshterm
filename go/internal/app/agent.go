@@ -83,11 +83,21 @@ func (a *App) agentCommand() *cli.App {
 					if err != nil {
 						return fmt.Errorf("private key: %w", err)
 					}
-					if err := a.agent.Add(agent.AddedKey{
+					addedKey := agent.AddedKey{
 						PrivateKey: priv,
 						Comment:    name,
-					}); err != nil {
-						return fmt.Errorf("agent.Add: %w", err)
+					}
+					if len(key.Certificate) > 0 {
+						cert, err := ssh.ParsePublicKey(key.Certificate)
+						if err != nil {
+							return err
+						}
+						if c, ok := cert.(*ssh.Certificate); ok {
+							addedKey.Certificate = c
+						}
+					}
+					if err := a.agent.Add(addedKey); err != nil {
+						return err
 					}
 					return nil
 				},
