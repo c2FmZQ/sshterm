@@ -1,4 +1,6 @@
 // Copied from https://github.com/mattn/go-shellwords/tree/f3bbb6f7f6510c6059561a79e3f105578be4fcce
+// Trimmed down and modified a little bit for sshterm.
+//
 // Original license below.
 //
 // The MIT License (MIT)
