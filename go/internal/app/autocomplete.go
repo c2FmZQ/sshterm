@@ -25,6 +25,7 @@ package app
 
 import (
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/urfave/cli/v2"
@@ -83,6 +84,7 @@ func (ac *autoCompleter) autoCompleteLeft(line string) (newLine string, newPos i
 		for _, w := range m {
 			options = append(options, maybeQuote(w))
 		}
+		sort.Strings(options)
 	}
 	return
 }
