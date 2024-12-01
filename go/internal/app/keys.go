@@ -140,7 +140,7 @@ func (a *App) keysCommand() *cli.App {
 			},
 			{
 				Name:      "import",
-				Usage:     "Import private key",
+				Usage:     "Import a key",
 				UsageText: "keys import <name>",
 				Action: func(ctx *cli.Context) error {
 					if ctx.Args().Len() != 1 {
@@ -190,7 +190,7 @@ func (a *App) keysCommand() *cli.App {
 			},
 			{
 				Name:      "export",
-				Usage:     "Export a private key",
+				Usage:     "Export a key",
 				UsageText: "keys export <name>",
 				Action: func(ctx *cli.Context) error {
 					if ctx.Args().Len() != 1 {
