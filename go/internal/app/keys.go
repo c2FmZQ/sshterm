@@ -77,7 +77,6 @@ func (a *App) keysCommand() *cli.App {
 			},
 			{
 				Name:        "generate",
-				Aliases:     []string{"add", "gen"},
 				Usage:       "Generate a new key",
 				UsageText:   "keys generate <name>",
 				Description: "The <name> of the key is used to refer the key. The ssh command\nwill use the key named 'default' if it exists.",
@@ -132,6 +131,9 @@ func (a *App) keysCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
+					if !a.term.Confirm(fmt.Sprintf("You are about to delete key %q\nContinue?", name), false) {
+						return errors.New("aborted")
+					}
 					delete(a.data.Keys, name)
 					return a.saveKeys()
 				},
