@@ -61,9 +61,10 @@ func New(cfg *Config) (*App, error) {
 		cfg:   *cfg,
 		agent: agent.NewKeyring(),
 		data: appData{
-			Persist:   true,
-			Endpoints: make(map[string]endpoint),
-			Keys:      make(map[string]key),
+			Persist:     true,
+			Endpoints:   make(map[string]endpoint),
+			Keys:        make(map[string]key),
+			Authorities: make(map[string]authority),
 		},
 		inShell: new(atomic.Bool),
 	}
@@ -92,6 +93,7 @@ func New(cfg *Config) (*App, error) {
 		app.fileCommand(),
 		app.epCommand(),
 		app.keysCommand(),
+		app.caCommand(),
 		app.agentCommand(),
 		app.dbCommand(),
 	}
@@ -103,12 +105,6 @@ func New(cfg *Config) (*App, error) {
 		return app.commands[i].Name < app.commands[j].Name
 	})
 	return app, nil
-}
-
-type appData struct {
-	Persist   bool                `json:"persist"`
-	Endpoints map[string]endpoint `json:"endpoints"`
-	Keys      map[string]key      `json:"keys"`
 }
 
 type App struct {
@@ -126,10 +122,17 @@ type App struct {
 	inShell *atomic.Bool
 }
 
+type appData struct {
+	Persist     bool                 `json:"persist"`
+	Endpoints   map[string]endpoint  `json:"endpoints"`
+	Keys        map[string]key       `json:"keys"`
+	Authorities map[string]authority `json:"authorities"`
+}
+
 type endpoint struct {
 	Name    string `json:"name"`
 	URL     string `json:"url"`
-	HostKey []byte `json:"hostKey"`
+	HostKey []byte `json:"hostKey,omitempty"`
 }
 
 type key struct {
@@ -137,6 +140,13 @@ type key struct {
 	Public      []byte `json:"public"`
 	Private     []byte `json:"private"`
 	Certificate []byte `json:"certificate,omitempty"`
+}
+
+type authority struct {
+	Name        string   `json:"name"`
+	Fingerprint string   `json:"fingerprint"`
+	Public      []byte   `json:"public"`
+	Hostnames   []string `json:"hostnames"`
 }
 
 func (a *App) initDB() error {
@@ -155,7 +165,7 @@ func (a *App) initDB() error {
 		return fmt.Errorf("indexeddb.New: %w", err)
 	}
 	a.db = db
-	if len(a.data.Endpoints) > 0 || len(a.data.Keys) > 0 {
+	if len(a.data.Endpoints) > 0 || len(a.data.Keys) > 0 || len(a.data.Authorities) > 0 {
 		if err := a.saveAll(); err != nil {
 			a.term.Errorf("%v", err)
 		}
@@ -165,6 +175,9 @@ func (a *App) initDB() error {
 	}
 	if err := db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("keys load: %w", err)
+	}
+	if err := db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
+		return fmt.Errorf("authorities load: %w", err)
 	}
 	return nil
 }
@@ -299,6 +312,9 @@ func (a *App) saveAll() error {
 	if err := a.saveKeys(); err != nil {
 		return err
 	}
+	if err := a.saveAuthorities(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -314,6 +330,13 @@ func (a *App) saveKeys() error {
 		return nil
 	}
 	return a.db.Set("keys", a.data.Keys)
+}
+
+func (a *App) saveAuthorities() error {
+	if a.db == nil {
+		return nil
+	}
+	return a.db.Set("authorities", a.data.Authorities)
 }
 
 func (a *App) importFiles(accept string, multiple bool) []jsutil.ImportedFile {
@@ -347,6 +370,15 @@ func (a *App) autoCompleteWords(args []string) []string {
 	if args[0] == "keys" && (slices.Contains(args, "delete") || slices.Contains(args, "export") || slices.Contains(args, "show") || slices.Contains(args, "import-cert")) {
 		var words []string
 		for _, k := range a.data.Keys {
+			if strings.HasPrefix(k.Name, last) {
+				words = append(words, k.Name)
+			}
+		}
+		return words
+	}
+	if args[0] == "ca" && len(args) == 3 && (args[1] == "delete" || args[1] == "add-hostname" || args[1] == "remove-hostname") {
+		var words []string
+		for _, k := range a.data.Authorities {
 			if strings.HasPrefix(k.Name, last) {
 				words = append(words, k.Name)
 			}

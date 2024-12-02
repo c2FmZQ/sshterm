@@ -26,13 +26,15 @@
 package app
 
 import (
-	"bytes"
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"path"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
@@ -178,7 +180,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 			if key.Certificate != nil {
 				cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
 				if err != nil {
-					return nil, fmt.Errorf("ssh.ParsePublicKey: %v", err)
+					return nil, fmt.Errorf("ssh.ParseAuthorizedKey: %v", err)
 				}
 				if signer, err = ssh.NewCertSigner(cert.(*ssh.Certificate), signer); err != nil {
 					return nil, fmt.Errorf("ssh.NewCertSigner: %v", err)
@@ -190,25 +192,25 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 		}
 	}
 
-	conn, chans, reqs, err := ssh.NewClientConn(ws, ep.URL, &ssh.ClientConfig{
+	conn, chans, reqs, err := ssh.NewClientConn(ws, ep.Name, &ssh.ClientConfig{
 		User: username,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signers...),
 			ssh.RetryableAuthMethod(ssh.KeyboardInteractive(
 				func(name, instruction string, questions []string, echos []bool) ([]string, error) {
 					if name != "" {
-						t.Printf("%s\n", name)
+						t.Printf("%s\n", maskControl(name))
 					}
 					if instruction != "" {
-						t.Printf("%s\n", instruction)
+						t.Printf("%s\n", maskControl(instruction))
 					}
 					ans := make([]string, len(questions))
 					for i, q := range questions {
 						var err error
 						if echos[i] {
-							ans[i], err = t.Prompt(q + ": ")
+							ans[i], err = t.Prompt(maskControl(q))
 						} else {
-							ans[i], err = t.ReadPassword(q)
+							ans[i], err = t.ReadPassword(maskControl(q))
 						}
 						if err != nil {
 							return nil, err
@@ -219,21 +221,11 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 			), 5),
 		},
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			hk := key.Marshal()
-			if ep.HostKey != nil {
-				if bytes.Equal(ep.HostKey, hk) {
-					return nil
-				} else {
-					t.Errorf("Host key changed. New fingerprint: %s", ssh.FingerprintSHA256(key))
-					return errors.New("host key changed")
-				}
+			cert, ok := key.(*ssh.Certificate)
+			if ok {
+				return a.hostCertificateCallback(ep, hostname, cert)
 			}
-			if t.Confirm(fmt.Sprintf("Host key for %s\n%s %s\n\nContinue? ", hostname, key.Type(), ssh.FingerprintSHA256(key)), true) {
-				ep.HostKey = key.Marshal()
-				a.data.Endpoints[ep.Name] = ep
-				return a.saveEndpoints()
-			}
-			return errors.New("host key rejected by user")
+			return a.hostKeyCallback(ep, hostname, key)
 		},
 		BannerCallback: func(message string) error {
 			t.Printf("%s\n", message)
@@ -250,6 +242,66 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 	return ssh.NewClient(conn, chans, reqs), nil
 }
 
+func (a *App) hostCertificateCallback(ep endpoint, hostname string, cert *ssh.Certificate) error {
+	var errs []error
+	if err := a.checkCertificate(cert); err != nil {
+		errs = append(errs, err)
+	}
+	caFP := ssh.FingerprintSHA256(cert.SignatureKey)
+	ca, exists := a.data.Authorities[caFP]
+	if !exists {
+		errs = append(errs, fmt.Errorf("host certificate is signed by an unknown authority"))
+	} else {
+		ok := false
+		for _, h := range ca.Hostnames {
+			if matched, err := path.Match(h, hostname); err == nil && matched {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			errs = append(errs, fmt.Errorf("host certificate is signed by an authority that is not trusted for hostname %q", hostname))
+		}
+	}
+
+	err := errors.Join(errs...)
+	if err == nil {
+		a.term.Printf("Host certificate is trusted.\n")
+		return nil
+	}
+
+	a.term.Printf("Host certificate:\n")
+	a.printCertificate(cert)
+	a.term.Print("\n")
+
+	a.term.Errorf("Host certificate is NOT trusted:\n  %v\n", strings.ReplaceAll(err.Error(), "\n", "\n  "))
+
+	if !a.term.Confirm("Do you want to connect anyway? ", false) {
+		return err
+	}
+	return nil
+}
+
+func (a *App) hostKeyCallback(ep endpoint, hostname string, key ssh.PublicKey) error {
+	hk := key.Marshal()
+	if ep.HostKey != nil {
+		if subtle.ConstantTimeCompare(ep.HostKey, hk) != 1 {
+			return errors.New("host key changed")
+		}
+		return nil
+	}
+	a.term.Printf("Host key for %s\n%s %s\n\n", hostname, key.Type(), ssh.FingerprintSHA256(key))
+	if !a.term.Confirm("Do you TRUST this host? ", false) {
+		return errors.New("host key rejected by user")
+	}
+	if a.term.Confirm("Remember this decision? ", false) {
+		ep.HostKey = hk
+		a.data.Endpoints[ep.Name] = ep
+		return a.saveEndpoints()
+	}
+	return nil
+}
+
 func (a *App) privKey(key key) (any, error) {
 	priv, err := ssh.ParseRawPrivateKey(key.Private)
 	if _, ok := err.(*ssh.PassphraseMissingError); ok {
@@ -260,4 +312,36 @@ func (a *App) privKey(key key) (any, error) {
 		priv, err = ssh.ParseRawPrivateKeyWithPassphrase(key.Private, []byte(passphrase))
 	}
 	return priv, err
+}
+
+func (a *App) checkCertificate(cert *ssh.Certificate) error {
+	var errs []error
+	if cert.CertType != ssh.HostCert {
+		errs = append(errs, fmt.Errorf("certificate has wrong type: %d", cert.CertType))
+	}
+	now := uint64(time.Now().Unix())
+	if cert.ValidAfter > now {
+		errs = append(errs, fmt.Errorf("certificate is not yet valid"))
+	}
+	if cert.ValidBefore > 0 && now > cert.ValidBefore {
+		errs = append(errs, fmt.Errorf("certificate is expired"))
+	}
+	c2 := *cert
+	c2.Signature = nil
+	signBytes := c2.Marshal()
+	if err := cert.SignatureKey.Verify(signBytes[:len(signBytes)-4], cert.Signature); err != nil {
+		errs = append(errs, fmt.Errorf("certificate signature is invalid"))
+	}
+	return errors.Join(errs...)
+}
+
+func maskControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t' || r == '\n' || r >= ' ':
+			return r
+		default:
+			return '#'
+		}
+	}, s)
 }

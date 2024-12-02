@@ -26,10 +26,10 @@
 package app
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -300,7 +300,7 @@ func (a *App) keysCommand() *cli.App {
 					if err != nil {
 						return err
 					}
-					if !bytes.Equal(cert.Key.Marshal(), pub.Marshal()) {
+					if subtle.ConstantTimeCompare(cert.Key.Marshal(), pub.Marshal()) != 1 {
 						return fmt.Errorf("the certificate in %q is for a different key", f.Name)
 					}
 					key.Certificate = content
@@ -320,17 +320,20 @@ func (a *App) keysCommand() *cli.App {
 
 func (a *App) printCertificate(cert *ssh.Certificate) {
 	a.term.Printf("  Serial: 0x%x (%d)\n", cert.Serial, cert.Serial)
+	a.term.Printf("  Public key: %s %s\n", cert.Key.Type(), ssh.FingerprintSHA256(cert.Key))
 	a.term.Printf("  Type: %s\n", cert.Type())
-	a.term.Printf("  KeyId: %s\n", cert.KeyId)
+	a.term.Printf("  Key ID: %s\n", cert.KeyId)
 	if len(cert.ValidPrincipals) > 0 {
 		a.term.Printf("  Principals:\n")
 		for _, p := range cert.ValidPrincipals {
 			a.term.Printf("    %s\n", p)
 		}
 	}
-	a.term.Printf("  Validity: %s - %s (UTC)\n",
-		time.Unix(int64(cert.ValidAfter), 0).UTC().Format(time.DateTime),
-		time.Unix(int64(cert.ValidBefore), 0).UTC().Format(time.DateTime))
+	if cert.ValidBefore != 0 {
+		a.term.Printf("  Validity: %s - %s (UTC)\n",
+			time.Unix(int64(cert.ValidAfter), 0).UTC().Format(time.DateTime),
+			time.Unix(int64(cert.ValidBefore), 0).UTC().Format(time.DateTime))
+	}
 	a.term.Printf("  Signed by: %s %s\n", cert.SignatureKey.Type(), ssh.FingerprintSHA256(cert.SignatureKey))
 	if len(cert.CriticalOptions) > 0 {
 		var keys []string

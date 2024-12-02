@@ -5,6 +5,7 @@
 ### :star2: New features
 
 * Add import of user certificates. After the certificate is imported, it is used automatically when the key is used for authentication.
+* Add support server certificates signed by a trusted authority. CAs are managed with the ca command.
 
 ## v0.4.0
 
