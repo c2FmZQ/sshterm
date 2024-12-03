@@ -76,7 +76,7 @@ func (a *App) epCommand() *cli.App {
 				Name:        "add",
 				Usage:       "Add a new server endpoint",
 				UsageText:   "ep add <name> <url>",
-				Description: "This command adds a server endpoint to the client.\n\nThe value of <name> is used for host certificate validation, and\nshould match one of the princials listed therein (if any). The\n<url> is one that is configured on the proxy, e.g.\nwss://ssh.example.com/myserver.",
+				Description: "This command adds a server endpoint to the client.\n\nThe value of <name> is used for host certificate validation, and\nshould match one of the principals listed therein (if any). The\n<url> is one that is configured on the proxy, e.g.\nwss://ssh.example.com/myserver.",
 				Action: func(ctx *cli.Context) error {
 					if ctx.Args().Len() != 2 {
 						cli.ShowSubcommandHelp(ctx)
