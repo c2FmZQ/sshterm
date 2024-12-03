@@ -86,7 +86,7 @@ ssh username@myserver
 To run the tests in a headless browser, use:
 
 ```bash
-./tests/run-headlead-tests.sh
+./tests/run-headless-tests.sh
 ```
 
 To run the tests and watch the output, start the test server:
