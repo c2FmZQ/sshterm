@@ -347,7 +347,6 @@ func (a *App) hostKeyCallback(ep endpoint, hostname string, key ssh.PublicKey) e
 	default:
 		return errors.New("host key rejected by user")
 	}
-	return nil
 }
 
 func (a *App) privKey(key key) (any, error) {
