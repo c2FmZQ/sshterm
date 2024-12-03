@@ -90,7 +90,7 @@ func (a *App) agentCommand() *cli.App {
 					if len(key.Certificate) > 0 {
 						cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
 						if err != nil {
-							return fmt.Errorf("ssh.ParsePublicKey: %v", err)
+							return fmt.Errorf("ssh.ParseAuthorizedKey: %v", err)
 						}
 						if c, ok := cert.(*ssh.Certificate); ok {
 							addedKey.Certificate = c
@@ -129,9 +129,18 @@ func (a *App) agentCommand() *cli.App {
 					if !exists {
 						return fmt.Errorf("key %q not found", name)
 					}
-					pub, err := ssh.ParsePublicKey(key.Public)
-					if err != nil {
-						return fmt.Errorf("ssh.ParsePublicKey: %w", err)
+					var pub ssh.PublicKey
+					if key.Certificate == nil {
+						var err error
+						if pub, err = ssh.ParsePublicKey(key.Public); err != nil {
+							return fmt.Errorf("ssh.ParsePublicKey: %w", err)
+						}
+					} else {
+						var err error
+						pub, _, _, _, err = ssh.ParseAuthorizedKey(key.Certificate)
+						if err != nil {
+							return fmt.Errorf("ssh.ParseAuthorizedKey: %v", err)
+						}
 					}
 					if err := a.agent.Remove(pub); err != nil {
 						return fmt.Errorf("agent.Remove: %w", err)
