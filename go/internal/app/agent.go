@@ -40,6 +40,7 @@ func (a *App) agentCommand() *cli.App {
 		UsageText:       "agent <list|add|remove|lock|unlock>",
 		Description:     "The agent command adds or removes keys from the in-memory\nSSH agent. Keys can be used without entering a passphrase while\nin the agent. Access to the agent can be forwarded to remote\nsessions with ssh -A.\n\nKeys remain in the agent until they are removed or the page\nis reloaded.",
 		HideHelpCommand: true,
+		DefaultCommand:  "list",
 		Commands: []*cli.Command{
 			{
 				Name:      "list",

@@ -63,9 +63,20 @@ func (a *App) caCommand() *cli.App {
 					})
 					if len(cas) == 0 {
 						a.term.Printf("<none>\n")
+						return nil
 					}
+					lenName, lenFP := 5, 15
 					for _, ca := range cas {
-						a.term.Printf("%s %s %s\n", ca.Name, ca.Fingerprint, strings.Join(ca.Hostnames, " "))
+						lenName = max(lenName, len(ca.Name))
+						lenFP = max(lenFP, len(ca.Fingerprint))
+					}
+					a.term.Printf("%*s %*s %s\n", -lenName, "Name", -lenFP, "Key fingerprint", "Hostnames")
+					for _, ca := range cas {
+						hostnames := strings.Join(ca.Hostnames, ",")
+						if hostnames == "" {
+							hostnames = "<none>"
+						}
+						a.term.Printf("%*s %*s %s\n", -lenName, ca.Name, -lenFP, ca.Fingerprint, hostnames)
 					}
 					return nil
 				},
