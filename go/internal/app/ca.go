@@ -50,7 +50,7 @@ func (a *App) caCommand() *cli.App {
 				Usage:     "List all certificate authorities",
 				UsageText: "ca list",
 				Action: func(ctx *cli.Context) error {
-					if len(a.data.Keys) == 0 {
+					if len(a.data.Authorities) == 0 {
 						a.term.Printf("<none>\n")
 						return nil
 					}

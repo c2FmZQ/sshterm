@@ -358,13 +358,24 @@ func TestHostCerts(t *testing.T) {
 		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "ep add fooserver websocket?cert=true\n", Expect: prompt},
-		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Do you want to connect anyway\?`},
+		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Choice>`},
 		{Type: "\n", Expect: prompt},
 
-		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Do you want to connect anyway\?`},
-		{Type: "Y\n", Expect: "Password: "},
+		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Choice>`},
+		{Type: "2\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
+
+		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Choice>`},
+		{Type: "3\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		{Type: "ssh testuser@fooserver foo\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		{Type: "ca list\n", Expect: "fooserver"},
 
 		{Expect: prompt},
 		{Type: "exit\n"},

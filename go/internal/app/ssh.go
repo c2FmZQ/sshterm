@@ -279,10 +279,32 @@ func (a *App) hostCertificateCallback(ep endpoint, hostname string, cert *ssh.Ce
 
 	a.term.Errorf("Host certificate is NOT trusted:\n  %v\n", strings.ReplaceAll(err.Error(), "\n", "\n  "))
 
-	if !a.term.Confirm("Do you want to connect anyway? ", false) {
+	a.term.Printf("Options:\n")
+	a.term.Printf(" 1- Abort the connection (default)\n")
+	a.term.Printf(" 2- Continue, this time only.\n")
+	a.term.Printf(" 3- Continue, and trust this authority in the future.\n")
+
+	switch ans, _ := a.term.Prompt("Choice> "); ans {
+	case "2":
+		return nil
+	case "3":
+		if ca, exists := a.data.Authorities[caFP]; exists {
+			ca.Hostnames = append(ca.Hostnames, hostname)
+			a.data.Authorities[caFP] = ca
+			return a.saveAuthorities()
+		}
+		a.data.Authorities[caFP] = authority{
+			Fingerprint: caFP,
+			Name:        caFP[len(caFP)-8:],
+			Public:      cert.SignatureKey.Marshal(),
+			Hostnames: []string{
+				hostname,
+			},
+		}
+		return a.saveAuthorities()
+	default:
 		return err
 	}
-	return nil
 }
 
 func (a *App) hostKeyCallback(ep endpoint, hostname string, key ssh.PublicKey) error {
