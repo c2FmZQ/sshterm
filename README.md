@@ -81,3 +81,18 @@ ssh username@myserver
 
 :warning: Replace _ssh.EXAMPLE.COM_, _myserver_, _/path/to/docroot/_, ... with something appropriate for your environment.
 
+## Run tests
+
+To run the tests in a headless browser, use:
+
+```bash
+./tests/run-headlead-tests.sh
+```
+
+To run the tests and watch the output, start the test server:
+
+```bash
+./tests/run-test-server.sh
+```
+
+and then open `http://<hostname>:8880/tests.html` in your favorite browser.
