@@ -185,6 +185,9 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 				if signer, err = ssh.NewCertSigner(cert.(*ssh.Certificate), signer); err != nil {
 					return nil, fmt.Errorf("ssh.NewCertSigner: %v", err)
 				}
+				if err := a.checkCertificate(cert.(*ssh.Certificate), ssh.UserCert); err != nil {
+					a.term.Errorf("WARNING: %v", err)
+				}
 			}
 			signers = append(signers, signer)
 		} else if origKeyName != "" {
@@ -244,7 +247,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 
 func (a *App) hostCertificateCallback(ep endpoint, hostname string, cert *ssh.Certificate) error {
 	var errs []error
-	if err := a.checkCertificate(cert); err != nil {
+	if err := a.checkCertificate(cert, ssh.HostCert); err != nil {
 		errs = append(errs, err)
 	}
 	caFP := ssh.FingerprintSHA256(cert.SignatureKey)
@@ -314,9 +317,9 @@ func (a *App) privKey(key key) (any, error) {
 	return priv, err
 }
 
-func (a *App) checkCertificate(cert *ssh.Certificate) error {
+func (a *App) checkCertificate(cert *ssh.Certificate, certType uint32) error {
 	var errs []error
-	if cert.CertType != ssh.HostCert {
+	if cert.CertType != certType {
 		errs = append(errs, fmt.Errorf("certificate has wrong type: %d", cert.CertType))
 	}
 	now := uint64(time.Now().Unix())
@@ -325,6 +328,9 @@ func (a *App) checkCertificate(cert *ssh.Certificate) error {
 	}
 	if cert.ValidBefore > 0 && now > cert.ValidBefore {
 		errs = append(errs, fmt.Errorf("certificate is expired"))
+	}
+	if certType == ssh.HostCert && len(cert.CriticalOptions) > 0 {
+		errs = append(errs, fmt.Errorf("certificate has critical options: %v", cert.CriticalOptions))
 	}
 	c2 := *cert
 	c2.Signature = nil

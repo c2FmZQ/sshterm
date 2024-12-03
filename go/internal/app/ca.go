@@ -71,9 +71,10 @@ func (a *App) caCommand() *cli.App {
 				},
 			},
 			{
-				Name:      "import",
-				Usage:     "Import a certificate authority",
-				UsageText: "ca import <name> [<hostname> <hostname> ...]",
+				Name:        "import",
+				Usage:       "Import a certificate authority",
+				UsageText:   "ca import <name> [<hostname> <hostname> ...]",
+				Description: "This command imports the public key of a certificate authority\nthat signs host certificates. The list of hostnames can be\nmodified with \"add-hostname\" and \"remove-hostname\".\n\nHostnames may contain wildcards.\n\nOnce imported, host certificates signed by this authority will\nautomatically be trusted for the given hostnames.",
 				Action: func(ctx *cli.Context) error {
 					if ctx.Args().Len() == 0 {
 						cli.ShowSubcommandHelp(ctx)

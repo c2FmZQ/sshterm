@@ -158,13 +158,15 @@ func (a *App) keysCommand() *cli.App {
 					if err != nil {
 						return err
 					}
-					a.term.Printf("Public key:\n  %s %s\nFingerprint:\n  %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))), name, ssh.FingerprintSHA256(pub))
+					a.term.Printf("Public key:  %s %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))), name)
+					a.term.Printf("Fingerprint: %s\n", ssh.FingerprintSHA256(pub))
 					if key.Certificate != nil {
 						cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
 						if err != nil {
 							return fmt.Errorf("ssh.ParsePublicKey: %v", err)
 						}
-						a.term.Printf("Certificate:\n  %s\nDetails:\n", strings.TrimSpace(string(key.Certificate)))
+						a.term.Printf("Certificate: %s\n", strings.TrimSpace(string(key.Certificate)))
+						a.term.Printf("Details:\n")
 						a.printCertificate(cert.(*ssh.Certificate))
 					}
 					return nil
@@ -319,22 +321,24 @@ func (a *App) keysCommand() *cli.App {
 }
 
 func (a *App) printCertificate(cert *ssh.Certificate) {
-	a.term.Printf("  Serial: 0x%x (%d)\n", cert.Serial, cert.Serial)
-	a.term.Printf("  Public key: %s %s\n", cert.Key.Type(), ssh.FingerprintSHA256(cert.Key))
-	a.term.Printf("  Type: %s\n", cert.Type())
-	a.term.Printf("  Key ID: %s\n", cert.KeyId)
+	a.term.Printf("  Serial:.......... 0x%x (%d)\n", cert.Serial, cert.Serial)
+	a.term.Printf("  Public key:...... %s", ssh.MarshalAuthorizedKey(cert.Key))
+	a.term.Printf("  Public key fp:... %s\n", ssh.FingerprintSHA256(cert.Key))
+	a.term.Printf("  Type:............ %s\n", cert.Type())
+	a.term.Printf("  Key ID:.......... %s\n", cert.KeyId)
+	if cert.ValidBefore != 0 {
+		a.term.Printf("  Validity:........ %s - %s (UTC)\n",
+			time.Unix(int64(cert.ValidAfter), 0).UTC().Format(time.DateTime),
+			time.Unix(int64(cert.ValidBefore), 0).UTC().Format(time.DateTime))
+	}
+	a.term.Printf("  Authority key:... %s", ssh.MarshalAuthorizedKey(cert.SignatureKey))
+	a.term.Printf("  Authority key fp: %s\n", ssh.FingerprintSHA256(cert.SignatureKey))
 	if len(cert.ValidPrincipals) > 0 {
 		a.term.Printf("  Principals:\n")
 		for _, p := range cert.ValidPrincipals {
 			a.term.Printf("    %s\n", p)
 		}
 	}
-	if cert.ValidBefore != 0 {
-		a.term.Printf("  Validity: %s - %s (UTC)\n",
-			time.Unix(int64(cert.ValidAfter), 0).UTC().Format(time.DateTime),
-			time.Unix(int64(cert.ValidBefore), 0).UTC().Format(time.DateTime))
-	}
-	a.term.Printf("  Signed by: %s %s\n", cert.SignatureKey.Type(), ssh.FingerprintSHA256(cert.SignatureKey))
 	if len(cert.CriticalOptions) > 0 {
 		var keys []string
 		for k := range cert.CriticalOptions {
