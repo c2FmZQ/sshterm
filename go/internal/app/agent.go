@@ -94,7 +94,7 @@ func (a *App) agentCommand() *cli.App {
 						}
 						if c, ok := cert.(*ssh.Certificate); ok {
 							addedKey.Certificate = c
-							if err := a.checkCertificate(c, ssh.UserCert); err != nil {
+							if err := checkCertificate(c, ssh.UserCert); err != nil {
 								a.term.Errorf("WARNING: %v", err)
 							}
 						}
