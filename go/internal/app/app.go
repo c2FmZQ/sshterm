@@ -376,7 +376,7 @@ func (a *App) autoCompleteWords(args []string) []string {
 		}
 		return words
 	}
-	if args[0] == "keys" && (slices.Contains(args, "generate")) && strings.HasPrefix(last, "--type=") {
+	if args[0] == "keys" && slices.Contains(args, "generate") && strings.HasPrefix(last, "--type=") {
 		var words []string
 		for _, v := range []string{"ed25519", "ecdsa", "rsa"} {
 			w := "--type=" + v
