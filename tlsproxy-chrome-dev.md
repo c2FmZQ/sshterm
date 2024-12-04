@@ -43,9 +43,9 @@ CERTMANAGER_STATE_FILE=$HOME/.certmanager-state go run . --config=config.yaml --
 
 ## Open sshterm
 
-Point your browser at [localhost:8443](https://localhost:8443)
+Point your browser at [localhost:8443](https://localhost:8443).
 
-For test purposes with chrome, consider adding `https://localhost:8443` to `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
+For test purposes with chrome, consider adding `https://localhost:8443` to [#unsafely-treat-insecure-origin-as-secur](chrome://flags/#unsafely-treat-insecure-origin-as-secure).
 
 ## Configure the endpoint in sshterm
 
