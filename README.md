@@ -96,3 +96,5 @@ To run the tests and watch the output, start the test server:
 ```
 
 and then open `http://<hostname>:8880/tests.html` in your favorite browser.
+
+![testcapture](https://github.com/c2FmZQ/sshterm/blob/main/images/sshterm-tests.gif "SSH Term Tests")
