@@ -38,6 +38,7 @@ Edit `config.yaml` as needed.
 
 ```bash
 cd tlsproxy
+go generate ./...
 CERTMANAGER_STATE_FILE=$HOME/.certmanager-state go run . --config=config.yaml --passphrase=test --use-ephemeral-certificate-manager
 ```
 
