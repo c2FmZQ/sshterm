@@ -369,7 +369,7 @@ func createKey(t string, b int) (crypto.PublicKey, crypto.PrivateKey, error) {
 		}
 		k, err := rsa.GenerateKey(rand.Reader, b)
 		if err != nil {
-			return nil, nil, fmt.Errorf("rsa.GenerateKey: %w", err)
+			return nil, nil, err
 		}
 		return k.Public(), k, nil
 
