@@ -51,7 +51,7 @@ For test purposes with chrome, consider adding `https://localhost:8443` to `chro
 ## Configure the endpoint in sshterm
 
 ```
-ep add myserver wss://localhost/websocket
+ep add myserver wss://localhost:8443/websocket
 ```
 
 ## Connect to your server
