@@ -27,8 +27,11 @@ package app
 
 import (
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/subtle"
 	"encoding/pem"
 	"errors"
@@ -82,15 +85,28 @@ func (a *App) keysCommand() *cli.App {
 				Usage:       "Generate a new key",
 				UsageText:   "keys generate <name>",
 				Description: "The <name> of the key is used to refer the key. The ssh command\nwill use the key named 'default' if it exists.",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "type",
+						Aliases: []string{"t"},
+						Value:   "ed25519",
+						Usage:   "The type of key to generate: ecdsa, ed25519, or rsa.",
+					},
+					&cli.IntFlag{
+						Name:    "bits",
+						Aliases: []string{"b"},
+						Usage:   "The key size in bits.",
+					},
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.Args().Len() != 1 {
 						cli.ShowSubcommandHelp(ctx)
 						return nil
 					}
 					name := ctx.Args().Get(0)
-					pub, priv, err := ed25519.GenerateKey(rand.Reader)
+					pub, priv, err := createKey(ctx.String("type"), ctx.Int("bits"))
 					if err != nil {
-						return fmt.Errorf("ed25519.GenerateKey: %w", err)
+						return err
 					}
 					sshPub, err := ssh.NewPublicKey(pub)
 					if err != nil {
@@ -317,6 +333,48 @@ func (a *App) keysCommand() *cli.App {
 				},
 			},
 		},
+	}
+}
+
+func createKey(t string, b int) (crypto.PublicKey, crypto.PrivateKey, error) {
+	switch t {
+	case "ed25519":
+		return ed25519.GenerateKey(rand.Reader)
+
+	case "ecdsa":
+		if b == 0 {
+			b = 256
+		}
+		var curve elliptic.Curve
+		switch b {
+		case 256:
+			curve = elliptic.P256()
+		case 384:
+			curve = elliptic.P384()
+		case 521:
+			curve = elliptic.P521()
+		default:
+			return nil, nil, fmt.Errorf("invalid key length %d", b)
+		}
+
+		k, err := ecdsa.GenerateKey(curve, rand.Reader)
+		if err != nil {
+			return nil, nil, err
+		}
+		return k.Public(), k, nil
+
+	case "rsa":
+		if b == 0 {
+			b = 3072
+		}
+		k, err := rsa.GenerateKey(rand.Reader, b)
+		if err != nil {
+			return nil, nil, fmt.Errorf("rsa.GenerateKey: %w", err)
+		}
+		return k.Public(), k, nil
+
+	default:
+		return nil, nil, fmt.Errorf("unknown key type %q", t)
 	}
 }
 
