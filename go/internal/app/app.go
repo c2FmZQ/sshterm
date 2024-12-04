@@ -376,6 +376,16 @@ func (a *App) autoCompleteWords(args []string) []string {
 		}
 		return words
 	}
+	if args[0] == "keys" && (slices.Contains(args, "generate")) && strings.HasPrefix(last, "--type=") {
+		var words []string
+		for _, v := range []string{"ed25519", "ecdsa", "rsa"} {
+			w := "--type=" + v
+			if strings.HasPrefix(w, last) {
+				words = append(words, w)
+			}
+		}
+		return words
+	}
 	if args[0] == "ca" && len(args) == 3 && (args[1] == "delete" || args[1] == "add-hostname" || args[1] == "remove-hostname") {
 		var words []string
 		for _, k := range a.data.Authorities {
