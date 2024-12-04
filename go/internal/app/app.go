@@ -367,14 +367,48 @@ func (a *App) autoCompleteWords(args []string) []string {
 		}
 		return words
 	}
-	if args[0] == "keys" && (slices.Contains(args, "delete") || slices.Contains(args, "export") || slices.Contains(args, "show") || slices.Contains(args, "import-cert")) {
-		var words []string
-		for _, k := range a.data.Keys {
-			if strings.HasPrefix(k.Name, last) {
-				words = append(words, k.Name)
+	if args[0] == "keys" {
+		if slices.Contains(args, "delete") || slices.Contains(args, "export") || slices.Contains(args, "show") || slices.Contains(args, "import-cert") {
+			var words []string
+			for _, k := range a.data.Keys {
+				if strings.HasPrefix(k.Name, last) {
+					words = append(words, k.Name)
+				}
+			}
+			return words
+		}
+		if slices.Contains(args, "generate") {
+			if strings.HasPrefix(last, "--type=") {
+				var words []string
+				for _, v := range []string{"ed25519", "ecdsa", "rsa"} {
+					w := "--type=" + v
+					if strings.HasPrefix(w, last) {
+						words = append(words, w)
+					}
+				}
+				return words
+			}
+			if slices.Contains(args, "--type=rsa") && strings.HasPrefix(last, "--bits=") {
+				var words []string
+				for _, v := range []string{"2048", "3072", "4096"} {
+					w := "--bits=" + v
+					if strings.HasPrefix(w, last) {
+						words = append(words, w)
+					}
+				}
+				return words
+			}
+			if slices.Contains(args, "--type=ecdsa") && strings.HasPrefix(last, "--bits=") {
+				var words []string
+				for _, v := range []string{"256", "384", "521"} {
+					w := "--bits=" + v
+					if strings.HasPrefix(w, last) {
+						words = append(words, w)
+					}
+				}
+				return words
 			}
 		}
-		return words
 	}
 	if args[0] == "ca" && len(args) == 3 && (args[1] == "delete" || args[1] == "add-hostname" || args[1] == "remove-hostname") {
 		var words []string
