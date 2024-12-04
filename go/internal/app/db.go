@@ -104,6 +104,7 @@ func (a *App) dbCommand() *cli.App {
 					a.agent = agent.NewKeyring()
 					a.data.Endpoints = make(map[string]endpoint)
 					a.data.Keys = make(map[string]key)
+					a.data.Authorities = make(map[string]authority)
 					if err := a.saveAll(); err != nil {
 						return err
 					}

@@ -40,6 +40,7 @@ func (a *App) agentCommand() *cli.App {
 		UsageText:       "agent <list|add|remove|lock|unlock>",
 		Description:     "The agent command adds or removes keys from the in-memory\nSSH agent. Keys can be used without entering a passphrase while\nin the agent. Access to the agent can be forwarded to remote\nsessions with ssh -A.\n\nKeys remain in the agent until they are removed or the page\nis reloaded.",
 		HideHelpCommand: true,
+		DefaultCommand:  "list",
 		Commands: []*cli.Command{
 			{
 				Name:      "list",
@@ -83,11 +84,24 @@ func (a *App) agentCommand() *cli.App {
 					if err != nil {
 						return fmt.Errorf("private key: %w", err)
 					}
-					if err := a.agent.Add(agent.AddedKey{
+					addedKey := agent.AddedKey{
 						PrivateKey: priv,
 						Comment:    name,
-					}); err != nil {
-						return fmt.Errorf("agent.Add: %w", err)
+					}
+					if len(key.Certificate) > 0 {
+						cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
+						if err != nil {
+							return fmt.Errorf("ssh.ParseAuthorizedKey: %v", err)
+						}
+						if c, ok := cert.(*ssh.Certificate); ok {
+							addedKey.Certificate = c
+							if err := checkCertificate(c, ssh.UserCert); err != nil {
+								a.term.Errorf("WARNING: %v", err)
+							}
+						}
+					}
+					if err := a.agent.Add(addedKey); err != nil {
+						return err
 					}
 					return nil
 				},
@@ -119,9 +133,18 @@ func (a *App) agentCommand() *cli.App {
 					if !exists {
 						return fmt.Errorf("key %q not found", name)
 					}
-					pub, err := ssh.ParsePublicKey(key.Public)
-					if err != nil {
-						return fmt.Errorf("ssh.ParsePublicKey: %w", err)
+					var pub ssh.PublicKey
+					if key.Certificate == nil {
+						var err error
+						if pub, err = ssh.ParsePublicKey(key.Public); err != nil {
+							return fmt.Errorf("ssh.ParsePublicKey: %w", err)
+						}
+					} else {
+						var err error
+						pub, _, _, _, err = ssh.ParseAuthorizedKey(key.Certificate)
+						if err != nil {
+							return fmt.Errorf("ssh.ParseAuthorizedKey: %v", err)
+						}
 					}
 					if err := a.agent.Remove(pub); err != nil {
 						return fmt.Errorf("agent.Remove: %w", err)

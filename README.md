@@ -16,13 +16,14 @@ Supported features:
 * [x] Backup & restore.
 * [x] Persist data to local storage (optional, on by default).
 * [x] Keyboard interactive authentication.
+* [x] Public key authentication, with or without certificates.
 * [x] In-memory SSH agent and agent forwarding.
 * [x] Streaming upload and download.
+* [x] Accept host certificates signed by a trusted authority.
 
 Not implemented:
 
 * [ ] Port forwarding.
-* [ ] Certificates.
 * [ ] Security keys.
 
 ## How to install
@@ -80,3 +81,18 @@ ssh username@myserver
 
 :warning: Replace _ssh.EXAMPLE.COM_, _myserver_, _/path/to/docroot/_, ... with something appropriate for your environment.
 
+## Run tests
+
+To run the tests in a headless browser, use:
+
+```bash
+./tests/run-headless-tests.sh
+```
+
+To run the tests and watch the output, start the test server:
+
+```bash
+./tests/run-test-server.sh
+```
+
+and then open `http://<hostname>:8880/tests.html` in your favorite browser.

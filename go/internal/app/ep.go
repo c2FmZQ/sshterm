@@ -60,7 +60,7 @@ func (a *App) epCommand() *cli.App {
 						szURL = max(szURL, len(ep.URL))
 					}
 					sort.Strings(names)
-					a.term.Printf("%*s %*s %s\n", -szName, "Name", -szURL, "URL", "Fingerprint")
+					a.term.Printf("%*s %*s %s\n", -szName, "Name", -szURL, "URL", "Host key fingerprint")
 					for _, n := range names {
 						ep := a.data.Endpoints[n]
 						fp := "n/a"
@@ -76,7 +76,7 @@ func (a *App) epCommand() *cli.App {
 				Name:        "add",
 				Usage:       "Add a new server endpoint",
 				UsageText:   "ep add <name> <url>",
-				Description: "This command adds a server endpoint to the client.\n\nThe <name> is used to refer to the endpoint. The <url> is one that\nis configured on the proxy, e.g. wss://ssh.example.com/myserver.",
+				Description: "This command adds a server endpoint to the client.\n\nThe value of <name> is used for host certificate validation, and\nshould match one of the principals listed therein (if any). The\n<url> is one that is configured on the proxy, e.g.\nwss://ssh.example.com/myserver.",
 				Action: func(ctx *cli.Context) error {
 					if ctx.Args().Len() != 2 {
 						cli.ShowSubcommandHelp(ctx)

@@ -68,7 +68,11 @@ func main() {
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}
-	sshServer, err := newSSHServer(tmpDir)
+	sshServer, err := newSSHServer(tmpDir, false)
+	if err != nil {
+		log.Fatalf("SSH Server: %v", err)
+	}
+	sshServerWithCert, err := newSSHServer(tmpDir, true)
 	if err != nil {
 		log.Fatalf("SSH Server: %v", err)
 	}
@@ -81,6 +85,11 @@ func main() {
 			return
 		}
 		defer conn.Close()
+		req.ParseForm()
+		if req.Form.Get("cert") == "true" {
+			sshServerWithCert.handle(&netConn{conn: conn})
+			return
+		}
 		sshServer.handle(&netConn{conn: conn})
 	})
 	mux.HandleFunc("/reset", func(w http.ResponseWriter, req *http.Request) {
@@ -94,13 +103,20 @@ func main() {
 			return
 		}
 		b, _ := io.ReadAll(req.Body)
+		log.Printf("/addkey %q", b)
+
 		sshServer.mu.Lock()
 		defer sshServer.mu.Unlock()
-		log.Printf("/addkey %q", b)
 		sshServer.authorizedKeys[string(b)] = true
+
+		sshServerWithCert.mu.Lock()
+		defer sshServerWithCert.mu.Unlock()
+		sshServerWithCert.authorizedKeys[string(b)] = true
+
 		fmt.Fprintln(w, "OK")
 	})
-	mux.HandleFunc("/deletekey", func(w http.ResponseWriter, req *http.Request) {
+	mux.HandleFunc("/cakey", func(w http.ResponseWriter, req *http.Request) {
+		fmt.Fprintf(w, "%s\n", ssh.MarshalAuthorizedKey(sshServerWithCert.pubKey))
 	})
 	fs := http.FileServer(http.Dir(*docRoot))
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
@@ -211,7 +227,7 @@ type sshServer struct {
 	pubKey ssh.PublicKey
 }
 
-func newSSHServer(dir string) (*sshServer, error) {
+func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("ed25519.GenerateKey: %w", err)
@@ -223,6 +239,23 @@ func newSSHServer(dir string) (*sshServer, error) {
 	signer, err := ssh.NewSignerFromKey(priv)
 	if err != nil {
 		return nil, fmt.Errorf("ssh.NewSignerFromKey: %w", err)
+	}
+	if hostCert {
+		cert := &ssh.Certificate{
+			Key:      sshPub,
+			Serial:   0x12345,
+			CertType: ssh.HostCert,
+			KeyId:    "test-server",
+			ValidPrincipals: []string{
+				"test-server",
+			},
+		}
+		cert.SignCert(rand.Reader, signer)
+		certSigner, err := ssh.NewCertSigner(cert, signer)
+		if err != nil {
+			return nil, fmt.Errorf("ssh.NewCertSigner: %w", err)
+		}
+		signer = certSigner
 	}
 
 	server := &sshServer{

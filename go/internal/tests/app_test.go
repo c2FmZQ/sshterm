@@ -27,6 +27,7 @@ package tests
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"syscall/js"
 	"testing"
@@ -137,7 +138,7 @@ func TestKeys(t *testing.T) {
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
 		{Expect: prompt},
-		{Type: "keys export test\n", Expect: `Continue\?`},
+		{Type: "keys export --private test\n", Expect: `Continue\?`},
 		{Type: "Y\n"},
 	})
 	file := <-downloadCh
@@ -236,8 +237,8 @@ func TestSSH(t *testing.T) {
 		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 		{Type: "ep add test-server websocket\n", Expect: prompt},
-		{Type: "ssh testuser@test-server\n", Expect: `(?s)Host key for websocket.*Continue\?`},
-		{Type: "Y\n", Expect: "Password: "},
+		{Type: "ssh testuser@test-server\n", Expect: `(?s)Host key for test-server.*Choice>`},
+		{Type: "3\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "remote> "},
 		{Type: "exit\n", Expect: prompt},
 		{Wait: time.Second, Type: "\n\n"},
@@ -300,8 +301,8 @@ func TestDownload(t *testing.T) {
 		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 		{Type: "ep add test-server websocket\n", Expect: prompt},
-		{Type: "file upload testuser@test-server:.\n", Expect: `(?s)Host key for websocket.*Continue\?`},
-		{Type: "\n", Expect: "Password: "},
+		{Type: "file upload testuser@test-server:.\n", Expect: `(?s)Host key for test-server.*Choice>`},
+		{Type: "3\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "100%"},
 
 		{Type: "file download testuser@test-server:hello-again.txt\n", Expect: "Password: "},
@@ -314,6 +315,69 @@ func TestDownload(t *testing.T) {
 	if got, want := file.Name, "hello-again.txt"; got != want {
 		t.Errorf("filename = %q, want %q", got, want)
 	}
+	if err := <-result; err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+}
+
+func TestHostCerts(t *testing.T) {
+	a, err := app.New(appConfig)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	result := make(chan error)
+	go func() {
+		result <- a.Run()
+	}()
+
+	resp, err := http.Get("/cakey")
+	if err != nil {
+		t.Fatalf("/cakey: %v", err)
+	}
+	defer resp.Body.Close()
+
+	caKey, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	t.Logf("ca key: %s", caKey)
+
+	fileUploader.enqueue("testca.pub", "text/plain", int64(len(caKey)), caKey)
+
+	script(t, []line{
+		{Expect: prompt},
+		{Type: "db wipe\n", Expect: `Continue\?`},
+		{Type: "Y\n", Expect: prompt},
+		{Type: "ca import testca test-server\n", Expect: prompt},
+		{Type: "ep add test-server websocket?cert=true\n", Expect: prompt},
+		{Type: "ssh testuser@test-server foo\n", Expect: `Host certificate is trusted`},
+		{Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		{Type: "ep add fooserver websocket?cert=true\n", Expect: prompt},
+		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Choice>`},
+		{Type: "\n", Expect: prompt},
+
+		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Choice>`},
+		{Type: "2\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Choice>`},
+		{Type: "3\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		{Type: "ssh testuser@fooserver foo\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		{Type: "ca list\n", Expect: "fooserver"},
+
+		{Expect: prompt},
+		{Type: "exit\n"},
+	})
 	if err := <-result; err != nil {
 		t.Fatalf("Run(): %v", err)
 	}

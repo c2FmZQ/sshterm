@@ -46,4 +46,4 @@ jobs:
     - name: Run go test (not wasm)
       run: cd go && go test ./...
     - name: Run headless tests
-      run: ./tests/run-headlead-tests.sh
+      run: ./tests/run-headless-tests.sh

@@ -29,11 +29,13 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
@@ -42,9 +44,9 @@ import (
 func (a *App) keysCommand() *cli.App {
 	return &cli.App{
 		Name:            "keys",
-		Usage:           "Manage keys",
-		UsageText:       "keys <list|generate|delete|import|export>",
-		Description:     "The keys command is used to manage private and public keys.",
+		Usage:           "Manage user keys and certificates",
+		UsageText:       "keys <list|generate|delete|show|import|import-cert|export>",
+		Description:     "The keys command is used to manage user keys and certificates.",
 		HideHelpCommand: true,
 		DefaultCommand:  "list",
 		Commands: []*cli.Command{
@@ -139,6 +141,38 @@ func (a *App) keysCommand() *cli.App {
 				},
 			},
 			{
+				Name:      "show",
+				Usage:     "Show a key",
+				UsageText: "keys show <name>",
+				Action: func(ctx *cli.Context) error {
+					if ctx.Args().Len() != 1 {
+						cli.ShowSubcommandHelp(ctx)
+						return nil
+					}
+					name := ctx.Args().Get(0)
+					key, exists := a.data.Keys[name]
+					if !exists {
+						return fmt.Errorf("unknown key %q", name)
+					}
+					pub, err := ssh.ParsePublicKey(key.Public)
+					if err != nil {
+						return err
+					}
+					a.term.Printf("Public key:  %s %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))), name)
+					a.term.Printf("Fingerprint: %s\n", ssh.FingerprintSHA256(pub))
+					if key.Certificate != nil {
+						cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
+						if err != nil {
+							return fmt.Errorf("ssh.ParsePublicKey: %v", err)
+						}
+						a.term.Printf("Certificate: %s\n", strings.TrimSpace(string(key.Certificate)))
+						a.term.Printf("Details:\n")
+						a.printCertificate(cert.(*ssh.Certificate))
+					}
+					return nil
+				},
+			},
+			{
 				Name:      "import",
 				Usage:     "Import a key",
 				UsageText: "keys import <name>",
@@ -148,8 +182,12 @@ func (a *App) keysCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
-
-					files := a.importFiles("", false)
+					if _, exists := a.data.Keys[name]; exists {
+						if !a.term.Confirm(fmt.Sprintf("Key %q already exists. Overwrite?", name), false) {
+							return errors.New("aborted")
+						}
+					}
+					files := a.importFiles(".pub", false)
 					if len(files) == 0 {
 						return nil
 					}
@@ -192,6 +230,13 @@ func (a *App) keysCommand() *cli.App {
 				Name:      "export",
 				Usage:     "Export a key",
 				UsageText: "keys export <name>",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "private",
+						Value: false,
+						Usage: "Export the private key.",
+					},
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.Args().Len() != 1 {
 						cli.ShowSubcommandHelp(ctx)
@@ -202,12 +247,126 @@ func (a *App) keysCommand() *cli.App {
 					if !exists {
 						return fmt.Errorf("unknown key %q", name)
 					}
-					if !a.term.Confirm(fmt.Sprintf("You are about to export the PRIVATE key %q\nContinue?", name), false) {
-						return errors.New("aborted")
+					if ctx.Bool("private") {
+						if !a.term.Confirm(fmt.Sprintf("You are about to export the PRIVATE key %q\nContinue?", name), false) {
+							return errors.New("aborted")
+						}
+						return a.exportFile(key.Private, name+".key", "application/octet-stream")
 					}
-					return a.exportFile(key.Private, name+".key", "application/octet-stream")
+					pub, err := ssh.ParsePublicKey(key.Public)
+					if err != nil {
+						return err
+					}
+					m := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub)))
+					out := fmt.Sprintf("%s %s\n", m, name)
+					return a.exportFile([]byte(out), name+".pub", "application/octet-stream")
+				},
+			},
+			{
+				Name:      "import-cert",
+				Usage:     "Import a certificate",
+				UsageText: "keys import-cert <key-name>",
+				Action: func(ctx *cli.Context) error {
+					if ctx.Args().Len() != 1 {
+						cli.ShowSubcommandHelp(ctx)
+						return nil
+					}
+					name := ctx.Args().Get(0)
+
+					key, exists := a.data.Keys[name]
+					if !exists {
+						return fmt.Errorf("unknown key %q", name)
+					}
+
+					files := a.importFiles(".pub", false)
+					if len(files) == 0 {
+						return nil
+					}
+					f := files[0]
+					if f.Size > 20480 {
+						return fmt.Errorf("file %q is too large: %d", f.Name, f.Size)
+					}
+					content, err := f.ReadAll()
+					if err != nil {
+						return fmt.Errorf("%q: %w", f.Name, err)
+					}
+					pcert, _, _, _, err := ssh.ParseAuthorizedKey(content)
+					if err != nil {
+						return fmt.Errorf("ssh.ParsePublicKey: %v", err)
+					}
+					cert, ok := pcert.(*ssh.Certificate)
+					if !ok {
+						return fmt.Errorf("file %q does not contain a valid certificate", f.Name)
+					}
+					pub, err := ssh.ParsePublicKey(key.Public)
+					if err != nil {
+						return err
+					}
+					if subtle.ConstantTimeCompare(cert.Key.Marshal(), pub.Marshal()) != 1 {
+						return fmt.Errorf("the certificate in %q is for a different key", f.Name)
+					}
+					key.Certificate = content
+					a.data.Keys[name] = key
+
+					if err := a.saveKeys(); err != nil {
+						return err
+					}
+					a.term.Printf("New certificate for key %q imported from %q\n", name, f.Name)
+					a.printCertificate(cert)
+					return nil
 				},
 			},
 		},
+	}
+}
+
+func (a *App) printCertificate(cert *ssh.Certificate) {
+	a.term.Printf("  Serial:.......... 0x%x (%d)\n", cert.Serial, cert.Serial)
+	a.term.Printf("  Public key:...... %s", ssh.MarshalAuthorizedKey(cert.Key))
+	a.term.Printf("  Public key fp:... %s\n", ssh.FingerprintSHA256(cert.Key))
+	a.term.Printf("  Type:............ %s\n", cert.Type())
+	a.term.Printf("  Key ID:.......... %s\n", cert.KeyId)
+	if cert.ValidBefore != 0 {
+		a.term.Printf("  Validity:........ %s - %s (UTC)\n",
+			time.Unix(int64(cert.ValidAfter), 0).UTC().Format(time.DateTime),
+			time.Unix(int64(cert.ValidBefore), 0).UTC().Format(time.DateTime))
+	}
+	a.term.Printf("  Authority key:... %s", ssh.MarshalAuthorizedKey(cert.SignatureKey))
+	a.term.Printf("  Authority key fp: %s\n", ssh.FingerprintSHA256(cert.SignatureKey))
+	if len(cert.ValidPrincipals) > 0 {
+		a.term.Printf("  Principals:\n")
+		for _, p := range cert.ValidPrincipals {
+			a.term.Printf("    %s\n", p)
+		}
+	}
+	if len(cert.CriticalOptions) > 0 {
+		var keys []string
+		for k := range cert.CriticalOptions {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		a.term.Printf("  Critical options:\n")
+		for _, k := range keys {
+			if v := cert.CriticalOptions[k]; v != "" {
+				a.term.Printf("    %s: %s\n", k, v)
+			} else {
+				a.term.Printf("    %s\n", k)
+			}
+		}
+	}
+	if len(cert.Extensions) > 0 {
+		var keys []string
+		for k := range cert.Extensions {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		a.term.Printf("  Extensions:\n")
+		for _, k := range keys {
+			if v := cert.Extensions[k]; v != "" {
+				a.term.Printf("    %s: %s\n", k, v)
+			} else {
+				a.term.Printf("    %s\n", k)
+			}
+		}
 	}
 }
