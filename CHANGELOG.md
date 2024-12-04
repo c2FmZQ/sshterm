@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## v0.5.1
+
+### :star: Feature improvements
+
+* Add an option to generate ECDSA and RSA keys (in addition to ED25519 that is already there).
+
 ## v0.5.0
 
 ### :star2: New features
