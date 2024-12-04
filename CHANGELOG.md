@@ -1,11 +1,15 @@
 # SSH Term Release Notes
 
-## next
+## v0.5.0
 
 ### :star2: New features
 
 * Add support for user certificates. After a certificate is imported, it is used automatically when the matching key is used for authentication.
 * Add support for server certificates signed by a trusted authority. CAs are managed with the ca command.
+
+### :wrench: Misc
+
+* Build with go1.23.4
 
 ## v0.4.0
 
