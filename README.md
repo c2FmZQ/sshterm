@@ -6,7 +6,7 @@ It uses [xterm.js](https://xtermjs.org/) as terminal, and [golang.org/x/crypto/s
 
 The connection between the client and the server uses [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket) and [tlsproxy](https://github.com/c2FmZQ/tlsproxy).
 
-![screenshot](https://github.com/c2FmZQ/sshterm/blob/main/images/sshterm.png "SSH Term")
+![screenshot](https://github.com/c2FmZQ/sshterm/blob/main/images/sshterm.gif "SSH Term")
 
 Supported features:
 
