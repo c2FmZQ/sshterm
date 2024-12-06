@@ -496,7 +496,7 @@ func (k *key) updateCert() error {
 	req.Header.Set("x-csrf-check", "1")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%q: %w", err)
+		return fmt.Errorf("%q: %v", k.Provider, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain" {
@@ -508,10 +508,10 @@ func (k *key) updateCert() error {
 	}
 	certBytes, err := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 20480})
 	if err != nil {
-		return fmt.Errorf("%q: %w", err)
+		return fmt.Errorf("%q: %v", k.Provider, err)
 	}
 	if _, _, _, _, err := ssh.ParseAuthorizedKey(certBytes); err != nil {
-		return fmt.Errorf("%q: %w", err)
+		return fmt.Errorf("%q: %v", k.Provider, err)
 	}
 	k.CertBytes = certBytes
 	return nil
