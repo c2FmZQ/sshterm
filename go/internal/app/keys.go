@@ -26,6 +26,7 @@
 package app
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -36,6 +37,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -97,6 +100,10 @@ func (a *App) keysCommand() *cli.App {
 						Aliases: []string{"b"},
 						Usage:   "The key size in bits.",
 					},
+					&cli.StringFlag{
+						Name:  "idp",
+						Usage: "The URL of the identity provider to use.",
+					},
 				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.Args().Len() != 1 {
@@ -131,7 +138,13 @@ func (a *App) keysCommand() *cli.App {
 					} else if privPEM, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase)); err != nil {
 						return fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
 					}
-					a.data.Keys[name] = key{Name: name, Public: sshPub.Marshal(), Private: pem.EncodeToMemory(privPEM)}
+					a.data.Keys[name] = &key{
+						Name:     name,
+						Public:   sshPub.Marshal(),
+						Private:  pem.EncodeToMemory(privPEM),
+						Provider: ctx.String("idp"),
+						errorf:   a.term.Errorf,
+					}
 					if err := a.saveKeys(); err != nil {
 						return err
 					}
@@ -176,14 +189,16 @@ func (a *App) keysCommand() *cli.App {
 					}
 					a.term.Printf("Public key:  %s %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))), name)
 					a.term.Printf("Fingerprint: %s\n", ssh.FingerprintSHA256(pub))
-					if key.Certificate != nil {
-						cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
-						if err != nil {
-							return fmt.Errorf("ssh.ParsePublicKey: %v", err)
-						}
-						a.term.Printf("Certificate: %s\n", strings.TrimSpace(string(key.Certificate)))
+					if cert := key.Certificate(); cert != nil {
+						a.term.Printf("Certificate: %s\n", strings.TrimSpace(string(key.CertBytes)))
 						a.term.Printf("Details:\n")
-						a.printCertificate(cert.(*ssh.Certificate))
+						a.printCertificate(cert)
+						if err := checkCertificate(cert, ssh.UserCert); err != nil {
+							a.term.Errorf("%v", err)
+						}
+					}
+					if key.Provider != "" {
+						a.term.Printf("Identity Provider: %s\n", key.Provider)
 					}
 					return nil
 				},
@@ -215,16 +230,17 @@ func (a *App) keysCommand() *cli.App {
 					if err != nil {
 						return fmt.Errorf("%q: %w", f.Name, err)
 					}
-					key := key{Name: name, Private: content}
-					priv, err := a.privKey(key)
+					key := &key{
+						Name:    name,
+						Private: content,
+						errorf:  a.term.Errorf,
+					}
+					priv, err := key.PrivateKey(a.term.ReadPassword)
 					if err != nil {
 						return fmt.Errorf("%q: %w", f.Name, err)
 					}
-					type privateKey interface {
-						Public() crypto.PublicKey
-					}
 					var pub crypto.PublicKey
-					if k, ok := priv.(privateKey); ok {
+					if k, ok := priv.(crypto.Signer); ok {
 						pub = k.Public()
 					} else {
 						return fmt.Errorf("key type %T is not supported", priv)
@@ -293,6 +309,9 @@ func (a *App) keysCommand() *cli.App {
 					if !exists {
 						return fmt.Errorf("unknown key %q", name)
 					}
+					if key.Provider != "" {
+						return errors.New("key is using an identity provider")
+					}
 
 					files := a.importFiles(".pub", false)
 					if len(files) == 0 {
@@ -321,7 +340,7 @@ func (a *App) keysCommand() *cli.App {
 					if subtle.ConstantTimeCompare(cert.Key.Marshal(), pub.Marshal()) != 1 {
 						return fmt.Errorf("the certificate in %q is for a different key", f.Name)
 					}
-					key.Certificate = content
+					key.CertBytes = content
 					a.data.Keys[name] = key
 
 					if err := a.saveKeys(); err != nil {
@@ -427,4 +446,130 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 			}
 		}
 	}
+}
+
+type key struct {
+	Name      string `json:"name"`
+	Public    []byte `json:"public"`
+	Private   []byte `json:"private"`
+	Provider  string `json:"provider,omitempty"`
+	CertBytes []byte `json:"certificate,omitempty"`
+
+	errorf func(string, ...any)
+}
+
+func (k *key) Certificate() (cert *ssh.Certificate) {
+	parseCert := func() *ssh.Certificate {
+		c, _, _, _, err := ssh.ParseAuthorizedKey(k.CertBytes)
+		if err != nil {
+			return nil
+		}
+		if cert, ok := c.(*ssh.Certificate); ok {
+			return cert
+		}
+		return nil
+	}
+	cert = parseCert()
+	if cert != nil && cert.ValidBefore > uint64(time.Now().Add(5*time.Minute).Unix()) {
+		return
+	}
+	if err := k.updateCert(); err != nil {
+		k.errorf("certificate update: %v", err)
+		return
+	}
+	return parseCert()
+}
+
+func (k *key) updateCert() error {
+	if k.Provider == "" {
+		return nil
+	}
+	pub, err := ssh.ParsePublicKey(k.Public)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", k.Provider, bytes.NewReader(ssh.MarshalAuthorizedKey(pub)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("x-csrf-check", "1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%q: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain" {
+		if resp.StatusCode == http.StatusForbidden {
+			msg, _ := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 1024})
+			return fmt.Errorf("%q: %s: %s", k.Provider, resp.Status, maskControl(string(msg)))
+		}
+		return fmt.Errorf("%q: status code %q content-type %q", k.Provider, resp.Status, resp.Header.Get("Content-Type"))
+	}
+	certBytes, err := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 20480})
+	if err != nil {
+		return fmt.Errorf("%q: %w", err)
+	}
+	if _, _, _, _, err := ssh.ParseAuthorizedKey(certBytes); err != nil {
+		return fmt.Errorf("%q: %w", err)
+	}
+	k.CertBytes = certBytes
+	return nil
+}
+
+func (k *key) PrivateKey(rp func(string) (string, error)) (any, error) {
+	priv, err := ssh.ParseRawPrivateKey(k.Private)
+	if _, ok := err.(*ssh.PassphraseMissingError); ok {
+		passphrase, err2 := rp("Enter passphrase for " + k.Name + ": ")
+		if err2 != nil {
+			return nil, err2
+		}
+		priv, err = ssh.ParseRawPrivateKeyWithPassphrase(k.Private, []byte(passphrase))
+	}
+	if err != nil {
+		return nil, err
+	}
+	return priv, err
+}
+
+func (k *key) Signer(rp func(string) (string, error)) (ssh.Signer, error) {
+	priv, err := k.PrivateKey(rp)
+	if err != nil {
+		return nil, err
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		return nil, fmt.Errorf("NewSignerFromKey: %w", err)
+	}
+	ds := &dynSigner{
+		key:        k,
+		baseSigner: signer,
+	}
+	return ds, nil
+}
+
+var _ ssh.Signer = (*dynSigner)(nil)
+
+type dynSigner struct {
+	key        *key
+	baseSigner ssh.Signer
+}
+
+func (s *dynSigner) PublicKey() ssh.PublicKey {
+	if cert := s.key.Certificate(); cert != nil {
+		return cert
+	}
+	return s.baseSigner.PublicKey()
+}
+
+func (s *dynSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+	cert := s.key.Certificate()
+	if cert == nil {
+		return s.baseSigner.Sign(rand, data)
+	}
+	certSigner, err := ssh.NewCertSigner(cert, s.baseSigner)
+	if err != nil {
+		return nil, err
+	}
+	return certSigner.Sign(rand, data)
 }
