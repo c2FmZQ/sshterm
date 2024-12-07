@@ -87,7 +87,7 @@ func (a *App) epCommand() *cli.App {
 						return errors.New("endpoint name cannot contain \":\"")
 					}
 					url := ctx.Args().Get(1)
-					a.data.Endpoints[name] = endpoint{Name: name, URL: url}
+					a.data.Endpoints[name] = &endpoint{Name: name, URL: url}
 					return a.saveEndpoints()
 				},
 			},

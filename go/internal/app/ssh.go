@@ -209,7 +209,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			cert, ok := key.(*ssh.Certificate)
 			if ok {
-				return a.hostCertificateCallback(ep, hostname, cert)
+				return a.hostCertificateCallback(hostname, cert)
 			}
 			return a.hostKeyCallback(ep, hostname, key)
 		},
@@ -228,7 +228,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 	return ssh.NewClient(conn, chans, reqs), nil
 }
 
-func (a *App) hostCertificateCallback(ep endpoint, hostname string, cert *ssh.Certificate) error {
+func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) error {
 	var errs []error
 	if err := checkCertificate(cert, ssh.HostCert); err != nil {
 		errs = append(errs, err)
@@ -283,7 +283,7 @@ func (a *App) hostCertificateCallback(ep endpoint, hostname string, cert *ssh.Ce
 			a.data.Authorities[caFP] = ca
 			return a.saveAuthorities()
 		}
-		a.data.Authorities[caFP] = authority{
+		a.data.Authorities[caFP] = &authority{
 			Fingerprint: caFP,
 			Name:        caFP[len(caFP)-8:],
 			Public:      cert.SignatureKey.Marshal(),
@@ -297,7 +297,7 @@ func (a *App) hostCertificateCallback(ep endpoint, hostname string, cert *ssh.Ce
 	}
 }
 
-func (a *App) hostKeyCallback(ep endpoint, hostname string, key ssh.PublicKey) error {
+func (a *App) hostKeyCallback(ep *endpoint, hostname string, key ssh.PublicKey) error {
 	hk := key.Marshal()
 	var err error
 	if ep.HostKey != nil {
@@ -326,7 +326,6 @@ func (a *App) hostKeyCallback(ep endpoint, hostname string, key ssh.PublicKey) e
 		return nil
 	case "3":
 		ep.HostKey = hk
-		a.data.Endpoints[ep.Name] = ep
 		return a.saveEndpoints()
 	default:
 		return errors.New("host key rejected by user")

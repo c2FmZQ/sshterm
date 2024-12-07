@@ -62,9 +62,9 @@ func New(cfg *Config) (*App, error) {
 		agent: &keyRing{},
 		data: appData{
 			Persist:     true,
-			Endpoints:   make(map[string]endpoint),
+			Endpoints:   make(map[string]*endpoint),
 			Keys:        make(map[string]*key),
-			Authorities: make(map[string]authority),
+			Authorities: make(map[string]*authority),
 		},
 		inShell: new(atomic.Bool),
 	}
@@ -123,10 +123,10 @@ type App struct {
 }
 
 type appData struct {
-	Persist     bool                 `json:"persist"`
-	Endpoints   map[string]endpoint  `json:"endpoints"`
-	Keys        map[string]*key      `json:"keys"`
-	Authorities map[string]authority `json:"authorities"`
+	Persist     bool                  `json:"persist"`
+	Endpoints   map[string]*endpoint  `json:"endpoints"`
+	Keys        map[string]*key       `json:"keys"`
+	Authorities map[string]*authority `json:"authorities"`
 }
 
 type endpoint struct {
