@@ -59,12 +59,12 @@ type Config struct {
 func New(cfg *Config) (*App, error) {
 	app := &App{
 		cfg:   *cfg,
-		agent: agent.NewKeyring(),
+		agent: &keyRing{},
 		data: appData{
 			Persist:     true,
-			Endpoints:   make(map[string]endpoint),
-			Keys:        make(map[string]key),
-			Authorities: make(map[string]authority),
+			Endpoints:   make(map[string]*endpoint),
+			Keys:        make(map[string]*key),
+			Authorities: make(map[string]*authority),
 		},
 		inShell: new(atomic.Bool),
 	}
@@ -123,23 +123,16 @@ type App struct {
 }
 
 type appData struct {
-	Persist     bool                 `json:"persist"`
-	Endpoints   map[string]endpoint  `json:"endpoints"`
-	Keys        map[string]key       `json:"keys"`
-	Authorities map[string]authority `json:"authorities"`
+	Persist     bool                  `json:"persist"`
+	Endpoints   map[string]*endpoint  `json:"endpoints"`
+	Keys        map[string]*key       `json:"keys"`
+	Authorities map[string]*authority `json:"authorities"`
 }
 
 type endpoint struct {
 	Name    string `json:"name"`
 	URL     string `json:"url"`
 	HostKey []byte `json:"hostKey,omitempty"`
-}
-
-type key struct {
-	Name        string `json:"name"`
-	Public      []byte `json:"public"`
-	Private     []byte `json:"private"`
-	Certificate []byte `json:"certificate,omitempty"`
 }
 
 type authority struct {
@@ -175,6 +168,9 @@ func (a *App) initDB() error {
 	}
 	if err := db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("keys load: %w", err)
+	}
+	for _, k := range a.data.Keys {
+		k.errorf = a.term.Errorf
 	}
 	if err := db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("authorities load: %w", err)

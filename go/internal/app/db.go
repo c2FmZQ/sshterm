@@ -39,7 +39,6 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/nacl/secretbox"
 	"golang.org/x/crypto/pbkdf2"
-	"golang.org/x/crypto/ssh/agent"
 )
 
 func (a *App) dbCommand() *cli.App {
@@ -101,10 +100,10 @@ func (a *App) dbCommand() *cli.App {
 					if !a.term.Confirm("You are about to WIPE the database.\nContinue? ", false) {
 						return errors.New("aborted")
 					}
-					a.agent = agent.NewKeyring()
-					a.data.Endpoints = make(map[string]endpoint)
-					a.data.Keys = make(map[string]key)
-					a.data.Authorities = make(map[string]authority)
+					a.agent = &keyRing{}
+					a.data.Endpoints = make(map[string]*endpoint)
+					a.data.Keys = make(map[string]*key)
+					a.data.Authorities = make(map[string]*authority)
 					if err := a.saveAll(); err != nil {
 						return err
 					}
@@ -210,7 +209,7 @@ func (a *App) dbCommand() *cli.App {
 					if !ok {
 						return fmt.Errorf("unable to decrypt file")
 					}
-					a.agent = agent.NewKeyring()
+					a.agent = &keyRing{}
 					a.data.Endpoints = nil
 					a.data.Keys = nil
 					if err := json.Unmarshal(payload, &a.data); err != nil {

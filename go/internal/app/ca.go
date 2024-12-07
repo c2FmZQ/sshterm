@@ -54,7 +54,7 @@ func (a *App) caCommand() *cli.App {
 						a.term.Printf("<none>\n")
 						return nil
 					}
-					cas := make([]authority, 0, len(a.data.Authorities))
+					cas := make([]*authority, 0, len(a.data.Authorities))
 					for _, ca := range a.data.Authorities {
 						cas = append(cas, ca)
 					}
@@ -114,7 +114,7 @@ func (a *App) caCommand() *cli.App {
 						return err
 					}
 					fp := ssh.FingerprintSHA256(key)
-					a.data.Authorities[fp] = authority{
+					a.data.Authorities[fp] = &authority{
 						Name:        name,
 						Fingerprint: fp,
 						Public:      key.Marshal(),

@@ -168,25 +168,9 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 			keyName = "default"
 		}
 		if key, exists := a.data.Keys[keyName]; exists {
-			priv, err := a.privKey(key)
+			signer, err := key.Signer(a.term.ReadPassword)
 			if err != nil {
-				return nil, fmt.Errorf("private key: %w", err)
-			}
-			signer, err := ssh.NewSignerFromKey(priv)
-			if err != nil {
-				return nil, fmt.Errorf("NewSignerFromKey: %w", err)
-			}
-			if key.Certificate != nil {
-				cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
-				if err != nil {
-					return nil, fmt.Errorf("ssh.ParseAuthorizedKey: %v", err)
-				}
-				if signer, err = ssh.NewCertSigner(cert.(*ssh.Certificate), signer); err != nil {
-					return nil, fmt.Errorf("ssh.NewCertSigner: %v", err)
-				}
-				if err := checkCertificate(cert.(*ssh.Certificate), ssh.UserCert); err != nil {
-					a.term.Errorf("WARNING: %v", err)
-				}
+				return nil, fmt.Errorf("key.signer: %w", err)
 			}
 			signers = append(signers, signer)
 		} else if origKeyName != "" {
@@ -225,7 +209,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			cert, ok := key.(*ssh.Certificate)
 			if ok {
-				return a.hostCertificateCallback(ep, hostname, cert)
+				return a.hostCertificateCallback(hostname, cert)
 			}
 			return a.hostKeyCallback(ep, hostname, key)
 		},
@@ -244,7 +228,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 	return ssh.NewClient(conn, chans, reqs), nil
 }
 
-func (a *App) hostCertificateCallback(ep endpoint, hostname string, cert *ssh.Certificate) error {
+func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) error {
 	var errs []error
 	if err := checkCertificate(cert, ssh.HostCert); err != nil {
 		errs = append(errs, err)
@@ -299,7 +283,7 @@ func (a *App) hostCertificateCallback(ep endpoint, hostname string, cert *ssh.Ce
 			a.data.Authorities[caFP] = ca
 			return a.saveAuthorities()
 		}
-		a.data.Authorities[caFP] = authority{
+		a.data.Authorities[caFP] = &authority{
 			Fingerprint: caFP,
 			Name:        caFP[len(caFP)-8:],
 			Public:      cert.SignatureKey.Marshal(),
@@ -313,7 +297,7 @@ func (a *App) hostCertificateCallback(ep endpoint, hostname string, cert *ssh.Ce
 	}
 }
 
-func (a *App) hostKeyCallback(ep endpoint, hostname string, key ssh.PublicKey) error {
+func (a *App) hostKeyCallback(ep *endpoint, hostname string, key ssh.PublicKey) error {
 	hk := key.Marshal()
 	var err error
 	if ep.HostKey != nil {
@@ -342,23 +326,10 @@ func (a *App) hostKeyCallback(ep endpoint, hostname string, key ssh.PublicKey) e
 		return nil
 	case "3":
 		ep.HostKey = hk
-		a.data.Endpoints[ep.Name] = ep
 		return a.saveEndpoints()
 	default:
 		return errors.New("host key rejected by user")
 	}
-}
-
-func (a *App) privKey(key key) (any, error) {
-	priv, err := ssh.ParseRawPrivateKey(key.Private)
-	if _, ok := err.(*ssh.PassphraseMissingError); ok {
-		passphrase, err2 := a.term.ReadPassword("Enter passphrase for " + key.Name + ": ")
-		if err2 != nil {
-			return nil, fmt.Errorf("ReadPassword: %w", err2)
-		}
-		priv, err = ssh.ParseRawPrivateKeyWithPassphrase(key.Private, []byte(passphrase))
-	}
-	return priv, err
 }
 
 func maskControl(s string) string {

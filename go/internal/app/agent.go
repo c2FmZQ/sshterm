@@ -26,7 +26,13 @@
 package app
 
 import (
+	"bytes"
+	"crypto/rand"
+	"crypto/subtle"
+	"errors"
 	"fmt"
+	"slices"
+	"sync"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
@@ -80,30 +86,11 @@ func (a *App) agentCommand() *cli.App {
 					if !exists {
 						return fmt.Errorf("key %q not found", name)
 					}
-					priv, err := a.privKey(key)
+					signer, err := key.Signer(a.term.ReadPassword)
 					if err != nil {
-						return fmt.Errorf("private key: %w", err)
+						return fmt.Errorf("key.Signer: %w", err)
 					}
-					addedKey := agent.AddedKey{
-						PrivateKey: priv,
-						Comment:    name,
-					}
-					if len(key.Certificate) > 0 {
-						cert, _, _, _, err := ssh.ParseAuthorizedKey(key.Certificate)
-						if err != nil {
-							return fmt.Errorf("ssh.ParseAuthorizedKey: %v", err)
-						}
-						if c, ok := cert.(*ssh.Certificate); ok {
-							addedKey.Certificate = c
-							if err := checkCertificate(c, ssh.UserCert); err != nil {
-								a.term.Errorf("WARNING: %v", err)
-							}
-						}
-					}
-					if err := a.agent.Add(addedKey); err != nil {
-						return err
-					}
-					return nil
+					return a.agent.(*keyRing).AddSigner(signer, name)
 				},
 			},
 			{
@@ -133,18 +120,9 @@ func (a *App) agentCommand() *cli.App {
 					if !exists {
 						return fmt.Errorf("key %q not found", name)
 					}
-					var pub ssh.PublicKey
-					if key.Certificate == nil {
-						var err error
-						if pub, err = ssh.ParsePublicKey(key.Public); err != nil {
-							return fmt.Errorf("ssh.ParsePublicKey: %w", err)
-						}
-					} else {
-						var err error
-						pub, _, _, _, err = ssh.ParseAuthorizedKey(key.Certificate)
-						if err != nil {
-							return fmt.Errorf("ssh.ParseAuthorizedKey: %v", err)
-						}
+					pub, err := ssh.ParsePublicKey(key.Public)
+					if err != nil {
+						return fmt.Errorf("ssh.ParsePublicKey: %w", err)
 					}
 					if err := a.agent.Remove(pub); err != nil {
 						return fmt.Errorf("agent.Remove: %w", err)
@@ -186,4 +164,200 @@ func (a *App) agentCommand() *cli.App {
 			},
 		},
 	}
+}
+
+// keyRing is an ssh Agent implementation very similar to the one from
+// https://cs.opensource.google/go/x/crypto/+/refs/tags/v0.30.0:ssh/agent/keyring.go;l=37
+// but with extra functionality to interact with the SSH CA from tlsproxy.
+//
+// The original license is:
+// https://cs.opensource.google/go/x/crypto/+/refs/tags/v0.30.0:LICENSE
+//
+// Copyright 2009 The Go Authors.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are
+// met:
+//
+//   - Redistributions of source code must retain the above copyright
+//
+// notice, this list of conditions and the following disclaimer.
+//   - Redistributions in binary form must reproduce the above
+//
+// copyright notice, this list of conditions and the following disclaimer
+// in the documentation and/or other materials provided with the
+// distribution.
+//   - Neither the name of Google LLC nor the names of its
+//
+// contributors may be used to endorse or promote products derived from
+// this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+type keyRing struct {
+	mu     sync.Mutex
+	keys   []agentKey
+	locked bool
+	pp     []byte
+}
+
+var _ agent.Agent = (*keyRing)(nil)
+
+var errAgentLocked = errors.New("agent is locked")
+var errAgentNotLocked = errors.New("agent is not locked")
+var errAgentKeyNotFound = errors.New("key not found")
+
+type agentKey struct {
+	signer  ssh.Signer
+	comment string
+}
+
+func (r *keyRing) List() ([]*agent.Key, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.locked {
+		return nil, nil
+	}
+	out := make([]*agent.Key, 0, len(r.keys))
+	for _, k := range r.keys {
+		pub := k.signer.PublicKey()
+		out = append(out, &agent.Key{
+			Format:  pub.Type(),
+			Blob:    pub.Marshal(),
+			Comment: k.comment},
+		)
+	}
+	return out, nil
+}
+
+func (r *keyRing) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.locked {
+		return nil, errAgentLocked
+	}
+	v := key.Marshal()
+	i := slices.IndexFunc(r.keys, func(k agentKey) bool {
+		return bytes.Equal(v, k.signer.PublicKey().Marshal())
+	})
+	if i < 0 {
+		return nil, errAgentKeyNotFound
+	}
+	return r.keys[i].signer.Sign(rand.Reader, data)
+}
+
+func (r *keyRing) AddSigner(signer ssh.Signer, comment string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.locked {
+		return errAgentLocked
+	}
+	realPub := func(pub ssh.PublicKey) ssh.PublicKey {
+		if cert, ok := pub.(*ssh.Certificate); ok {
+			return cert.Key
+		}
+		return pub
+	}
+	pub := realPub(signer.PublicKey()).Marshal()
+	for i, k := range r.keys {
+		kPub := realPub(k.signer.PublicKey()).Marshal()
+		if !bytes.Equal(pub, kPub) {
+			continue
+		}
+		r.keys[i].signer = signer
+		r.keys[i].comment = comment
+		return nil
+	}
+	r.keys = append(r.keys, agentKey{
+		signer:  signer,
+		comment: comment,
+	})
+	return nil
+}
+
+func (r *keyRing) Add(key agent.AddedKey) error {
+	return errors.New("not implemented")
+}
+
+func (r *keyRing) Remove(key ssh.PublicKey) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.locked {
+		return errAgentLocked
+	}
+	v := key.Marshal()
+	found := false
+	r.keys = slices.DeleteFunc(r.keys, func(k agentKey) bool {
+		pub := k.signer.PublicKey()
+		if cert, ok := pub.(*ssh.Certificate); ok && bytes.Equal(v, cert.Key.Marshal()) {
+			found = true
+			return true
+		}
+		if bytes.Equal(v, pub.Marshal()) {
+			found = true
+			return true
+		}
+		return false
+	})
+	if !found {
+		return errAgentKeyNotFound
+	}
+	return nil
+}
+
+func (r *keyRing) RemoveAll() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.locked {
+		return errAgentLocked
+	}
+	r.keys = nil
+	return nil
+}
+
+func (r *keyRing) Lock(passphrase []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.locked {
+		return errAgentLocked
+	}
+	r.locked = true
+	r.pp = passphrase
+	return nil
+}
+
+func (r *keyRing) Unlock(passphrase []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.locked {
+		return errAgentNotLocked
+	}
+	if subtle.ConstantTimeCompare(passphrase, r.pp) != 1 {
+		return errors.New("incorrect passphrase")
+	}
+	r.locked = false
+	r.pp = nil
+	return nil
+}
+
+func (r *keyRing) Signers() ([]ssh.Signer, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.locked {
+		return nil, errAgentLocked
+	}
+	out := make([]ssh.Signer, 0, len(r.keys))
+	for _, k := range r.keys {
+		out = append(out, k.signer)
+	}
+	return out, nil
 }
