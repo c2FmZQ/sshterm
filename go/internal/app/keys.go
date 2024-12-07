@@ -496,7 +496,7 @@ func (k *key) updateCert() error {
 	req.Header.Set("x-csrf-check", "1")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%q: %v", k.Provider, err)
+		return fmt.Errorf("%q: %w", k.Provider, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain" {
@@ -508,10 +508,16 @@ func (k *key) updateCert() error {
 	}
 	certBytes, err := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 20480})
 	if err != nil {
-		return fmt.Errorf("%q: %v", k.Provider, err)
+		return fmt.Errorf("%q: %w", k.Provider, err)
 	}
-	if _, _, _, _, err := ssh.ParseAuthorizedKey(certBytes); err != nil {
-		return fmt.Errorf("%q: %v", k.Provider, err)
+	if c, _, _, _, err := ssh.ParseAuthorizedKey(certBytes); err != nil {
+		return fmt.Errorf("%q: %w", k.Provider, err)
+	} else if cert, ok := c.(*ssh.Certificate); !ok {
+		return fmt.Errorf("%q: returned data is not a certificate", k.Provider)
+	} else if !bytes.Equal(cert.Key.Marshal(), pub.Marshal()) {
+		return fmt.Errorf("%q: certificate key doesn't match", k.Provider)
+	} else if err := checkCertificate(cert, ssh.UserCert); err != nil {
+		return fmt.Errorf("%q: %w", k.Provider, err)
 	}
 	k.CertBytes = certBytes
 	return nil
@@ -519,17 +525,17 @@ func (k *key) updateCert() error {
 
 func (k *key) PrivateKey(rp func(string) (string, error)) (any, error) {
 	priv, err := ssh.ParseRawPrivateKey(k.Private)
-	if _, ok := err.(*ssh.PassphraseMissingError); ok {
-		passphrase, err2 := rp("Enter passphrase for " + k.Name + ": ")
-		if err2 != nil {
-			return nil, err2
-		}
-		priv, err = ssh.ParseRawPrivateKeyWithPassphrase(k.Private, []byte(passphrase))
+	if err == nil {
+		return priv, nil
 	}
+	if _, ok := err.(*ssh.PassphraseMissingError); !ok {
+		return nil, err
+	}
+	passphrase, err := rp("Enter passphrase for " + k.Name + ": ")
 	if err != nil {
 		return nil, err
 	}
-	return priv, err
+	return ssh.ParseRawPrivateKeyWithPassphrase(k.Private, []byte(passphrase))
 }
 
 func (k *key) Signer(rp func(string) (string, error)) (ssh.Signer, error) {
@@ -541,35 +547,20 @@ func (k *key) Signer(rp func(string) (string, error)) (ssh.Signer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("NewSignerFromKey: %w", err)
 	}
-	ds := &dynSigner{
-		key:        k,
-		baseSigner: signer,
-	}
-	return ds, nil
+	return &dynSigner{
+		Signer: signer,
+		key:    k,
+	}, nil
 }
 
-var _ ssh.Signer = (*dynSigner)(nil)
-
 type dynSigner struct {
-	key        *key
-	baseSigner ssh.Signer
+	ssh.Signer
+	key *key
 }
 
 func (s *dynSigner) PublicKey() ssh.PublicKey {
 	if cert := s.key.Certificate(); cert != nil {
 		return cert
 	}
-	return s.baseSigner.PublicKey()
-}
-
-func (s *dynSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
-	cert := s.key.Certificate()
-	if cert == nil {
-		return s.baseSigner.Sign(rand, data)
-	}
-	certSigner, err := ssh.NewCertSigner(cert, s.baseSigner)
-	if err != nil {
-		return nil, err
-	}
-	return certSigner.Sign(rand, data)
+	return s.Signer.PublicKey()
 }
