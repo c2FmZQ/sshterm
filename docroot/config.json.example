@@ -1,0 +1,24 @@
+{
+	"persist": false,
+	"certificateAuthorities": [{
+		"name": "my_ca_example_com",
+		"publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOO4jC9AcVsCOfapTGboTKOuMbil0Z8jKnt3pb3M8eqi",
+		"hostnames": [ "*.example.com" ]
+	}],
+	"endpoints": [{
+		"name": "myserver.example.com",
+		"url": "./websocket",
+		"hostKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINqyuT/sFvC37z1qMY0may2TMKqg2nxdjxBxyfXeieot"
+	}],
+	"generateKeys": [{
+		"name": "default",
+		"type": "ed25519",
+		"identityProvider": "./cert"
+	}],
+	"autoConnect": {
+		"username": "username",
+		"endpoint": "myserver.example.com",
+		"identity": "default",
+		"command": "uname -a"
+	}
+}

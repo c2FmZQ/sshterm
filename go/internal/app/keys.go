@@ -47,6 +47,33 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+func (a *App) generateKey(name, passphrase, idp, typ string, bits int) error {
+	pub, priv, err := createKey(typ, bits)
+	if err != nil {
+		return err
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		return fmt.Errorf("ssh.NewPublicKey: %w", err)
+	}
+	var privPEM *pem.Block
+	if passphrase == "" {
+		if privPEM, err = ssh.MarshalPrivateKey(priv, ""); err != nil {
+			return fmt.Errorf("ssh.MarshalPrivateKey: %w", err)
+		}
+	} else if privPEM, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase)); err != nil {
+		return fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
+	}
+	a.data.Keys[name] = &key{
+		Name:     name,
+		Public:   sshPub.Marshal(),
+		Private:  pem.EncodeToMemory(privPEM),
+		Provider: idp,
+		errorf:   a.term.Errorf,
+	}
+	return nil
+}
+
 func (a *App) keysCommand() *cli.App {
 	return &cli.App{
 		Name:            "keys",
@@ -111,14 +138,6 @@ func (a *App) keysCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
-					pub, priv, err := createKey(ctx.String("type"), ctx.Int("bits"))
-					if err != nil {
-						return err
-					}
-					sshPub, err := ssh.NewPublicKey(pub)
-					if err != nil {
-						return fmt.Errorf("ssh.NewPublicKey: %w", err)
-					}
 					passphrase, err := a.term.ReadPassword("Enter passphrase for private key: ")
 					if err != nil {
 						return fmt.Errorf("ReadPassword: %w", err)
@@ -130,20 +149,9 @@ func (a *App) keysCommand() *cli.App {
 					if passphrase != passphrase2 {
 						return fmt.Errorf("passphrase doesn't match")
 					}
-					var privPEM *pem.Block
-					if passphrase == "" {
-						if privPEM, err = ssh.MarshalPrivateKey(priv, ""); err != nil {
-							return fmt.Errorf("ssh.MarshalPrivateKey: %w", err)
-						}
-					} else if privPEM, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase)); err != nil {
-						return fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
-					}
-					a.data.Keys[name] = &key{
-						Name:     name,
-						Public:   sshPub.Marshal(),
-						Private:  pem.EncodeToMemory(privPEM),
-						Provider: ctx.String("idp"),
-						errorf:   a.term.Errorf,
+
+					if err := a.generateKey(name, passphrase, ctx.String("idp"), ctx.String("type"), ctx.Int("bits")); err != nil {
+						return err
 					}
 					if err := a.saveKeys(); err != nil {
 						return err

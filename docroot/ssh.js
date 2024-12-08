@@ -79,12 +79,28 @@ window.addEventListener('load', () => {
   window.addEventListener('resize', () => fitAddon.fit())
   fitAddon.fit();
   sshApp.term = term;
-  sshApp.ready
-    .then(() => sshApp.start({term}))
+  Promise.all([
+    sshApp.ready,
+    fetch('config.json')
+    .then(r => {
+      if (r.ok) return r.json();
+      return {};
+    })
+    .catch(e => {
+      term.writeln('\x1b[31mError reading config.json:\x1b[0m');
+      term.writeln('\x1b[31m'+e.message+'\x1b[0m');
+      term.writeln('');
+      return {};
+    }),
+  ]).then(v => {
+    let cfg = v[1];
+    cfg.term = term;
+    sshApp.start(cfg)
     .then(v => sshApp.onExit(v))
     .catch(e => {
       console.log('SSH ERROR', e);
       term.writeln(e.message);
       sshApp.onExit(e.message);
     });
+  });
 });

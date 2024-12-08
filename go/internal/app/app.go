@@ -38,6 +38,7 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh/agent"
 
+	"github.com/c2FmZQ/sshterm/config"
 	"github.com/c2FmZQ/sshterm/internal/indexeddb"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 	"github.com/c2FmZQ/sshterm/internal/shellwords"
@@ -49,11 +50,13 @@ var backupMagic = []byte{0xe2, 0x9b, 0x94, '0'}
 const defaultDBName = "sshterm"
 
 type Config struct {
-	Term         js.Value
-	DBName       string
-	UploadHook   func(accept string, multiple bool) []jsutil.ImportedFile
-	DownloadHook func(content []byte, name, typ string) error
-	StreamHook   func(url string) error
+	Term js.Value `json:"-"`
+	config.Config
+
+	// Used in tests
+	UploadHook   func(accept string, multiple bool) []jsutil.ImportedFile `json:"-"`
+	DownloadHook func(content []byte, name, typ string) error             `json:"-"`
+	StreamHook   func(url string) error                                   `json:"-"`
 }
 
 func New(cfg *Config) (*App, error) {
@@ -142,9 +145,35 @@ type authority struct {
 	Hostnames   []string `json:"hostnames"`
 }
 
+func (a *App) setPresetConfig() {
+	for i, ca := range a.cfg.Authorities {
+		if err := a.addAuthority(ca.Name, ca.PublicKey, ca.Hostnames); err != nil {
+			a.term.Errorf(fmt.Sprintf("certificateAuthorities[%d]: %v", i, err))
+		}
+	}
+	for i, ep := range a.cfg.Endpoints {
+		if err := a.addEndpoint(ep.Name, ep.URL, ep.HostKey); err != nil {
+			a.term.Errorf(fmt.Sprintf("endpoints[%d]: %v", i, err))
+		}
+	}
+	for i, k := range a.cfg.GenerateKeys {
+		if err := a.generateKey(k.Name, "", k.IdentityProvider, k.Type, k.Bits); err != nil {
+			a.term.Errorf(fmt.Sprintf("generateKeys[%d]: %v", i, err))
+		}
+	}
+}
+
 func (a *App) initDB() error {
 	if a.cfg.DBName == "" {
 		a.cfg.DBName = defaultDBName
+	}
+	defer func() {
+		for _, k := range a.data.Keys {
+			k.errorf = a.term.Errorf
+		}
+	}()
+	if a.cfg.Persist != nil {
+		a.data.Persist = *a.cfg.Persist
 	}
 	if !a.data.Persist {
 		if a.db != nil {
@@ -158,19 +187,11 @@ func (a *App) initDB() error {
 		return fmt.Errorf("indexeddb.New: %w", err)
 	}
 	a.db = db
-	if len(a.data.Endpoints) > 0 || len(a.data.Keys) > 0 || len(a.data.Authorities) > 0 {
-		if err := a.saveAll(); err != nil {
-			a.term.Errorf("%v", err)
-		}
-	}
 	if err := db.Get("endpoints", &a.data.Endpoints); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("endpoints load: %w", err)
 	}
 	if err := db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("keys load: %w", err)
-	}
-	for _, k := range a.data.Keys {
-		k.errorf = a.term.Errorf
 	}
 	if err := db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("authorities load: %w", err)
@@ -183,12 +204,15 @@ func (a *App) Run() error {
 	defer func() {
 		cancel()
 	}()
-	a.term = terminal.New(ctx, a.cfg.Term)
-	t := a.term
 	a.ctx = ctx
+	a.term = terminal.New(ctx, a.cfg.Term)
+	defer a.term.Close()
+	t := a.term
+	t.Focus()
 	if err := a.initDB(); err != nil {
 		t.Errorf("%v", err)
 	}
+	a.setPresetConfig()
 	jsutil.UnregisterServiceWorker()
 	defer func() {
 		if a.db != nil {
@@ -196,6 +220,28 @@ func (a *App) Run() error {
 		}
 		jsutil.UnregisterServiceWorker()
 	}()
+
+	if a.cfg.AutoConnect != nil {
+		jsutil.TryCatch(
+			func() { // try
+				for a.cfg.AutoConnect.Username == "" {
+					a.cfg.AutoConnect.Username, _ = t.Prompt("Username: ")
+				}
+				target := a.cfg.AutoConnect.Username + "@" + a.cfg.AutoConnect.Endpoint
+				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, false); err != nil {
+					t.Errorf("%v", err)
+				}
+			},
+			func(err any) { // catch
+				t.Errorf("%T %v", err, err)
+				t.Errorf("%s", debug.Stack())
+			},
+		)
+		t.Greenf("Goodbye\n")
+		a.cfg.Term.Call("input", "\n")
+		a.cfg.Term.Call("input", "\n")
+		return nil
+	}
 
 	shortcuts := map[string]struct {
 		cmd, desc string
@@ -232,7 +278,6 @@ func (a *App) Run() error {
 		commandMap[c.Name] = c
 	}
 
-	t.Focus()
 	for {
 		line, err := t.ReadLine()
 		if err != nil {
@@ -291,6 +336,8 @@ func (a *App) Run() error {
 					if err := cmd.RunContext(ctx, args); err != nil {
 						t.Errorf("%v", err)
 					}
+					a.cfg.Term.Call("input", "\n")
+					a.cfg.Term.Call("input", "\n")
 				},
 				func(err any) { // catch
 					t.Errorf("%T %v", err, err)

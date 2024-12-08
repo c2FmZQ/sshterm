@@ -241,7 +241,6 @@ func TestSSH(t *testing.T) {
 		{Type: "3\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "remote> "},
 		{Type: "exit\n", Expect: prompt},
-		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "keys generate test\n", Expect: "Enter passphrase"},
 		{Type: "foobar\n", Expect: "Re-enter the same passphrase"},
@@ -258,15 +257,12 @@ func TestSSH(t *testing.T) {
 		{Type: "ssh -i test testuser@test-server\n", Expect: "Enter passphrase for test:"},
 		{Type: "foobar\n", Expect: "remote> "},
 		{Type: "exit\n", Expect: prompt},
-		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "agent add test\n", Expect: "Enter passphrase for test:"},
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "ssh testuser@test-server\n", Expect: "remote> "},
 		{Type: "exit\n", Expect: prompt},
-		{Wait: time.Second, Type: "\n\n"},
 		{Type: "ssh testuser@test-server foo bar\n", Expect: "exec: foo bar"},
-		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "file upload testuser@test-server:.\n", Expect: "100%"},
 
@@ -353,7 +349,6 @@ func TestHostCerts(t *testing.T) {
 		{Type: "ssh testuser@test-server foo\n", Expect: `Host certificate is trusted`},
 		{Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
-		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "ep add fooserver websocket?cert=true\n", Expect: prompt},
 		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Choice>`},
@@ -362,16 +357,13 @@ func TestHostCerts(t *testing.T) {
 		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Choice>`},
 		{Type: "2\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
-		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate is NOT trusted.*Choice>`},
 		{Type: "3\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
-		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "ssh testuser@fooserver foo\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
-		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "ca list\n", Expect: "fooserver"},
 

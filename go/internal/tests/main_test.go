@@ -38,6 +38,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/c2FmZQ/sshterm/config"
 	"github.com/c2FmZQ/sshterm/internal/app"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 )
@@ -87,8 +88,10 @@ func start(this js.Value, args []js.Value) any {
 	fileDownloader = &downloader{}
 
 	appConfig = &app.Config{
-		Term:         arg.Get("term"),
-		DBName:       "sshtermtest",
+		Term: arg.Get("term"),
+		Config: config.Config{
+			DBName: "sshtermtest",
+		},
 		UploadHook:   fileUploader.upload,
 		DownloadHook: fileDownloader.download,
 		StreamHook:   fileDownloader.stream,
