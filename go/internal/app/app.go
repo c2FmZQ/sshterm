@@ -122,7 +122,8 @@ type App struct {
 	commands     []*cli.App
 	streamHelper *jsutil.StreamHelper
 
-	inShell *atomic.Bool
+	inShell    *atomic.Bool
+	presetDone bool
 }
 
 type appData struct {
@@ -145,22 +146,27 @@ type authority struct {
 	Hostnames   []string `json:"hostnames"`
 }
 
-func (a *App) setPresetConfig() {
+func (a *App) initPresetConfig() error {
+	if a.presetDone {
+		return nil
+	}
+	a.presetDone = true
 	for i, ca := range a.cfg.Authorities {
 		if err := a.addAuthority(ca.Name, ca.PublicKey, ca.Hostnames); err != nil {
-			a.term.Errorf(fmt.Sprintf("certificateAuthorities[%d]: %v", i, err))
+			return fmt.Errorf("certificateAuthorities[%d]: %w", i, err)
 		}
 	}
 	for i, ep := range a.cfg.Endpoints {
 		if err := a.addEndpoint(ep.Name, ep.URL, ep.HostKey); err != nil {
-			a.term.Errorf(fmt.Sprintf("endpoints[%d]: %v", i, err))
+			return fmt.Errorf("endpoints[%d]: %w", i, err)
 		}
 	}
 	for i, k := range a.cfg.GenerateKeys {
 		if err := a.generateKey(k.Name, "", k.IdentityProvider, k.Type, k.Bits); err != nil {
-			a.term.Errorf(fmt.Sprintf("generateKeys[%d]: %v", i, err))
+			return fmt.Errorf("generateKeys[%d]: %w", i, err)
 		}
 	}
+	return a.saveAll()
 }
 
 func (a *App) initDB() error {
@@ -212,7 +218,9 @@ func (a *App) Run() error {
 	if err := a.initDB(); err != nil {
 		t.Errorf("%v", err)
 	}
-	a.setPresetConfig()
+	if err := a.initPresetConfig(); err != nil {
+		t.Errorf("%v", err)
+	}
 	jsutil.UnregisterServiceWorker()
 	defer func() {
 		if a.db != nil {
