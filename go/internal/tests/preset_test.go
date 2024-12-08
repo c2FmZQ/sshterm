@@ -179,7 +179,7 @@ func TestPresetKeys(t *testing.T) {
 				"name": "myserver.example.com",
 				"url": "./websocket?cert=true"
 			}],
-		        "generateKeys": [{
+			"generateKeys": [{
 				"name": "foo",
 				"identityProvider": "./cert",
 				"addToAgent": true
