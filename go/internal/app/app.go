@@ -224,10 +224,11 @@ func (a *App) Run() error {
 	if a.cfg.AutoConnect != nil {
 		jsutil.TryCatch(
 			func() { // try
-				for a.cfg.AutoConnect.Username == "" {
-					a.cfg.AutoConnect.Username, _ = t.Prompt("Username: ")
+				username := a.cfg.AutoConnect.Username
+				for username == "" {
+					username, _ = t.Prompt("Username: ")
 				}
-				target := a.cfg.AutoConnect.Username + "@" + a.cfg.AutoConnect.Endpoint
+				target := username + "@" + a.cfg.AutoConnect.Endpoint
 				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, false); err != nil {
 					t.Errorf("%v", err)
 				}
