@@ -67,22 +67,24 @@ func (a *App) sshCommand() *cli.App {
 }
 
 func (a *App) ssh(ctx *cli.Context) error {
-	t := a.term
 	if ctx.Args().Len() == 0 {
 		cli.ShowSubcommandHelp(ctx)
 		return nil
 	}
-	target := ctx.Args().Get(0)
 	var command string
 	if ctx.Args().Len() >= 2 {
 		command = strings.Join(ctx.Args().Slice()[1:], " ")
 	}
-	keyName := ctx.String("identity")
 
-	cctx, cancel := context.WithCancel(ctx.Context)
+	return a.runSSH(ctx.Context, ctx.Args().Get(0), ctx.String("identity"), command, ctx.Bool("A"))
+}
+
+func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwardAgent bool) error {
+	t := a.term
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	client, err := a.sshClient(cctx, target, keyName)
+	client, err := a.sshClient(ctx, target, keyName)
 	if err != nil {
 		return err
 	}
@@ -95,7 +97,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 		session.Close()
 	}()
 
-	if ctx.Bool("A") {
+	if forwardAgent {
 		if err := agent.ForwardToAgent(client, a.agent); err != nil {
 			return fmt.Errorf("agent.ForwardToAgent: %w", err)
 		}
@@ -132,7 +134,7 @@ func (a *App) ssh(ctx *cli.Context) error {
 	if err := session.RequestPty("xterm", t.Rows(), t.Cols(), modes); err != nil {
 		t.Errorf("%v", err)
 	} else {
-		t.OnResize(cctx, session.WindowChange)
+		t.OnResize(ctx, session.WindowChange)
 	}
 	a.inShell.Store(true)
 	defer a.inShell.Store(false)

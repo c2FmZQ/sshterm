@@ -34,6 +34,15 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+func (a *App) addEndpoint(name, url, hostKey string) error {
+	var hk []byte
+	if key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(hostKey)); err == nil {
+		hk = key.Marshal()
+	}
+	a.data.Endpoints[name] = &endpoint{Name: name, URL: url, HostKey: hk}
+	return nil
+}
+
 func (a *App) epCommand() *cli.App {
 	return &cli.App{
 		Name:            "ep",
@@ -87,7 +96,9 @@ func (a *App) epCommand() *cli.App {
 						return errors.New("endpoint name cannot contain \":\"")
 					}
 					url := ctx.Args().Get(1)
-					a.data.Endpoints[name] = &endpoint{Name: name, URL: url}
+					if err := a.addEndpoint(name, url, ""); err != nil {
+						return err
+					}
 					return a.saveEndpoints()
 				},
 			},
