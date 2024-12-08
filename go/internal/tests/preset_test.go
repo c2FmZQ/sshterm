@@ -97,7 +97,8 @@ func TestPresetAuthorities(t *testing.T) {
 	fp := ssh.FingerprintSHA256(key)
 
 	if err := json.Unmarshal(
-		[]byte(`{"certificateAuthorities": [{
+		[]byte(`{
+			"certificateAuthorities": [{
 				"name": "testca",
 				"publicKey": "`+strings.TrimSpace(string(caKey))+`",
 				"hostnames": ["*.example.com"]}
@@ -105,7 +106,8 @@ func TestPresetAuthorities(t *testing.T) {
 			"endpoints": [{
 				"name": "myserver.example.com",
 				"url": "./websocket?cert=true"
-			}]}`),
+			}]
+		}`),
 		&cfg,
 	); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
@@ -170,7 +172,8 @@ func TestPresetKeys(t *testing.T) {
 	}
 
 	if err := json.Unmarshal(
-		[]byte(`{"certificateAuthorities": [{
+		[]byte(`{
+			"certificateAuthorities": [{
 				"name": "testca",
 				"publicKey": "`+strings.TrimSpace(string(caKey))+`",
 				"hostnames": ["*.example.com"]}
@@ -183,7 +186,8 @@ func TestPresetKeys(t *testing.T) {
 				"name": "foo",
 				"identityProvider": "./cert",
 				"addToAgent": true
-			}]}`),
+			}]
+		}`),
 		&cfg,
 	); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
