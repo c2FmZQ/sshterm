@@ -24,6 +24,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -117,6 +118,39 @@ func main() {
 	})
 	mux.HandleFunc("/cakey", func(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(w, "%s\n", ssh.MarshalAuthorizedKey(sshServerWithCert.pubKey))
+	})
+	mux.HandleFunc("/cert", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != "POST" {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		defer req.Body.Close()
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		pub, _, _, _, err := ssh.ParseAuthorizedKey(body)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		now := time.Now().UTC()
+		cert := &ssh.Certificate{
+			Key:         pub,
+			CertType:    ssh.UserCert,
+			KeyId:       "testuser",
+			ValidAfter:  uint64(now.Add(-5 * time.Minute).Unix()),
+			ValidBefore: uint64(now.Add(10 * time.Minute).Unix()),
+		}
+		if err := cert.SignCert(rand.Reader, sshServerWithCert.signer); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		out := ssh.MarshalAuthorizedKey(cert)
+		w.Header().Set("content-type", "text/plain")
+		w.Header().Set("content-length", fmt.Sprintf("%d", len(out)))
+		w.Write(out)
 	})
 	fs := http.FileServer(http.Dir(*docRoot))
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
@@ -264,6 +298,26 @@ func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
 		signer:         signer,
 		pubKey:         sshPub,
 	}
+
+	certChecker := &ssh.CertChecker{
+		IsUserAuthority: func(auth ssh.PublicKey) bool {
+			return bytes.Equal(signer.PublicKey().Marshal(), auth.Marshal())
+		},
+		UserKeyFallback: func(c ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
+			server.mu.Lock()
+			defer server.mu.Unlock()
+			log.Printf("PublicKeyCallback: %q", pubKey.Marshal())
+			if server.authorizedKeys[string(pubKey.Marshal())] {
+				return &ssh.Permissions{
+					Extensions: map[string]string{
+						"pubkey-fp": ssh.FingerprintSHA256(pubKey),
+					},
+				}, nil
+			}
+			return nil, fmt.Errorf("unknown public key for %q", c.User())
+		},
+	}
+
 	config := &ssh.ServerConfig{
 		KeyboardInteractiveCallback: func(c ssh.ConnMetadata, client ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
 			log.Print("KeyboardInteractiveCallback")
@@ -277,19 +331,7 @@ func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
 			return nil, fmt.Errorf("keyboard interactive rejected for %q", c.User())
 		},
 
-		PublicKeyCallback: func(c ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
-			server.mu.Lock()
-			defer server.mu.Unlock()
-			log.Printf("PublicKeyCallback: %q", pubKey.Marshal())
-			if server.authorizedKeys[string(pubKey.Marshal())] {
-				return &ssh.Permissions{
-					Extensions: map[string]string{
-						"pubkey-fp": ssh.FingerprintSHA256(pubKey),
-					},
-				}, nil
-			}
-			return nil, fmt.Errorf("unknown public key for %q", c.User())
-		},
+		PublicKeyCallback: certChecker.Authenticate,
 	}
 	config.AddHostKey(signer)
 	server.config = config

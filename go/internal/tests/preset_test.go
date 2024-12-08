@@ -33,6 +33,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -123,6 +124,8 @@ func TestPresetAuthorities(t *testing.T) {
 		{Type: "ca list\n", Expect: `testca ` + regexp.QuoteMeta(fp) + ` \*\.example\.com`},
 		{Type: "ssh testuser@myserver.example.com foo\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
 		{Type: "ca remove-hostname testca *.example.com\n", Expect: prompt},
 		{Type: "ca add-hostname testca foobar\n", Expect: prompt},
 		{Type: "ca list\n", Expect: `testca ` + regexp.QuoteMeta(fp) + ` foobar`},
@@ -143,9 +146,72 @@ func TestPresetAuthorities(t *testing.T) {
 		{Type: "ca list\n", Expect: `testca ` + regexp.QuoteMeta(fp) + ` \*\.example\.com`},
 		{Type: "ssh testuser@myserver.example.com foo\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
 		{Type: "exit\n"},
 	})
 	if err := <-result; err != nil {
 		t.Fatalf("Run(): %v", err)
 	}
+}
+
+func TestPresetKeys(t *testing.T) {
+	cfg := *appConfig
+	cfg.Term.Call("writeln", t.Name())
+
+	resp, err := http.Get("/cakey")
+	if err != nil {
+		t.Fatalf("/cakey: %v", err)
+	}
+	defer resp.Body.Close()
+
+	caKey, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+
+	if err := json.Unmarshal(
+		[]byte(`{"certificateAuthorities": [{
+				"name": "testca",
+				"publicKey": "`+strings.TrimSpace(string(caKey))+`",
+				"hostnames": ["*.example.com"]}
+			],
+			"endpoints": [{
+				"name": "myserver.example.com",
+				"url": "./websocket?cert=true"
+			}],
+		        "generateKeys": [{
+				"name": "foo",
+				"identityProvider": "./cert",
+				"addToAgent": true
+			}]}`),
+		&cfg,
+	); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	a, err := app.New(&cfg)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	result := make(chan error)
+	go func() {
+		result <- a.Run()
+	}()
+
+	script(t, []line{
+		{Type: "ssh testuser@myserver.example.com foo\n", Expect: `(?s)Host certificate is trusted.\r\nexec: foo`},
+		{Wait: time.Second, Type: "\n\n"},
+
+		{Type: "keys show foo\n", Expect: prompt},
+		{Type: "exit\n"},
+	})
+	if err := <-result; err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+
+	if a, err = app.New(&cfg); err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	go func() {
+		result <- a.Run()
+	}()
 }

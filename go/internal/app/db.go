@@ -42,7 +42,7 @@ import (
 )
 
 func (a *App) dbCommand() *cli.App {
-	return &cli.App{
+	ret := &cli.App{
 		Name:            "db",
 		Usage:           "Manage database",
 		UsageText:       "db <persist|wipe|backup|restore>",
@@ -58,7 +58,7 @@ func (a *App) dbCommand() *cli.App {
 						cli.ShowSubcommandHelp(ctx)
 						return nil
 					}
-					if ctx.Args().Len() == 1 {
+					if ctx.Args().Len() == 1 && a.cfg.Persist == nil {
 						switch v := ctx.Args().Get(0); v {
 						case "on":
 							a.data.Persist = true
@@ -220,4 +220,9 @@ func (a *App) dbCommand() *cli.App {
 			},
 		},
 	}
+	if a.cfg.Persist != nil {
+		ret.Commands[0].Usage = "Show the database persistence to local storage."
+		ret.Commands[0].UsageText = "db persist"
+	}
+	return ret
 }

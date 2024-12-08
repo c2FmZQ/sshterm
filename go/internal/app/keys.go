@@ -366,7 +366,7 @@ func (a *App) keysCommand() *cli.App {
 
 func createKey(t string, b int) (crypto.PublicKey, crypto.PrivateKey, error) {
 	switch t {
-	case "ed25519":
+	case "ed25519", "":
 		return ed25519.GenerateKey(rand.Reader)
 
 	case "ecdsa":
