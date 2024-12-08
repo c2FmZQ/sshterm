@@ -42,6 +42,11 @@ func (a *App) addAuthority(name, publicKey string, hostnames []string) error {
 		return err
 	}
 	fp := ssh.FingerprintSHA256(key)
+	for k, v := range a.data.Authorities {
+		if v.Name == name {
+			delete(a.data.Authorities, k)
+		}
+	}
 	a.data.Authorities[fp] = &authority{
 		Name:        name,
 		Fingerprint: fp,

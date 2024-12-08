@@ -162,8 +162,18 @@ func (a *App) initPresetConfig() error {
 		}
 	}
 	for i, k := range a.cfg.GenerateKeys {
-		if err := a.generateKey(k.Name, "", k.IdentityProvider, k.Type, k.Bits); err != nil {
+		key, err := a.generateKey(k.Name, "", k.IdentityProvider, k.Type, k.Bits)
+		if err != nil {
 			return fmt.Errorf("generateKeys[%d]: %w", i, err)
+		}
+		if k.AddToAgent {
+			signer, err := key.Signer(nil)
+			if err != nil {
+				return fmt.Errorf("generateKeys[%d]: %w", i, err)
+			}
+			if err := a.agent.(*keyRing).AddSigner(signer, k.Name); err != nil {
+				return fmt.Errorf("generateKeys[%d]: %w", i, err)
+			}
 		}
 	}
 	return a.saveAll()
@@ -181,11 +191,11 @@ func (a *App) initDB() error {
 	if a.cfg.Persist != nil {
 		a.data.Persist = *a.cfg.Persist
 	}
+	if a.db != nil {
+		a.db.Close()
+		a.db = nil
+	}
 	if !a.data.Persist {
-		if a.db != nil {
-			a.db.Close()
-			a.db = nil
-		}
 		return indexeddb.Delete(a.cfg.DBName)
 	}
 	db, err := indexeddb.New(a.cfg.DBName)
@@ -237,7 +247,7 @@ func (a *App) Run() error {
 					username, _ = t.Prompt("Username: ")
 				}
 				target := username + "@" + a.cfg.AutoConnect.Endpoint
-				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, false); err != nil {
+				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent); err != nil {
 					t.Errorf("%v", err)
 				}
 			},

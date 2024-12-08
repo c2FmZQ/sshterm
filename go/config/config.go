@@ -59,6 +59,7 @@ type Config struct {
 		Type             string `json:"type,omitempty"`
 		Bits             int    `json:"bits,omitempty"`
 		IdentityProvider string `json:"identityProvider,omitempty"`
+		AddToAgent       bool   `json:"addToAgent,omitempty"`
 	} `json:"generateKeys,omitempty"`
 
 	// AutoConnect, if set, instructs the app to open an SSH connection
@@ -67,9 +68,10 @@ type Config struct {
 	// If Username is unset, the user will be prompted to enter it.
 	// If Command is unset, the app will request an interactive shell.
 	AutoConnect *struct {
-		Username string `json:"username,omitempty"`
-		Endpoint string `json:"endpoint"`
-		Identity string `json:"identity,omitempty"`
-		Command  string `json:"command,omitempty"`
+		Username     string `json:"username,omitempty"`
+		Endpoint     string `json:"endpoint"`
+		Identity     string `json:"identity,omitempty"`
+		Command      string `json:"command,omitempty"`
+		ForwardAgent bool   `json:"forwardAgent,omitempty"`
 	} `json:"autoConnect,omitempty"`
 }

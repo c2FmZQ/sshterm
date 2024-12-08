@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sync"
 	"syscall/js"
@@ -56,6 +57,13 @@ var (
 func TestMain(m *testing.M) {
 	flag.Parse()
 	flag.Set("test.failfast", "true")
+	loc, err := url.Parse(js.Global().Get("location").Get("href").String())
+	if err != nil {
+		panic("location.href:" + err.Error())
+	}
+	if run := loc.Query().Get("run"); run != "" {
+		flag.Set("test.run", run)
+	}
 	sshApp := js.Global().Get("sshApp")
 	if sshApp.Type() != js.TypeObject {
 		panic("sshApp object not found")

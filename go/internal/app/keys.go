@@ -47,31 +47,32 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func (a *App) generateKey(name, passphrase, idp, typ string, bits int) error {
+func (a *App) generateKey(name, passphrase, idp, typ string, bits int) (*key, error) {
 	pub, priv, err := createKey(typ, bits)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sshPub, err := ssh.NewPublicKey(pub)
 	if err != nil {
-		return fmt.Errorf("ssh.NewPublicKey: %w", err)
+		return nil, fmt.Errorf("ssh.NewPublicKey: %w", err)
 	}
 	var privPEM *pem.Block
 	if passphrase == "" {
 		if privPEM, err = ssh.MarshalPrivateKey(priv, ""); err != nil {
-			return fmt.Errorf("ssh.MarshalPrivateKey: %w", err)
+			return nil, fmt.Errorf("ssh.MarshalPrivateKey: %w", err)
 		}
 	} else if privPEM, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase)); err != nil {
-		return fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
+		return nil, fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
 	}
-	a.data.Keys[name] = &key{
+	k := &key{
 		Name:     name,
 		Public:   sshPub.Marshal(),
 		Private:  pem.EncodeToMemory(privPEM),
 		Provider: idp,
 		errorf:   a.term.Errorf,
 	}
-	return nil
+	a.data.Keys[name] = k
+	return k, nil
 }
 
 func (a *App) keysCommand() *cli.App {
@@ -150,7 +151,7 @@ func (a *App) keysCommand() *cli.App {
 						return fmt.Errorf("passphrase doesn't match")
 					}
 
-					if err := a.generateKey(name, passphrase, ctx.String("idp"), ctx.String("type"), ctx.Int("bits")); err != nil {
+					if _, err := a.generateKey(name, passphrase, ctx.String("idp"), ctx.String("type"), ctx.Int("bits")); err != nil {
 						return err
 					}
 					if err := a.saveKeys(); err != nil {
@@ -536,7 +537,7 @@ func (k *key) PrivateKey(rp func(string) (string, error)) (any, error) {
 	if err == nil {
 		return priv, nil
 	}
-	if _, ok := err.(*ssh.PassphraseMissingError); !ok {
+	if _, ok := err.(*ssh.PassphraseMissingError); !ok || rp == nil {
 		return nil, err
 	}
 	passphrase, err := rp("Enter passphrase for " + k.Name + ": ")
