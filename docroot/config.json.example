@@ -13,12 +13,14 @@
 	"generateKeys": [{
 		"name": "default",
 		"type": "ed25519",
-		"identityProvider": "./cert"
+		"identityProvider": "./cert",
+		"addToAgent": true
 	}],
 	"autoConnect": {
 		"username": "username",
 		"endpoint": "myserver.example.com",
 		"identity": "default",
-		"command": "uname -a"
+		"command": "uname -a",
+		"forwardAgent": false
 	}
 }
