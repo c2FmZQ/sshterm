@@ -5,6 +5,7 @@
 ### :star2: New features
 
 * Add an option to automatically fetch and refresh user certificates from an identity provider. This feature is intended to be used with tlsproxy's built-in SSH Certificate Authority. See `keys generate -h`
+* Read a preset configuration from config.json, if present. See `config/config.go` and `docroot/config.json.example`.
 
 ## v0.5.1
 
