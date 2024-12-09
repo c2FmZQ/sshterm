@@ -382,3 +382,50 @@ func TestHostCerts(t *testing.T) {
 		t.Fatalf("Run(): %v", err)
 	}
 }
+
+func TestJumpHosts(t *testing.T) {
+	a, err := app.New(appConfig)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	result := make(chan error)
+	go func() {
+		result <- a.Run()
+	}()
+
+	resp, err := http.Get("/cakey")
+	if err != nil {
+		t.Fatalf("/cakey: %v", err)
+	}
+	defer resp.Body.Close()
+
+	caKey, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	t.Logf("ca key: %s", caKey)
+
+	fileUploader.enqueue("testca.pub", "text/plain", int64(len(caKey)), caKey)
+
+	script(t, []line{
+		{Expect: prompt},
+		{Type: "db wipe\n", Expect: `Continue\?`},
+		{Type: "Y\n", Expect: prompt},
+		{Type: "ca import testca foo bar baz\n", Expect: prompt},
+		{Type: "ep add foo websocket?cert=true\n", Expect: prompt},
+		{Type: "ssh -J foo,bar testuser@baz hello\n"},
+		{Expect: `(?s)Host certificate for foo is trusted.*Password: `},
+		{Type: "password\n"},
+		{Expect: `(?s)Host certificate for bar is trusted.*Password: `},
+		{Type: "password\n"},
+		{Expect: `(?s)Host certificate for baz is trusted.*Password: `},
+		{Type: "password\n", Expect: "exec: hello"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		{Expect: prompt},
+		{Type: "exit\n"},
+	})
+	if err := <-result; err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+}
