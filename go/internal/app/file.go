@@ -54,6 +54,11 @@ func (a *App) fileCommand() *cli.App {
 				Aliases: []string{"i"},
 				Usage:   "The key to use for authentication.",
 			},
+			&cli.StringFlag{
+				Name:    "jump-hosts",
+				Aliases: []string{"J"},
+				Usage:   "Connect by going through jump hosts.",
+			},
 		},
 		Commands: []*cli.Command{
 			{
@@ -89,7 +94,7 @@ func (a *App) sftpUpload(ctx *cli.Context) error {
 	cctx, cancel := context.WithCancel(ctx.Context)
 	defer cancel()
 
-	c, err := a.sshClient(cctx, target, keyName)
+	c, err := a.sshClient(cctx, target, keyName, ctx.String("jump-hosts"))
 	if err != nil {
 		return err
 	}
@@ -173,7 +178,7 @@ func (a *App) sftpDownload(ctx *cli.Context) error {
 	cctx, cancel := context.WithCancel(ctx.Context)
 	defer cancel()
 
-	c, err := a.sshClient(cctx, target, keyName)
+	c, err := a.sshClient(cctx, target, keyName, ctx.String("jump-hosts"))
 	if err != nil {
 		return err
 	}

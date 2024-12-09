@@ -21,7 +21,7 @@
 	}],
 	"autoConnect": {
 		"username": "username",
-		"endpoint": "myserver.example.com",
+		"hostname": "myserver.example.com",
 		"identity": "default",
 		"command": "uname -a",
 		"forwardAgent": false

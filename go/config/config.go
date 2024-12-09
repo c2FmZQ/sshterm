@@ -75,9 +75,10 @@ type Config struct {
 	// If Command is unset, the app will request an interactive shell.
 	AutoConnect *struct {
 		Username     string `json:"username,omitempty"`
-		Endpoint     string `json:"endpoint"`
+		Hostname     string `json:"hostname"`
 		Identity     string `json:"identity,omitempty"`
 		Command      string `json:"command,omitempty"`
 		ForwardAgent bool   `json:"forwardAgent,omitempty"`
+		JumpHosts    string `json:"jumpHosts,omitempty"`
 	} `json:"autoConnect,omitempty"`
 }

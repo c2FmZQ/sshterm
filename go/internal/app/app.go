@@ -272,8 +272,8 @@ func (a *App) Run() error {
 				for username == "" {
 					username, _ = t.Prompt("Username: ")
 				}
-				target := username + "@" + a.cfg.AutoConnect.Endpoint
-				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent); err != nil {
+				target := username + "@" + a.cfg.AutoConnect.Hostname
+				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent, a.cfg.AutoConnect.JumpHosts); err != nil {
 					t.Errorf("%v", err)
 				}
 			},
@@ -299,7 +299,7 @@ func (a *App) Run() error {
 		"\x1b\x02": {"db backup\r", "CTRL-ALT-B"},
 		"\x1b\x17": {"db wipe\rYES\r", "CTRL-ALT-W"},
 	}
-	t.OnData(ctx, func(k string) any {
+	done := t.OnData(func(k string) any {
 		if a.inShell.Load() {
 			return nil
 		}
@@ -312,6 +312,7 @@ func (a *App) Run() error {
 		}
 		return nil
 	})
+	defer done()
 	t.SetAutoComplete(a.autoCompleter.autoComplete)
 
 	commandMap := make(map[string]*cli.App)
@@ -541,6 +542,14 @@ func (a *App) autoCompleteWords(args []string) []string {
 		for _, ep := range a.data.Endpoints {
 			if strings.HasPrefix(ep.Name, h) {
 				words = append(words, u+"@"+ep.Name)
+			}
+		}
+		for _, host := range a.data.Hosts {
+			if _, exists := a.data.Endpoints[host.Name]; exists {
+				continue
+			}
+			if strings.HasPrefix(host.Name, h) {
+				words = append(words, u+"@"+host.Name)
 			}
 		}
 		return words

@@ -50,9 +50,11 @@ func New(ctx context.Context, t js.Value) *Terminal {
 			dataCh:   make(chan []byte, 100),
 			closeCh:  make(chan struct{}),
 			resizeCh: make(chan resizeEvent, 10),
+			onData:   make(map[int]func(k string) any),
 		},
 	}
 	tt.vt = term.NewTerminal(tt.tw, "")
+	tt.Escape = tt.vt.Escape
 	tt.setDefaultPrompt()
 
 	disp := t.Call("onBell", js.FuncOf(func(this js.Value, args []js.Value) any {
@@ -63,8 +65,8 @@ func New(ctx context.Context, t js.Value) *Terminal {
 	disp = t.Call("onData", js.FuncOf(func(this js.Value, args []js.Value) any {
 		key := args[0].String()
 		tt.tw.mu.Lock()
-		if tt.tw.onData != nil {
-			r := tt.tw.onData(key)
+		for _, f := range tt.tw.onData {
+			r := f(key)
 			if r, ok := r.(string); ok {
 				key = r
 			}
@@ -123,6 +125,7 @@ type Terminal struct {
 	tw         *termWrapper
 	vt         *term.Terminal
 	lastPrompt string
+	Escape     *term.EscapeCodes
 }
 
 var _ io.Reader = (*termWrapper)(nil)
@@ -141,8 +144,8 @@ type termWrapper struct {
 	mu          sync.Mutex
 	onResizeCtx context.Context
 	onResize    func(h, w int) error
-	onDataCtx   context.Context
-	onData      func(k string) any
+	onData      map[int]func(k string) any
+	onDataCount int
 }
 
 func (t *termWrapper) isClosed() bool {
@@ -220,11 +223,18 @@ func (t *Terminal) OnResize(ctx context.Context, f func(h, w int) error) {
 	t.tw.onResize = f
 }
 
-func (t *Terminal) OnData(ctx context.Context, f func(string) any) {
+func (t *Terminal) OnData(f func(string) any) (cancel func()) {
 	t.tw.mu.Lock()
 	defer t.tw.mu.Unlock()
-	t.tw.onDataCtx = ctx
-	t.tw.onData = f
+	count := t.tw.onDataCount
+	t.tw.onData[count] = f
+	t.tw.onDataCount++
+
+	return func() {
+		t.tw.mu.Lock()
+		defer t.tw.mu.Unlock()
+		delete(t.tw.onData, count)
+	}
 }
 
 func (t *Terminal) Close() error {
