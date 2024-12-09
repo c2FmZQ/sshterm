@@ -65,9 +65,10 @@ func New(cfg *Config) (*App, error) {
 		agent: &keyRing{},
 		data: appData{
 			Persist:     true,
-			Endpoints:   make(map[string]*endpoint),
-			Keys:        make(map[string]*key),
 			Authorities: make(map[string]*authority),
+			Endpoints:   make(map[string]*endpoint),
+			Hosts:       make(map[string]*host),
+			Keys:        make(map[string]*key),
 		},
 		inShell: new(atomic.Bool),
 	}
@@ -94,9 +95,10 @@ func New(cfg *Config) (*App, error) {
 		},
 		app.sshCommand(),
 		app.fileCommand(),
-		app.epCommand(),
-		app.keysCommand(),
 		app.caCommand(),
+		app.epCommand(),
+		app.hostsCommand(),
+		app.keysCommand(),
 		app.agentCommand(),
 		app.dbCommand(),
 	}
@@ -128,15 +130,10 @@ type App struct {
 
 type appData struct {
 	Persist     bool                  `json:"persist"`
-	Endpoints   map[string]*endpoint  `json:"endpoints"`
-	Keys        map[string]*key       `json:"keys"`
 	Authorities map[string]*authority `json:"authorities"`
-}
-
-type endpoint struct {
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	HostKey []byte `json:"hostKey,omitempty"`
+	Endpoints   map[string]*endpoint  `json:"endpoints"`
+	Hosts       map[string]*host      `json:"hosts"`
+	Keys        map[string]*key       `json:"keys"`
 }
 
 type authority struct {
@@ -144,6 +141,17 @@ type authority struct {
 	Fingerprint string   `json:"fingerprint"`
 	Public      []byte   `json:"public"`
 	Hostnames   []string `json:"hostnames"`
+}
+
+type endpoint struct {
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	HostKey []byte `json:"hostKey,omitempty"` // deprecated
+}
+
+type host struct {
+	Name string `json:"name"`
+	Key  []byte `json:"key,omitempty"`
 }
 
 func (a *App) initPresetConfig() error {
@@ -157,8 +165,13 @@ func (a *App) initPresetConfig() error {
 		}
 	}
 	for i, ep := range a.cfg.Endpoints {
-		if err := a.addEndpoint(ep.Name, ep.URL, ep.HostKey); err != nil {
+		if err := a.addEndpoint(ep.Name, ep.URL); err != nil {
 			return fmt.Errorf("endpoints[%d]: %w", i, err)
+		}
+	}
+	for i, host := range a.cfg.Hosts {
+		if err := a.addHost(host.Name, host.Key); err != nil {
+			return fmt.Errorf("hosts[%d]: %w", i, err)
 		}
 	}
 	for i, k := range a.cfg.GenerateKeys {
@@ -203,14 +216,27 @@ func (a *App) initDB() error {
 		return fmt.Errorf("indexeddb.New: %w", err)
 	}
 	a.db = db
+	if err := db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
+		return fmt.Errorf("authorities load: %w", err)
+	}
 	if err := db.Get("endpoints", &a.data.Endpoints); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("endpoints load: %w", err)
+	}
+	if err := db.Get("hosts", &a.data.Hosts); err != nil && err != indexeddb.ErrNotFound {
+		return fmt.Errorf("hosts load: %w", err)
 	}
 	if err := db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("keys load: %w", err)
 	}
-	if err := db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
-		return fmt.Errorf("authorities load: %w", err)
+	for k, v := range a.data.Endpoints {
+		if len(v.HostKey) == 0 {
+			continue
+		}
+		a.data.Hosts[k] = &host{
+			Name: k,
+			Key:  v.HostKey,
+		}
+		v.HostKey = nil
 	}
 	return nil
 }
@@ -368,16 +394,26 @@ func (a *App) Run() error {
 }
 
 func (a *App) saveAll() error {
+	if err := a.saveAuthorities(); err != nil {
+		return err
+	}
 	if err := a.saveEndpoints(); err != nil {
+		return err
+	}
+	if err := a.saveHosts(); err != nil {
 		return err
 	}
 	if err := a.saveKeys(); err != nil {
 		return err
 	}
-	if err := a.saveAuthorities(); err != nil {
-		return err
-	}
 	return nil
+}
+
+func (a *App) saveAuthorities() error {
+	if a.db == nil {
+		return nil
+	}
+	return a.db.Set("authorities", a.data.Authorities)
 }
 
 func (a *App) saveEndpoints() error {
@@ -387,18 +423,18 @@ func (a *App) saveEndpoints() error {
 	return a.db.Set("endpoints", a.data.Endpoints)
 }
 
+func (a *App) saveHosts() error {
+	if a.db == nil {
+		return nil
+	}
+	return a.db.Set("hosts", a.data.Hosts)
+}
+
 func (a *App) saveKeys() error {
 	if a.db == nil {
 		return nil
 	}
 	return a.db.Set("keys", a.data.Keys)
-}
-
-func (a *App) saveAuthorities() error {
-	if a.db == nil {
-		return nil
-	}
-	return a.db.Set("authorities", a.data.Authorities)
 }
 
 func (a *App) importFiles(accept string, multiple bool) []jsutil.ImportedFile {
@@ -425,6 +461,15 @@ func (a *App) autoCompleteWords(args []string) []string {
 		for _, ep := range a.data.Endpoints {
 			if strings.HasPrefix(ep.Name, last) {
 				words = append(words, ep.Name)
+			}
+		}
+		return words
+	}
+	if args[0] == "hosts" && slices.Contains(args, "delete") {
+		var words []string
+		for _, h := range a.data.Hosts {
+			if strings.HasPrefix(h.Name, last) {
+				words = append(words, h.Name)
 			}
 		}
 		return words

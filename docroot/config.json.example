@@ -8,7 +8,10 @@
 	"endpoints": [{
 		"name": "myserver.example.com",
 		"url": "./websocket",
-		"hostKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINqyuT/sFvC37z1qMY0may2TMKqg2nxdjxBxyfXeieot"
+	}],
+	"hosts": [{
+		"name": "myserver.example.com",
+		"key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINqyuT/sFvC37z1qMY0may2TMKqg2nxdjxBxyfXeieot"
 	}],
 	"generateKeys": [{
 		"name": "default",

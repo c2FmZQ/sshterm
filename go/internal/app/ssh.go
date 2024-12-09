@@ -213,7 +213,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 			if ok {
 				return a.hostCertificateCallback(hostname, cert)
 			}
-			return a.hostKeyCallback(ep, hostname, key)
+			return a.hostKeyCallback(hostname, key)
 		},
 		BannerCallback: func(message string) error {
 			t.Printf("%s\n", message)
@@ -299,16 +299,16 @@ func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) er
 	}
 }
 
-func (a *App) hostKeyCallback(ep *endpoint, hostname string, key ssh.PublicKey) error {
+func (a *App) hostKeyCallback(hostname string, key ssh.PublicKey) error {
 	hk := key.Marshal()
 	var err error
-	if ep.HostKey != nil {
-		if subtle.ConstantTimeCompare(ep.HostKey, hk) == 1 {
+	if host, exists := a.data.Hosts[hostname]; exists && host.Key != nil {
+		if subtle.ConstantTimeCompare(host.Key, hk) == 1 {
 			a.term.Printf("Host key is trusted.\n")
 			return nil
 		}
 		var old ssh.PublicKey
-		if old, err = ssh.ParsePublicKey(ep.HostKey); err != nil {
+		if old, err = ssh.ParsePublicKey(host.Key); err != nil {
 			return err
 		}
 		err = fmt.Errorf("host key changed, was %s, now is %s", ssh.FingerprintSHA256(old), ssh.FingerprintSHA256(key))
@@ -327,8 +327,11 @@ func (a *App) hostKeyCallback(ep *endpoint, hostname string, key ssh.PublicKey) 
 	case "2":
 		return nil
 	case "3":
-		ep.HostKey = hk
-		return a.saveEndpoints()
+		a.data.Hosts[hostname] = &host{
+			Name: hostname,
+			Key:  hk,
+		}
+		return a.saveHosts()
 	default:
 		return errors.New("host key rejected by user")
 	}

@@ -101,9 +101,10 @@ func (a *App) dbCommand() *cli.App {
 						return errors.New("aborted")
 					}
 					a.agent = &keyRing{}
-					a.data.Endpoints = make(map[string]*endpoint)
-					a.data.Keys = make(map[string]*key)
 					a.data.Authorities = make(map[string]*authority)
+					a.data.Endpoints = make(map[string]*endpoint)
+					a.data.Hosts = make(map[string]*host)
+					a.data.Keys = make(map[string]*key)
 					if err := a.saveAll(); err != nil {
 						return err
 					}
