@@ -34,6 +34,11 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+func (a *App) addEndpoint(name, url string) error {
+	a.data.Endpoints[name] = &endpoint{Name: name, URL: url}
+	return nil
+}
+
 func (a *App) epCommand() *cli.App {
 	return &cli.App{
 		Name:            "ep",
@@ -64,8 +69,10 @@ func (a *App) epCommand() *cli.App {
 					for _, n := range names {
 						ep := a.data.Endpoints[n]
 						fp := "n/a"
-						if key, err := ssh.ParsePublicKey(ep.HostKey); err == nil {
-							fp = ssh.FingerprintSHA256(key)
+						if host, exists := a.data.Hosts[n]; exists && host.Key != nil {
+							if key, err := ssh.ParsePublicKey(host.Key); err == nil {
+								fp = ssh.FingerprintSHA256(key)
+							}
 						}
 						a.term.Printf("%*s %*s %s\n", -szName, ep.Name, -szURL, ep.URL, fp)
 					}
@@ -87,7 +94,9 @@ func (a *App) epCommand() *cli.App {
 						return errors.New("endpoint name cannot contain \":\"")
 					}
 					url := ctx.Args().Get(1)
-					a.data.Endpoints[name] = &endpoint{Name: name, URL: url}
+					if err := a.addEndpoint(name, url); err != nil {
+						return err
+					}
 					return a.saveEndpoints()
 				},
 			},

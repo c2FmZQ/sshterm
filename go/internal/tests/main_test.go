@@ -32,12 +32,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sync"
 	"syscall/js"
 	"testing"
 	"time"
 
+	"github.com/c2FmZQ/sshterm/config"
 	"github.com/c2FmZQ/sshterm/internal/app"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 )
@@ -55,6 +57,13 @@ var (
 func TestMain(m *testing.M) {
 	flag.Parse()
 	flag.Set("test.failfast", "true")
+	loc, err := url.Parse(js.Global().Get("location").Get("href").String())
+	if err != nil {
+		panic("location.href:" + err.Error())
+	}
+	if run := loc.Query().Get("run"); run != "" {
+		flag.Set("test.run", run)
+	}
 	sshApp := js.Global().Get("sshApp")
 	if sshApp.Type() != js.TypeObject {
 		panic("sshApp object not found")
@@ -87,8 +96,10 @@ func start(this js.Value, args []js.Value) any {
 	fileDownloader = &downloader{}
 
 	appConfig = &app.Config{
-		Term:         arg.Get("term"),
-		DBName:       "sshtermtest",
+		Term: arg.Get("term"),
+		Config: config.Config{
+			DBName: "sshtermtest",
+		},
 		UploadHook:   fileUploader.upload,
 		DownloadHook: fileDownloader.download,
 		StreamHook:   fileDownloader.stream,

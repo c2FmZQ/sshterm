@@ -26,9 +26,11 @@
 package internal
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"syscall/js"
 
 	"github.com/c2FmZQ/sshterm/internal/app"
@@ -52,28 +54,39 @@ func Start(this js.Value, args []js.Value) (result any) {
 	}
 	arg := args[0]
 
-	if t := arg.Get("term"); t.Type() != js.TypeObject {
+	term := arg.Get("term")
+	if term.Type() != js.TypeObject {
 		return errors.New("term value is missing")
 	}
+	arg.Delete("term")
 
-	cfg := &app.Config{
-		Term: arg.Get("term"),
+	jsArg := js.Global().Get("JSON").Call("stringify", arg).String()
+	var cfg app.Config
+	if err := json.Unmarshal([]byte(jsArg), &cfg); err != nil {
+		return fmt.Errorf("json.Unmarshal: %w", err)
 	}
+
+	cfg.Term = term
 	cfg.Term.Call("writeln", "\x1b[32m╔════════════════════════════════════╗\x1b[0m")
 	cfg.Term.Call("writeln", "\x1b[32m║ SSH TERM \x1b[4;34mgithub.com/c2FmZQ/sshterm\x1b[0;32m ║\x1b[0m")
 	cfg.Term.Call("writeln", "\x1b[32m╚════════════════════════════════════╝\x1b[0m")
-	cfg.Term.Call("writeln", "\x1b[32mWelcome! Type \x1b[1mhelp\x1b[0;32m for a list of commands\x1b[0m\n")
+	if cfg.AutoConnect == nil {
+		cfg.Term.Call("writeln", "\x1b[32mWelcome! Type \x1b[1mhelp\x1b[0;32m for a list of commands\x1b[0m")
+	}
+	cfg.Term.Call("writeln", "")
 
 	return jsutil.NewPromise(func() (any, error) {
-		a, err := app.New(cfg)
+		defer func() {
+			fmt.Fprintf(os.Stderr, "Start Promise return\n")
+		}()
+		a, err := app.New(&cfg)
 		if err != nil {
 			return nil, err
 		}
 		for {
 			if err = a.Run(); err != io.EOF {
-				break
+				return "exited", err
 			}
 		}
-		return "exited", err
 	})
 }

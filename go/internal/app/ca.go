@@ -36,6 +36,26 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+func (a *App) addAuthority(name, publicKey string, hostnames []string) error {
+	key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(publicKey))
+	if err != nil {
+		return err
+	}
+	fp := ssh.FingerprintSHA256(key)
+	for k, v := range a.data.Authorities {
+		if v.Name == name {
+			delete(a.data.Authorities, k)
+		}
+	}
+	a.data.Authorities[fp] = &authority{
+		Name:        name,
+		Fingerprint: fp,
+		Public:      key.Marshal(),
+		Hostnames:   hostnames,
+	}
+	return nil
+}
+
 func (a *App) caCommand() *cli.App {
 	return &cli.App{
 		Name:            "ca",
@@ -109,16 +129,8 @@ func (a *App) caCommand() *cli.App {
 					if err != nil {
 						return fmt.Errorf("%q: %w", f.Name, err)
 					}
-					key, _, _, _, err := ssh.ParseAuthorizedKey(content)
-					if err != nil {
+					if err := a.addAuthority(name, string(content), ctx.Args().Slice()[1:]); err != nil {
 						return err
-					}
-					fp := ssh.FingerprintSHA256(key)
-					a.data.Authorities[fp] = &authority{
-						Name:        name,
-						Fingerprint: fp,
-						Public:      key.Marshal(),
-						Hostnames:   ctx.Args().Slice()[1:],
 					}
 					if err := a.saveAuthorities(); err != nil {
 						return err
