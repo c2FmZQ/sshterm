@@ -27,6 +27,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"slices"
@@ -243,9 +244,7 @@ func (a *App) initDB() error {
 
 func (a *App) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-	}()
+	defer cancel()
 	a.ctx = ctx
 	a.term = terminal.New(ctx, a.cfg.Term)
 	defer a.term.Close()
@@ -268,12 +267,14 @@ func (a *App) Run() error {
 	if a.cfg.AutoConnect != nil {
 		jsutil.TryCatch(
 			func() { // try
+				ctx, cancel := context.WithCancel(ctx)
+				defer a.ctrlC(cancel)()
 				username := a.cfg.AutoConnect.Username
 				for username == "" {
 					username, _ = t.Prompt("Username: ")
 				}
-				target := username + "@" + a.cfg.AutoConnect.Endpoint
-				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent); err != nil {
+				target := username + "@" + a.cfg.AutoConnect.Hostname
+				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent, a.cfg.AutoConnect.JumpHosts); err != nil {
 					t.Errorf("%v", err)
 				}
 			},
@@ -299,7 +300,7 @@ func (a *App) Run() error {
 		"\x1b\x02": {"db backup\r", "CTRL-ALT-B"},
 		"\x1b\x17": {"db wipe\rYES\r", "CTRL-ALT-W"},
 	}
-	t.OnData(ctx, func(k string) any {
+	done := t.OnData(func(k string) any {
 		if a.inShell.Load() {
 			return nil
 		}
@@ -312,6 +313,7 @@ func (a *App) Run() error {
 		}
 		return nil
 	})
+	defer done()
 	t.SetAutoComplete(a.autoCompleter.autoComplete)
 
 	commandMap := make(map[string]*cli.App)
@@ -377,9 +379,13 @@ func (a *App) Run() error {
 			jsutil.TryCatch(
 				func() { // try
 					ctx, cancel := context.WithCancel(a.ctx)
-					defer cancel()
+					defer a.ctrlC(cancel)()
 					if err := cmd.RunContext(ctx, args); err != nil {
-						t.Errorf("%v", err)
+						if errors.Is(err, context.Canceled) {
+							t.Errorf("Aborted")
+						} else {
+							t.Errorf("%v", err)
+						}
 					}
 					a.cfg.Term.Call("input", "\n")
 					a.cfg.Term.Call("input", "\n")
@@ -393,6 +399,22 @@ func (a *App) Run() error {
 	}
 }
 
+func (a *App) ctrlC(cancel context.CancelFunc) context.CancelFunc {
+	done := a.term.OnData(func(k string) any {
+		if a.inShell.Load() {
+			return nil
+		}
+		if k == "\x03" {
+			cancel()
+			return "\r"
+		}
+		return nil
+	})
+	return func() {
+		done()
+		cancel()
+	}
+}
 func (a *App) saveAll() error {
 	if err := a.saveAuthorities(); err != nil {
 		return err
@@ -541,6 +563,14 @@ func (a *App) autoCompleteWords(args []string) []string {
 		for _, ep := range a.data.Endpoints {
 			if strings.HasPrefix(ep.Name, h) {
 				words = append(words, u+"@"+ep.Name)
+			}
+		}
+		for _, host := range a.data.Hosts {
+			if _, exists := a.data.Endpoints[host.Name]; exists {
+				continue
+			}
+			if strings.HasPrefix(host.Name, h) {
+				words = append(words, u+"@"+host.Name)
 			}
 		}
 		return words

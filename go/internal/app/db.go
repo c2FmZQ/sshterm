@@ -65,6 +65,9 @@ func (a *App) dbCommand() *cli.App {
 							if err := a.initDB(); err != nil {
 								return err
 							}
+							if err := a.saveAll(); err != nil {
+								return err
+							}
 						case "off":
 							a.data.Persist = false
 							if err := a.initDB(); err != nil {
@@ -73,6 +76,9 @@ func (a *App) dbCommand() *cli.App {
 						case "toggle":
 							a.data.Persist = !a.data.Persist
 							if err := a.initDB(); err != nil {
+								return err
+							}
+							if err := a.saveAll(); err != nil {
 								return err
 							}
 						default:

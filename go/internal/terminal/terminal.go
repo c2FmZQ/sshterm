@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"syscall/js"
@@ -50,9 +51,11 @@ func New(ctx context.Context, t js.Value) *Terminal {
 			dataCh:   make(chan []byte, 100),
 			closeCh:  make(chan struct{}),
 			resizeCh: make(chan resizeEvent, 10),
+			onData:   make(map[int]func(k string) any),
 		},
 	}
 	tt.vt = term.NewTerminal(tt.tw, "")
+	tt.Escape = tt.vt.Escape
 	tt.setDefaultPrompt()
 
 	disp := t.Call("onBell", js.FuncOf(func(this js.Value, args []js.Value) any {
@@ -63,9 +66,8 @@ func New(ctx context.Context, t js.Value) *Terminal {
 	disp = t.Call("onData", js.FuncOf(func(this js.Value, args []js.Value) any {
 		key := args[0].String()
 		tt.tw.mu.Lock()
-		if tt.tw.onData != nil {
-			r := tt.tw.onData(key)
-			if r, ok := r.(string); ok {
+		for _, i := range tt.tw.onDataKeys {
+			if r, ok := tt.tw.onData[i](key).(string); ok {
 				key = r
 			}
 		}
@@ -123,6 +125,7 @@ type Terminal struct {
 	tw         *termWrapper
 	vt         *term.Terminal
 	lastPrompt string
+	Escape     *term.EscapeCodes
 }
 
 var _ io.Reader = (*termWrapper)(nil)
@@ -141,8 +144,9 @@ type termWrapper struct {
 	mu          sync.Mutex
 	onResizeCtx context.Context
 	onResize    func(h, w int) error
-	onDataCtx   context.Context
-	onData      func(k string) any
+	onData      map[int]func(k string) any
+	onDataKeys  []int
+	onDataCount int
 }
 
 func (t *termWrapper) isClosed() bool {
@@ -220,11 +224,29 @@ func (t *Terminal) OnResize(ctx context.Context, f func(h, w int) error) {
 	t.tw.onResize = f
 }
 
-func (t *Terminal) OnData(ctx context.Context, f func(string) any) {
+func (t *Terminal) OnData(f func(string) any) (cancel func()) {
 	t.tw.mu.Lock()
 	defer t.tw.mu.Unlock()
-	t.tw.onDataCtx = ctx
-	t.tw.onData = f
+	count := t.tw.onDataCount
+	t.tw.onData[count] = f
+	t.tw.onDataCount++
+
+	sort := func() {
+		n := make([]int, 0, len(t.tw.onData))
+		for k := range t.tw.onData {
+			n = append(n, k)
+		}
+		sort.Sort(sort.Reverse(sort.IntSlice(n)))
+		t.tw.onDataKeys = n
+	}
+	sort()
+
+	return func() {
+		t.tw.mu.Lock()
+		defer t.tw.mu.Unlock()
+		delete(t.tw.onData, count)
+		sort()
+	}
 }
 
 func (t *Terminal) Close() error {

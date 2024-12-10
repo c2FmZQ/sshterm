@@ -46,8 +46,8 @@ func (a *App) sshCommand() *cli.App {
 	return &cli.App{
 		Name:            "ssh",
 		Usage:           "Start an SSH connection",
-		UsageText:       "ssh [-i <keyname>] username@<endpoint> [command]",
-		Description:     "The ssh command starts an SSH connection with a remote server.\nUse the -i flag to select a key (see the keys command). If a key\nwith the name 'default' exists, it will be used by default.\n\nThe <endpoint> must have been configured with the ep command.",
+		UsageText:       "ssh [-i <keyname>] <username>@<hostname> [command]",
+		Description:     "The ssh command starts an SSH connection with a remote server.\nUse the -i flag to select a key (see the keys command). If a key\nwith the name 'default' exists, it will be used by default.\n\nThe <hostname> must have been configured with the ep command,\nunless --jump-host is used, in which case, the first jump host\nmust be a configured endpoint.",
 		HideHelpCommand: true,
 		Action:          a.ssh,
 		Flags: []cli.Flag{
@@ -55,6 +55,11 @@ func (a *App) sshCommand() *cli.App {
 				Name:    "identity",
 				Aliases: []string{"i"},
 				Usage:   "The key to use for authentication.",
+			},
+			&cli.StringFlag{
+				Name:    "jump-hosts",
+				Aliases: []string{"J"},
+				Usage:   "Connect by going through jump hosts.",
 			},
 			&cli.BoolFlag{
 				Name:    "forward-agent",
@@ -76,15 +81,15 @@ func (a *App) ssh(ctx *cli.Context) error {
 		command = strings.Join(ctx.Args().Slice()[1:], " ")
 	}
 
-	return a.runSSH(ctx.Context, ctx.Args().Get(0), ctx.String("identity"), command, ctx.Bool("A"))
+	return a.runSSH(ctx.Context, ctx.Args().Get(0), ctx.String("identity"), command, ctx.Bool("forward-agent"), ctx.String("jump-hosts"))
 }
 
-func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwardAgent bool) error {
+func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwardAgent bool, jumpHosts string) error {
 	t := a.term
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	client, err := a.sshClient(ctx, target, keyName)
+	client, err := a.sshClient(ctx, target, keyName, jumpHosts)
 	if err != nil {
 		return err
 	}
@@ -144,25 +149,78 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	return session.Wait()
 }
 
-func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Client, error) {
-	t := a.term
-	username, epName, ok := strings.Cut(target, "@")
+func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) (*ssh.Client, error) {
+	username, hostname, ok := strings.Cut(target, "@")
 	if !ok {
 		return nil, fmt.Errorf("invalid target %q", target)
 	}
-	ep, exists := a.data.Endpoints[epName]
+	type userhost struct {
+		u, h string
+	}
+	var hops []userhost
+	if jumpHosts != "" {
+		for _, jh := range strings.Split(jumpHosts, ",") {
+			jh = strings.TrimSpace(jh)
+			u, h, ok := strings.Cut(jh, "@")
+			if !ok {
+				u = username
+				h = jh
+			}
+			hops = append(hops, userhost{u, h})
+		}
+	}
+	hops = append(hops, userhost{username, hostname})
+
+	ep, exists := a.data.Endpoints[hops[0].h]
 	if !exists {
-		return nil, fmt.Errorf("unknown endpoint %q", epName)
+		return nil, fmt.Errorf("unknown endpoint %q", hops[0].h)
 	}
 
-	ws, err := websocket.New(ctx, ep.URL, t)
+	signers, err := a.sshSigners(keyName)
 	if err != nil {
 		return nil, err
 	}
 
+	if len(hops) > 1 {
+		a.term.Printf("[1] Connecting %s@%s...", hops[0].u, hops[0].h)
+	}
+	ws, err := websocket.New(ctx, ep.URL, a.term)
+	if err != nil {
+		return nil, err
+	}
+	if len(hops) > 1 {
+		a.term.Printf("✅\n")
+	}
+	context.AfterFunc(ctx, func() { ws.Close() })
+
+	client, err := a.sshClientFromConn(ctx, ws, hops[0].u, hops[0].h, signers)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := 1; i < len(hops); i++ {
+		addr := hops[i].h
+		if !strings.Contains(addr, ":") {
+			addr += ":22"
+		}
+		a.term.Printf("[%d] Connecting %s@%s...", i+1, hops[i].u, hops[i].h)
+		conn, err := client.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return nil, err
+		}
+		a.term.Printf("✅\n")
+		context.AfterFunc(ctx, func() { conn.Close() })
+		if client, err = a.sshClientFromConn(ctx, conn, hops[i].u, hops[i].h, signers); err != nil {
+			return nil, err
+		}
+	}
+	return client, nil
+}
+
+func (a *App) sshSigners(keyName string) ([]ssh.Signer, error) {
 	signers, err := a.agent.Signers()
 	if err != nil {
-		t.Errorf("%v", err)
+		a.term.Errorf("%v", err)
 	}
 	if len(signers) == 0 || keyName != "" {
 		origKeyName := keyName
@@ -176,11 +234,15 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 			}
 			signers = append(signers, signer)
 		} else if origKeyName != "" {
-			t.Errorf("unknown key %q", keyName)
+			return nil, fmt.Errorf("unknown key %q", keyName)
 		}
 	}
+	return signers, nil
+}
 
-	conn, chans, reqs, err := ssh.NewClientConn(ws, ep.Name, &ssh.ClientConfig{
+func (a *App) sshClientFromConn(ctx context.Context, c net.Conn, username, hostname string, signers []ssh.Signer) (*ssh.Client, error) {
+	t := a.term
+	conn, chans, reqs, err := ssh.NewClientConn(c, hostname, &ssh.ClientConfig{
 		User: username,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signers...),
@@ -194,11 +256,12 @@ func (a *App) sshClient(ctx context.Context, target, keyName string) (*ssh.Clien
 					}
 					ans := make([]string, len(questions))
 					for i, q := range questions {
+						q := fmt.Sprintf("%s[%s]%s %s", t.Escape.Green, hostname, t.Escape.Reset, maskControl(q))
 						var err error
 						if echos[i] {
-							ans[i], err = t.Prompt(maskControl(q))
+							ans[i], err = t.Prompt(q)
 						} else {
-							ans[i], err = t.ReadPassword(maskControl(q))
+							ans[i], err = t.ReadPassword(q)
 						}
 						if err != nil {
 							return nil, err
@@ -256,15 +319,15 @@ func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) er
 
 	err := errors.Join(errs...)
 	if err == nil {
-		a.term.Printf("Host certificate is trusted.\n")
+		a.term.Printf("Host certificate for %s is trusted.\n", hostname)
 		return nil
 	}
 
-	a.term.Printf("Host certificate:\n")
+	a.term.Printf("Host certificate for %s:\n", hostname)
 	a.printCertificate(cert)
 	a.term.Print("\n")
 
-	a.term.Errorf("Host certificate is NOT trusted:\n  %v\n", strings.ReplaceAll(err.Error(), "\n", "\n  "))
+	a.term.Errorf("Host certificate for %s is NOT trusted:\n  %v\n", hostname, strings.ReplaceAll(err.Error(), "\n", "\n  "))
 
 	a.term.Printf("Options:\n")
 	a.term.Printf(" 1- Abort the connection (default)\n")
@@ -304,14 +367,14 @@ func (a *App) hostKeyCallback(hostname string, key ssh.PublicKey) error {
 	var err error
 	if host, exists := a.data.Hosts[hostname]; exists && host.Key != nil {
 		if subtle.ConstantTimeCompare(host.Key, hk) == 1 {
-			a.term.Printf("Host key is trusted.\n")
+			a.term.Printf("Host key for %s is trusted.\n", hostname)
 			return nil
 		}
 		var old ssh.PublicKey
 		if old, err = ssh.ParsePublicKey(host.Key); err != nil {
 			return err
 		}
-		err = fmt.Errorf("host key changed, was %s, now is %s", ssh.FingerprintSHA256(old), ssh.FingerprintSHA256(key))
+		err = fmt.Errorf("host key for %s changed, was %s, now is %s", hostname, ssh.FingerprintSHA256(old), ssh.FingerprintSHA256(key))
 	}
 	a.term.Printf("Host key for %s is not trusted\n%s %s\n\n", hostname, key.Type(), ssh.FingerprintSHA256(key))
 	if err != nil {
@@ -327,10 +390,12 @@ func (a *App) hostKeyCallback(hostname string, key ssh.PublicKey) error {
 	case "2":
 		return nil
 	case "3":
-		a.data.Hosts[hostname] = &host{
-			Name: hostname,
-			Key:  hk,
+		h, ok := a.data.Hosts[hostname]
+		if !ok {
+			h = &host{Name: hostname}
+			a.data.Hosts[hostname] = h
 		}
+		h.Key = hk
 		return a.saveHosts()
 	default:
 		return errors.New("host key rejected by user")

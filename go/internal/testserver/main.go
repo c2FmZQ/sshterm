@@ -355,75 +355,119 @@ func (s *sshServer) handle(nConn net.Conn) error {
 
 	for newChannel := range chans {
 		log.Printf("newChannel type: %s", newChannel.ChannelType())
-		if newChannel.ChannelType() != "session" {
+		switch newChannel.ChannelType() {
+		case "direct-tcpip":
+			s.handleDirectTCPIP(&wg, newChannel)
+		case "session":
+			s.handleSession(&wg, newChannel)
+		default:
 			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
-			continue
 		}
-		channel, requests, err := newChannel.Accept()
-		if err != nil {
-			log.Fatalf("Could not accept channel: %v", err)
-		}
-		wg.Add(1)
-		go func(in <-chan *ssh.Request) {
-			defer wg.Done()
-			for req := range in {
-				log.Printf("request type: %s", req.Type)
-				switch req.Type {
-				case "shell":
-					req.Reply(true, nil)
-					term := terminal.NewTerminal(channel, "remote> ")
-
-					wg.Add(1)
-					go func() {
-						defer func() {
-							channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
-							channel.Close()
-							wg.Done()
-						}()
-						for {
-							line, err := term.ReadLine()
-							if err != nil || line == "exit" {
-								break
-							}
-						}
-					}()
-
-				case "exec":
-					req.Reply(true, nil)
-					if len(req.Payload) > 4 {
-						fmt.Fprintf(channel, "exec: %s\n", req.Payload[4:])
-					}
-					channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
-					channel.Close()
-
-				case "subsystem":
-					if len(req.Payload) < 4 || string(req.Payload[4:]) != "sftp" {
-						req.Reply(false, nil)
-						return
-					}
-					req.Reply(true, nil)
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						server, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(s.dir))
-						if err != nil {
-							log.Fatal(err)
-						}
-						if err := server.Serve(); err != nil {
-							if err != io.EOF {
-								log.Fatal("sftp server completed with error:", err)
-							}
-						}
-						server.Close()
-						log.Print("sftp client exited session.")
-					}()
-
-				default:
-					req.Reply(false, nil)
-				}
-			}
-		}(requests)
-
 	}
 	return nil
+}
+
+type fakeConn struct {
+	io.ReadWriteCloser
+}
+
+func (fakeConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (fakeConn) SetWriteDeadline(t time.Time) error {
+	return nil
+}
+
+func (fakeConn) SetDeadline(t time.Time) error {
+	return nil
+}
+
+func (fakeConn) LocalAddr() net.Addr {
+	return &net.TCPAddr{}
+}
+
+func (fakeConn) RemoteAddr() net.Addr {
+	return &net.TCPAddr{}
+}
+
+func (s *sshServer) handleDirectTCPIP(wg *sync.WaitGroup, newChannel ssh.NewChannel) {
+	log.Printf("port-forward: %q", newChannel.ExtraData())
+	channel, requests, err := newChannel.Accept()
+	if err != nil {
+		log.Fatalf("Could not accept channel: %v", err)
+	}
+	wg.Add(1)
+	go func(in <-chan *ssh.Request) {
+		ssh.DiscardRequests(in)
+		wg.Done()
+	}(requests)
+	s.handle(fakeConn{channel})
+}
+
+func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel) {
+	channel, requests, err := newChannel.Accept()
+	if err != nil {
+		log.Fatalf("Could not accept channel: %v", err)
+	}
+	wg.Add(1)
+	go func(in <-chan *ssh.Request) {
+		defer wg.Done()
+		for req := range in {
+			log.Printf("request type: %s", req.Type)
+			switch req.Type {
+			case "shell":
+				req.Reply(true, nil)
+				term := terminal.NewTerminal(channel, "remote> ")
+
+				wg.Add(1)
+				go func() {
+					defer func() {
+						channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
+						channel.Close()
+						wg.Done()
+					}()
+					for {
+						line, err := term.ReadLine()
+						if err != nil || line == "exit" {
+							break
+						}
+					}
+				}()
+
+			case "exec":
+				req.Reply(true, nil)
+				if len(req.Payload) > 4 {
+					fmt.Fprintf(channel, "exec: %s\n", req.Payload[4:])
+				}
+				channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
+				channel.Close()
+
+			case "subsystem":
+				if len(req.Payload) < 4 || string(req.Payload[4:]) != "sftp" {
+					req.Reply(false, nil)
+					return
+				}
+				req.Reply(true, nil)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					server, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(s.dir))
+					if err != nil {
+						log.Fatal(err)
+					}
+					if err := server.Serve(); err != nil {
+						if err != io.EOF {
+							log.Fatal("sftp server completed with error:", err)
+						}
+					}
+					server.Close()
+					log.Print("sftp client exited session.")
+				}()
+
+			default:
+				req.Reply(false, nil)
+			}
+		}
+	}(requests)
 }
