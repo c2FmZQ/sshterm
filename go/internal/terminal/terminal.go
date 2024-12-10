@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"syscall/js"
@@ -65,9 +66,8 @@ func New(ctx context.Context, t js.Value) *Terminal {
 	disp = t.Call("onData", js.FuncOf(func(this js.Value, args []js.Value) any {
 		key := args[0].String()
 		tt.tw.mu.Lock()
-		for _, f := range tt.tw.onData {
-			r := f(key)
-			if r, ok := r.(string); ok {
+		for _, i := range tt.tw.onDataKeys {
+			if r, ok := tt.tw.onData[i](key).(string); ok {
 				key = r
 			}
 		}
@@ -145,6 +145,7 @@ type termWrapper struct {
 	onResizeCtx context.Context
 	onResize    func(h, w int) error
 	onData      map[int]func(k string) any
+	onDataKeys  []int
 	onDataCount int
 }
 
@@ -230,10 +231,21 @@ func (t *Terminal) OnData(f func(string) any) (cancel func()) {
 	t.tw.onData[count] = f
 	t.tw.onDataCount++
 
+	sort := func() {
+		n := make([]int, 0, len(t.tw.onData))
+		for k := range t.tw.onData {
+			n = append(n, k)
+		}
+		sort.Sort(sort.Reverse(sort.IntSlice(n)))
+		t.tw.onDataKeys = n
+	}
+	sort()
+
 	return func() {
 		t.tw.mu.Lock()
 		defer t.tw.mu.Unlock()
 		delete(t.tw.onData, count)
+		sort()
 	}
 }
 
