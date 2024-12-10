@@ -90,12 +90,37 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 	defer client.Close()
 
 	raw := a.term.Raw()
+
 	t := term.NewTerminal(raw, "sftp> ")
+	cwd, err := client.Getwd()
+	if err != nil {
+		fmt.Fprintf(t, "Getwd: %v\n", err)
+	}
+	homeDir := cwd
+	lastDir := cwd
+	var prompt string
+	setPrompt := func() {
+		dir := cwd
+		if strings.HasPrefix(dir, homeDir) {
+			dir = "~" + dir[len(homeDir):]
+		}
+		prompt = fmt.Sprintf("\x1b[1;34m%s\x1b[1;32m sftp> \x1b[0m", dir)
+		t.SetPrompt(prompt)
+	}
+	setPrompt()
 
 	joinPath := func(a string, b ...string) string {
 		base := path.Clean(a)
 		for _, bb := range b {
 			bb = path.Clean(bb)
+			if bb == "~" {
+				base = homeDir
+				continue
+			}
+			if strings.HasPrefix(bb, "~/") {
+				base = path.Join(homeDir, bb[2:])
+				continue
+			}
 			if strings.HasPrefix(bb, "/") {
 				base = bb
 				continue
@@ -105,10 +130,6 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		return base
 	}
 
-	cwd, err := client.Getwd()
-	if err != nil {
-		fmt.Fprintf(t, "Getwd: %v\n", err)
-	}
 	commands := []*cli.App{
 		{
 			Name:            "cd",
@@ -121,15 +142,24 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 					return nil
 				}
 				if ctx.Args().Len() == 0 {
-					var err error
-					cwd, err = client.Getwd()
-					return err
+					lastDir = cwd
+					cwd = homeDir
+					setPrompt()
+					return nil
 				}
-				realDir, err := client.RealPath(joinPath(cwd, ctx.Args().Get(0)))
+				dir := ctx.Args().Get(0)
+				if dir == "-" {
+					lastDir, cwd = cwd, lastDir
+					setPrompt()
+					return nil
+				}
+				realDir, err := client.RealPath(joinPath(cwd, dir))
 				if err != nil {
 					return err
 				}
+				lastDir = cwd
 				cwd = realDir
+				setPrompt()
 				return nil
 			},
 		},
@@ -436,11 +466,15 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 				return nil
 			}
 			last := args[len(args)-1]
-			dir := joinPath(cwd, last)
-			if last == "" || strings.HasSuffix(last, "/") {
-				dir += "/"
+			var dir string
+			if strings.HasPrefix(last, "/") {
+				dir = last
+			} else if strings.HasPrefix(last, "~/") {
+				dir = homeDir + last[1:]
+			} else {
+				dir = cwd + "/" + last
 			}
-			if !strings.HasSuffix(dir, "/") {
+			if last != "" && !strings.HasSuffix(last, "/") {
 				dir, _ = path.Split(dir)
 			}
 			ll, err := client.ReadDir(dir)
@@ -450,7 +484,12 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 			dirOnly := args[0] == "cd" || args[0] == "rmdir" || args[0] == "put"
 			var words []string
 			for _, f := range ll {
-				name := strings.TrimPrefix(joinPath(dir, f.Name()), cwd+"/")
+				name := strings.TrimSuffix(dir, "/") + "/" + f.Name()
+				if strings.HasPrefix(last, "~/") && strings.HasPrefix(name, homeDir+"/") {
+					name = "~" + name[len(homeDir):]
+				} else if !strings.HasPrefix(last, "/") {
+					name = strings.TrimPrefix(name, cwd+"/")
+				}
 				if f.IsDir() {
 					name += "/"
 				} else if dirOnly {
@@ -467,7 +506,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		var options []string
 		newLine, newPos, options, ok = ac.autoComplete(line, pos, key)
 		if len(options) > 0 {
-			fmt.Fprintf(raw, "\r\n%s\r\n%s%s", strings.Join(options, " "), "sftp> ", line)
+			fmt.Fprintf(raw, "\r\n%s\r\n%s%s", strings.Join(options, " "), prompt, line)
 			if d := len(line) - pos; d > 0 {
 				fmt.Fprintf(raw, "\x1b[%dD", d) // Move left d cols (CSI CUB)
 			}
