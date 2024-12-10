@@ -307,7 +307,19 @@ func (t *Terminal) SetAutoComplete(cb func(line string, pos int, key rune) (stri
 		var options []string
 		newLine, newPos, options, ok = cb(line, pos, key)
 		if len(options) > 0 {
-			fmt.Fprintf(t.tw, "\r\n%s\r\n%s%s", strings.Join(options, " "), t.defaultPrompt(), line)
+			var w int
+			for _, o := range options {
+				w = max(len(o)+1, w)
+			}
+			step := max(t.Cols()/w, 1)
+			fmt.Fprintf(t.tw, "\r\n")
+			for i, o := range options {
+				fmt.Fprintf(t.tw, "%*s ", -w, o)
+				if (i+1)%step == 0 || i == len(options)-1 {
+					fmt.Fprintf(t.tw, "\r\n")
+				}
+			}
+			fmt.Fprintf(t.tw, "%s%s", t.defaultPrompt(), line)
 			if d := len(line) - pos; d > 0 {
 				fmt.Fprintf(t.tw, "\x1b[%dD", d) // Move left d cols (CSI CUB)
 			}

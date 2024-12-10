@@ -506,7 +506,19 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		var options []string
 		newLine, newPos, options, ok = ac.autoComplete(line, pos, key)
 		if len(options) > 0 {
-			fmt.Fprintf(raw, "\r\n%s\r\n%s%s", strings.Join(options, " "), prompt, line)
+			var w int
+			for _, o := range options {
+				w = max(len(o)+1, w)
+			}
+			step := max(a.term.Cols()/w, 1)
+			fmt.Fprintf(raw, "\r\n")
+			for i, o := range options {
+				fmt.Fprintf(raw, "%*s ", -w, o)
+				if (i+1)%step == 0 || i == len(options)-1 {
+					fmt.Fprintf(raw, "\r\n")
+				}
+			}
+			fmt.Fprintf(raw, "%s%s", prompt, line)
 			if d := len(line) - pos; d > 0 {
 				fmt.Fprintf(raw, "\x1b[%dD", d) // Move left d cols (CSI CUB)
 			}
