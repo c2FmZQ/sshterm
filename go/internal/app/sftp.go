@@ -447,7 +447,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 			if err != nil {
 				return nil
 			}
-			dirOnly := args[0] == "cd" || args[0] == "rmdir"
+			dirOnly := args[0] == "cd" || args[0] == "rmdir" || args[0] == "put"
 			var words []string
 			for _, f := range ll {
 				name := strings.TrimPrefix(joinPath(dir, f.Name()), cwd+"/")
