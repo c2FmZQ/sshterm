@@ -402,10 +402,12 @@ func (a *App) hostKeyCallback(hostname string, key ssh.PublicKey) error {
 	case "2":
 		return nil
 	case "3":
-		a.data.Hosts[hostname] = &host{
-			Name: hostname,
-			Key:  hk,
+		h, ok := a.data.Hosts[hostname]
+		if !ok {
+			h = &host{Name: hostname}
+			a.data.Hosts[hostname] = h
 		}
+		h.Key = hk
 		return a.saveHosts()
 	default:
 		return errors.New("host key rejected by user")
