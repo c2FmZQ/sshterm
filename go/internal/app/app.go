@@ -27,6 +27,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"slices"
@@ -243,9 +244,7 @@ func (a *App) initDB() error {
 
 func (a *App) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-	}()
+	defer cancel()
 	a.ctx = ctx
 	a.term = terminal.New(ctx, a.cfg.Term)
 	defer a.term.Close()
@@ -268,6 +267,8 @@ func (a *App) Run() error {
 	if a.cfg.AutoConnect != nil {
 		jsutil.TryCatch(
 			func() { // try
+				ctx, cancel := context.WithCancel(ctx)
+				defer a.ctrlC(cancel)()
 				username := a.cfg.AutoConnect.Username
 				for username == "" {
 					username, _ = t.Prompt("Username: ")
@@ -378,9 +379,13 @@ func (a *App) Run() error {
 			jsutil.TryCatch(
 				func() { // try
 					ctx, cancel := context.WithCancel(a.ctx)
-					defer cancel()
+					defer a.ctrlC(cancel)()
 					if err := cmd.RunContext(ctx, args); err != nil {
-						t.Errorf("%v", err)
+						if errors.Is(err, context.Canceled) {
+							t.Errorf("Aborted")
+						} else {
+							t.Errorf("%v", err)
+						}
 					}
 					a.cfg.Term.Call("input", "\n")
 					a.cfg.Term.Call("input", "\n")
@@ -394,6 +399,22 @@ func (a *App) Run() error {
 	}
 }
 
+func (a *App) ctrlC(cancel context.CancelFunc) context.CancelFunc {
+	done := a.term.OnData(func(k string) any {
+		if a.inShell.Load() {
+			return nil
+		}
+		if k == "\x03" {
+			cancel()
+			return "\r"
+		}
+		return nil
+	})
+	return func() {
+		done()
+		cancel()
+	}
+}
 func (a *App) saveAll() error {
 	if err := a.saveAuthorities(); err != nil {
 		return err

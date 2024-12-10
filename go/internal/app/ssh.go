@@ -89,18 +89,6 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	done := t.OnData(func(k string) any {
-		if a.inShell.Load() {
-			return nil
-		}
-		if k == "\x03" {
-			cancel()
-			return "\r"
-		}
-		return nil
-	})
-	defer done()
-
 	client, err := a.sshClient(ctx, target, keyName, jumpHosts)
 	if err != nil {
 		return err
