@@ -35,6 +35,14 @@ func isSpace(r rune) bool {
 	return false
 }
 
+func isWild(r rune) bool {
+	switch r {
+	case '*', '?', '[':
+		return true
+	}
+	return false
+}
+
 type argType int
 
 const (
@@ -43,7 +51,22 @@ const (
 	argQuoted
 )
 
-func Parse(line string) ([]string, []string) {
+type Option func(*opt)
+type opt struct {
+	quoteWildcards bool
+}
+
+func QuoteWild() Option {
+	return func(o *opt) {
+		o.quoteWildcards = true
+	}
+}
+
+func Parse(line string, opts ...Option) ([]string, []string) {
+	var options opt
+	for _, o := range opts {
+		o(&options)
+	}
 	var args []string
 	var argsRaw []string
 
@@ -65,6 +88,9 @@ func Parse(line string) ([]string, []string) {
 			if r == 'n' {
 				r = '\n'
 			}
+			if options.quoteWildcards && isWild(r) {
+				buf += "\\"
+			}
 			buf += string(r)
 			escaped = false
 			got = argSingle
@@ -78,6 +104,16 @@ func Parse(line string) ([]string, []string) {
 			} else {
 				escaped = true
 			}
+			continue
+		}
+
+		if options.quoteWildcards && isWild(r) {
+			bufRaw += string(r)
+			if singleQuoted || doubleQuoted {
+				buf += "\\"
+			}
+			buf += string(r)
+			got = argSingle
 			continue
 		}
 
@@ -129,4 +165,28 @@ func Parse(line string) ([]string, []string) {
 		argsRaw = append(argsRaw, bufRaw)
 	}
 	return args, argsRaw
+}
+
+func UnquoteWild(s string) string {
+	var buf string
+	var esc bool
+	for _, r := range s {
+		if esc {
+			if !isWild(r) {
+				buf += "\\"
+			}
+			buf += string(r)
+			esc = false
+			continue
+		}
+		if r == '\\' {
+			esc = true
+			continue
+		}
+		buf += string(r)
+	}
+	if esc {
+		buf += "\\"
+	}
+	return buf
 }

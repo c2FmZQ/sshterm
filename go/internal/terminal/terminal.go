@@ -209,6 +209,10 @@ type resizeEvent struct {
 	rows int
 }
 
+func (t *Terminal) Raw() io.ReadWriter {
+	return t.tw
+}
+
 func (t *Terminal) defaultPrompt() string {
 	return string(t.vt.Escape.Green) + "sshterm> " + string(t.vt.Escape.Reset)
 }
