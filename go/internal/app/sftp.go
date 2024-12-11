@@ -94,7 +94,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 	t := term.NewTerminal(raw, "sftp> ")
 	cwd, err := client.Getwd()
 	if err != nil {
-		fmt.Fprintf(t, "Getwd: %v\n", err)
+		return fmt.Errorf("getwd: %w", err)
 	}
 	homeDir := cwd
 	lastDir := cwd
@@ -134,7 +134,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		{
 			Name:            "cd",
 			Usage:           "Change directory",
-			UsageText:       "cd [dir]",
+			UsageText:       "cd [dir]\ncd -\ncd",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
 				if ctx.Args().Len() > 1 {
@@ -187,14 +187,13 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
-				var e error
+				var e []error
 				for _, dir := range ctx.Args().Slice() {
 					if err := client.Mkdir(joinPath(cwd, dir)); err != nil {
-						fmt.Fprintf(t, "%q: %v\n", dir, err)
-						e = err
+						e = append(e, fmt.Errorf("%q: %w", dir, err))
 					}
 				}
-				return e
+				return errors.Join(e...)
 			},
 		},
 		{
@@ -207,19 +206,18 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
-				var e error
+				var e []error
 				for _, dir := range ctx.Args().Slice() {
 					if err := client.RemoveDirectory(joinPath(cwd, dir)); err != nil {
-						fmt.Fprintf(t, "%q: %v\n", dir, err)
-						e = err
+						e = append(e, fmt.Errorf("%q: %w", dir, err))
 					}
 				}
-				return e
+				return errors.Join(e...)
 			},
 		},
 		{
 			Name:            "rm",
-			Usage:           "Remove files",
+			Usage:           "Remove a file",
 			UsageText:       "rm <name>",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
@@ -227,14 +225,13 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
-				var e error
+				var e []error
 				for _, dir := range ctx.Args().Slice() {
 					if err := client.Remove(joinPath(cwd, dir)); err != nil {
-						fmt.Fprintf(t, "%q: %v\n", dir, err)
-						e = err
+						e = append(e, fmt.Errorf("%q: %w", dir, err))
 					}
 				}
-				return e
+				return errors.Join(e...)
 			},
 		},
 		{
@@ -251,7 +248,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 				dest := args[len(args)-1]
 				files := args[:len(args)-1]
 				if st, err := client.Stat(joinPath(cwd, dest)); err == nil && st.IsDir() {
-					var e error
+					var e []error
 					for _, f := range files {
 						if f == "" {
 							continue
@@ -259,12 +256,11 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 						src := joinPath(cwd, f)
 						dst := joinPath(cwd, dest, path.Base(src))
 						if err := client.Rename(src, dst); err != nil {
-							fmt.Fprintf(t, "%q -> %q: %v\n", src, dst, err)
-							e = err
+							e = append(e, fmt.Errorf("%q -> %q: %w", src, dst, err))
 							continue
 						}
 					}
-					return e
+					return errors.Join(e...)
 				}
 				if len(files) > 1 {
 					cli.ShowSubcommandHelp(ctx)
@@ -273,8 +269,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 				src := joinPath(cwd, files[0])
 				dst := joinPath(cwd, dest)
 				if err := client.Rename(src, dst); err != nil {
-					fmt.Fprintf(t, "%q -> %q: %v\n", src, dst, err)
-					return err
+					return fmt.Errorf("%q -> %q: %w", src, dst, err)
 				}
 				return nil
 			},
@@ -456,6 +451,9 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 			},
 		},
 	}
+	sort.Slice(commands, func(i, j int) bool {
+		return commands[i].Name < commands[j].Name
+	})
 	commandMap := make(map[string]*cli.App)
 	for _, c := range commands {
 		c.Writer = t
