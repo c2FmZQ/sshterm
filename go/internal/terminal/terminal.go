@@ -314,9 +314,10 @@ func (t *Terminal) SetAutoComplete(cb func(line string, pos int, key rune) (stri
 			step := max(t.Cols()/w, 1)
 			fmt.Fprintf(t.tw, "\r\n")
 			for i, o := range options {
-				fmt.Fprintf(t.tw, "%*s ", -w, o)
 				if (i+1)%step == 0 || i == len(options)-1 {
-					fmt.Fprintf(t.tw, "\r\n")
+					fmt.Fprintf(t.tw, "%s\r\n", o)
+				} else {
+					fmt.Fprintf(t.tw, "%*s", -w, o)
 				}
 			}
 			fmt.Fprintf(t.tw, "%s%s", t.defaultPrompt(), line)

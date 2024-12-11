@@ -513,9 +513,10 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 			step := max(a.term.Cols()/w, 1)
 			fmt.Fprintf(raw, "\r\n")
 			for i, o := range options {
-				fmt.Fprintf(raw, "%*s ", -w, o)
 				if (i+1)%step == 0 || i == len(options)-1 {
-					fmt.Fprintf(raw, "\r\n")
+					fmt.Fprintf(raw, "%s\r\n", o)
+				} else {
+					fmt.Fprintf(raw, "%*s", -w, o)
 				}
 			}
 			fmt.Fprintf(raw, "%s%s", prompt, line)
