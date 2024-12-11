@@ -462,7 +462,7 @@ func TestSFTP(t *testing.T) {
 		{Type: "mv hello.txt hello-world.txt\n", Expect: "sftp> "},
 		{Type: "ls -l\n", Expect: "(?s) hello-world.txt.*sftp> "},
 		{Type: "cd ..\n", Expect: "sftp> "},
-		{Type: "ls -l test\n", Expect: "(?s) test/hello-world.txt.*sftp> "},
+		{Type: "ls -l test\n", Expect: "(?s) hello-world.txt.*sftp> "},
 		{Type: "rm test/*\n", Expect: "sftp> "},
 		{Type: "rmdir test\n", Expect: "sftp> "},
 		{Type: "ls -l test\n", Expect: `(?s)"test": file does not exist.*sftp> `},
