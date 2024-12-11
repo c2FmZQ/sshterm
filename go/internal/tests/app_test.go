@@ -80,7 +80,7 @@ func TestHelp(t *testing.T) {
 
 	script(t, []line{
 		{Expect: prompt},
-		{Type: "help\n", Expect: "(?s)agent.*clear.*db.*file.*keys.*reload.*ssh.*> "},
+		{Type: "help\n", Expect: "(?s)agent.*clear.*db.*keys.*reload.*sftp.*ssh.*> "},
 		{Expect: prompt},
 		{Type: "exit\n"},
 	})
@@ -268,7 +268,9 @@ func TestSSH(t *testing.T) {
 		{Type: "ssh testuser@test-server foo bar\n", Expect: "exec: foo bar"},
 		{Wait: time.Second, Type: "\n\n"},
 
-		{Type: "file upload testuser@test-server:.\n", Expect: "100%"},
+		{Type: "sftp testuser@test-server\n", Expect: "sftp> "},
+		{Type: "put .\n", Expect: "100%"},
+		{Type: "exit\n"},
 
 		{Expect: prompt},
 		{Type: "exit\n"},
@@ -301,12 +303,14 @@ func TestDownload(t *testing.T) {
 		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 		{Type: "ep add test-server websocket\n", Expect: prompt},
-		{Type: "file upload testuser@test-server:.\n", Expect: `(?s)Host key for test-server.*Choice>`},
+		{Type: "sftp testuser@test-server\n", Expect: `(?s)Host key for test-server.*Choice>`},
 		{Type: "3\n", Expect: "Password: "},
-		{Type: "password\n", Expect: "100%"},
+		{Type: "password\n", Expect: "sftp> "},
+		{Type: "put\n", Expect: "100%"},
 
-		{Type: "file download testuser@test-server:hello-again.txt\n", Expect: "Password: "},
-		{Type: "password\n", Expect: "100%"},
+		{Type: "get hello-again.txt\n", Expect: "100%"},
+		{Expect: "sftp> "},
+		{Type: "exit\n"},
 
 		{Expect: prompt},
 		{Type: "exit\n"},
@@ -421,6 +425,48 @@ func TestJumpHosts(t *testing.T) {
 		{Expect: `(?s)Host certificate for baz is trusted.*Password: `},
 		{Type: "password\n", Expect: "exec: hello"},
 		{Wait: time.Second, Type: "\n\n"},
+
+		{Expect: prompt},
+		{Type: "exit\n"},
+	})
+	if err := <-result; err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
+}
+
+func TestSFTP(t *testing.T) {
+	a, err := app.New(appConfig)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	result := make(chan error)
+	go func() {
+		result <- a.Run()
+	}()
+
+	txt := []byte("Hello World!")
+	fileUploader.enqueue("hello.txt", "text/plain", int64(len(txt)), txt)
+
+	script(t, []line{
+		{Expect: prompt},
+		{Type: "db wipe\n", Expect: `Continue\?`},
+		{Type: "Y\n", Expect: prompt},
+		{Type: "ep add test-server websocket\n", Expect: prompt},
+		{Type: "sftp testuser@test-server\n", Expect: `(?s)Host key for test-server.*Choice>`},
+		{Type: "3\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "sftp> "},
+		{Type: "mkdir test\n", Expect: "sftp> "},
+		{Type: "put test\n", Expect: "100%"},
+		{Type: "cd test\n", Expect: "sftp> "},
+		{Type: "ls -l\n", Expect: "(?s) hello.txt.*sftp> "},
+		{Type: "mv hello.txt hello-world.txt\n", Expect: "sftp> "},
+		{Type: "ls -l\n", Expect: "(?s) hello-world.txt.*sftp> "},
+		{Type: "cd ..\n", Expect: "sftp> "},
+		{Type: "ls -l test\n", Expect: "(?s) test/hello-world.txt.*sftp> "},
+		{Type: "rm test/*\n", Expect: "sftp> "},
+		{Type: "rmdir test\n", Expect: "sftp> "},
+		{Type: "ls -l test\n", Expect: `(?s)"test": file does not exist.*sftp> `},
+		{Type: "exit\n"},
 
 		{Expect: prompt},
 		{Type: "exit\n"},

@@ -30,39 +30,49 @@ import (
 	"testing"
 )
 
-var testcases = []struct {
-	line        string
-	expected    []string
-	expectedRaw []string
-}{
-	{``, nil, nil},
-	{`""`, []string{``}, []string{`""`}},
-	{`''`, []string{``}, []string{`''`}},
-	{`var --bar=baz`, []string{`var`, `--bar=baz`}, []string{`var`, `--bar=baz`}},
-	{`var --bar="baz"`, []string{`var`, `--bar=baz`}, []string{`var`, `--bar="baz"`}},
-	{`var "--bar=baz"`, []string{`var`, `--bar=baz`}, []string{`var`, `"--bar=baz"`}},
-	{`var "--bar='baz'"`, []string{`var`, `--bar='baz'`}, []string{`var`, `"--bar='baz'"`}},
-	{"var --bar=`baz`", []string{`var`, "--bar=`baz`"}, []string{`var`, "--bar=`baz`"}},
-	{`var "--bar=\"baz'"`, []string{`var`, `--bar="baz'`}, []string{`var`, `"--bar=\"baz'"`}},
-	{`var "--bar=\'baz\'"`, []string{`var`, `--bar='baz'`}, []string{`var`, `"--bar=\'baz\'"`}},
-	{`var --bar='\'`, []string{`var`, `--bar=\`}, []string{`var`, `--bar='\'`}},
-	{`var "--bar baz"`, []string{`var`, `--bar baz`}, []string{`var`, `"--bar baz"`}},
-	{`var --"bar baz"`, []string{`var`, `--bar baz`}, []string{`var`, `--"bar baz"`}},
-	{`var  --"bar baz"`, []string{`var`, `--bar baz`}, []string{`var`, `--"bar baz"`}},
-	{`a "b"`, []string{`a`, `b`}, []string{`a`, `"b"`}},
-	{`a " b "`, []string{`a`, ` b `}, []string{`a`, `" b "`}},
-	{`a "   "`, []string{`a`, `   `}, []string{`a`, `"   "`}},
-	{`a 'b'`, []string{`a`, `b`}, []string{`a`, `'b'`}},
-	{`a ' b '`, []string{`a`, ` b `}, []string{`a`, `' b '`}},
-	{`a '   '`, []string{`a`, `   `}, []string{`a`, `'   '`}},
-	{"foo bar\\  ", []string{`foo`, `bar `}, []string{`foo`, `bar\ `}},
-	{`foo "" bar ''`, []string{`foo`, ``, `bar`, ``}, []string{`foo`, `""`, `bar`, `''`}},
-	{`foo \\`, []string{`foo`, `\`}, []string{`foo`, `\\`}},
-	{`foo \& bar`, []string{`foo`, `&`, `bar`}, []string{`foo`, `\&`, `bar`}},
-	{`sh -c "printf 'Hello\tworld\n'"`, []string{`sh`, `-c`, "printf 'Hello\tworld\n'"}, []string{`sh`, `-c`, `"printf 'Hello\tworld\n'"`}},
-}
-
 func TestSimple(t *testing.T) {
+	var testcases = []struct {
+		line        string
+		expected    []string
+		expectedRaw []string
+	}{
+		{``, nil, nil},
+		{`""`, []string{``}, []string{`""`}},
+		{`''`, []string{``}, []string{`''`}},
+		{`var --bar=baz`, []string{`var`, `--bar=baz`}, []string{`var`, `--bar=baz`}},
+		{`var --bar="baz"`, []string{`var`, `--bar=baz`}, []string{`var`, `--bar="baz"`}},
+		{`var "--bar=baz"`, []string{`var`, `--bar=baz`}, []string{`var`, `"--bar=baz"`}},
+		{`var "--bar='baz'"`, []string{`var`, `--bar='baz'`}, []string{`var`, `"--bar='baz'"`}},
+		{"var --bar=`baz`", []string{`var`, "--bar=`baz`"}, []string{`var`, "--bar=`baz`"}},
+		{`var "--bar=\"baz'"`, []string{`var`, `--bar="baz'`}, []string{`var`, `"--bar=\"baz'"`}},
+		{`var "--bar=\'baz\'"`, []string{`var`, `--bar='baz'`}, []string{`var`, `"--bar=\'baz\'"`}},
+		{`var --bar='\'`, []string{`var`, `--bar=\`}, []string{`var`, `--bar='\'`}},
+		{`var "--bar baz"`, []string{`var`, `--bar baz`}, []string{`var`, `"--bar baz"`}},
+		{`var --"bar baz"`, []string{`var`, `--bar baz`}, []string{`var`, `--"bar baz"`}},
+		{`var  --"bar baz"`, []string{`var`, `--bar baz`}, []string{`var`, `--"bar baz"`}},
+		{`a "b"`, []string{`a`, `b`}, []string{`a`, `"b"`}},
+		{`a " b "`, []string{`a`, ` b `}, []string{`a`, `" b "`}},
+		{`a "   "`, []string{`a`, `   `}, []string{`a`, `"   "`}},
+		{`a 'b'`, []string{`a`, `b`}, []string{`a`, `'b'`}},
+		{`a ' b '`, []string{`a`, ` b `}, []string{`a`, `' b '`}},
+		{`a '   '`, []string{`a`, `   `}, []string{`a`, `'   '`}},
+		{"foo bar\\  ", []string{`foo`, `bar `}, []string{`foo`, `bar\ `}},
+		{`foo "" bar ''`, []string{`foo`, ``, `bar`, ``}, []string{`foo`, `""`, `bar`, `''`}},
+		{`foo \\`, []string{`foo`, `\`}, []string{`foo`, `\\`}},
+		{`foo \& bar`, []string{`foo`, `&`, `bar`}, []string{`foo`, `\&`, `bar`}},
+		{`sh -c "printf 'Hello\tworld\n'"`, []string{`sh`, `-c`, "printf 'Hello\tworld\n'"}, []string{`sh`, `-c`, `"printf 'Hello\tworld\n'"`}},
+
+		{`ls *`, []string{`ls`, `*`}, []string{`ls`, `*`}},
+		{`ls "*"`, []string{`ls`, `*`}, []string{`ls`, `"*"`}},
+		{`ls "\*"`, []string{`ls`, `*`}, []string{`ls`, `"\*"`}},
+		{`ls '\*'`, []string{`ls`, `\*`}, []string{`ls`, `'\*'`}},
+		{`ls "foo*"`, []string{`ls`, `foo*`}, []string{`ls`, `"foo*"`}},
+		{`ls foo*`, []string{`ls`, `foo*`}, []string{`ls`, `foo*`}},
+		{`foo*[a-b]?`, []string{`foo*[a-b]?`}, []string{`foo*[a-b]?`}},
+		{`foo*[a-b]\?`, []string{`foo*[a-b]?`}, []string{`foo*[a-b]\?`}},
+		{`"foo*[a-b]?"`, []string{`foo*[a-b]?`}, []string{`"foo*[a-b]?"`}},
+	}
+
 	for _, testcase := range testcases {
 		args, raw := Parse(testcase.line)
 		if !reflect.DeepEqual(args, testcase.expected) {
@@ -70,6 +80,78 @@ func TestSimple(t *testing.T) {
 		}
 		if !reflect.DeepEqual(raw, testcase.expectedRaw) {
 			t.Fatalf("Expected raw %#v for %q, but got %#v:", testcase.expectedRaw, testcase.line, raw)
+		}
+	}
+}
+
+func TestWild(t *testing.T) {
+	var testcases = []struct {
+		line        string
+		expected    []string
+		expectedRaw []string
+	}{
+		{``, nil, nil},
+		{`""`, []string{``}, []string{`""`}},
+		{`''`, []string{``}, []string{`''`}},
+		{`var --bar=baz`, []string{`var`, `--bar=baz`}, []string{`var`, `--bar=baz`}},
+		{`var --bar="baz"`, []string{`var`, `--bar=baz`}, []string{`var`, `--bar="baz"`}},
+		{`var "--bar=baz"`, []string{`var`, `--bar=baz`}, []string{`var`, `"--bar=baz"`}},
+		{`var "--bar='baz'"`, []string{`var`, `--bar='baz'`}, []string{`var`, `"--bar='baz'"`}},
+		{"var --bar=`baz`", []string{`var`, "--bar=`baz`"}, []string{`var`, "--bar=`baz`"}},
+		{`var "--bar=\"baz'"`, []string{`var`, `--bar="baz'`}, []string{`var`, `"--bar=\"baz'"`}},
+		{`var "--bar=\'baz\'"`, []string{`var`, `--bar='baz'`}, []string{`var`, `"--bar=\'baz\'"`}},
+		{`var --bar='\'`, []string{`var`, `--bar=\`}, []string{`var`, `--bar='\'`}},
+		{`var "--bar baz"`, []string{`var`, `--bar baz`}, []string{`var`, `"--bar baz"`}},
+		{`var --"bar baz"`, []string{`var`, `--bar baz`}, []string{`var`, `--"bar baz"`}},
+		{`var  --"bar baz"`, []string{`var`, `--bar baz`}, []string{`var`, `--"bar baz"`}},
+		{`a "b"`, []string{`a`, `b`}, []string{`a`, `"b"`}},
+		{`a " b "`, []string{`a`, ` b `}, []string{`a`, `" b "`}},
+		{`a "   "`, []string{`a`, `   `}, []string{`a`, `"   "`}},
+		{`a 'b'`, []string{`a`, `b`}, []string{`a`, `'b'`}},
+		{`a ' b '`, []string{`a`, ` b `}, []string{`a`, `' b '`}},
+		{`a '   '`, []string{`a`, `   `}, []string{`a`, `'   '`}},
+		{"foo bar\\  ", []string{`foo`, `bar `}, []string{`foo`, `bar\ `}},
+		{`foo "" bar ''`, []string{`foo`, ``, `bar`, ``}, []string{`foo`, `""`, `bar`, `''`}},
+		{`foo \\`, []string{`foo`, `\`}, []string{`foo`, `\\`}},
+		{`foo \& bar`, []string{`foo`, `&`, `bar`}, []string{`foo`, `\&`, `bar`}},
+		{`sh -c "printf 'Hello\tworld\n'"`, []string{`sh`, `-c`, "printf 'Hello\tworld\n'"}, []string{`sh`, `-c`, `"printf 'Hello\tworld\n'"`}},
+
+		{`ls *`, []string{`ls`, `*`}, []string{`ls`, `*`}},
+		{`ls "*"`, []string{`ls`, `\*`}, []string{`ls`, `"*"`}},
+		{`ls "\*"`, []string{`ls`, `\*`}, []string{`ls`, `"\*"`}},
+		{`ls '\*'`, []string{`ls`, `\\*`}, []string{`ls`, `'\*'`}},
+		{`ls "foo*"`, []string{`ls`, `foo\*`}, []string{`ls`, `"foo*"`}},
+		{`ls foo*`, []string{`ls`, `foo*`}, []string{`ls`, `foo*`}},
+		{`foo*[a-b]?`, []string{`foo*[a-b]?`}, []string{`foo*[a-b]?`}},
+		{`foo*[a-b]\?`, []string{`foo*[a-b]\?`}, []string{`foo*[a-b]\?`}},
+		{`"foo*[a-b]?"`, []string{`foo\*\[a-b]\?`}, []string{`"foo*[a-b]?"`}},
+	}
+
+	for _, testcase := range testcases {
+		args, raw := Parse(testcase.line, QuoteWild())
+		if !reflect.DeepEqual(args, testcase.expected) {
+			t.Fatalf("Expected %#v for %q, but got %#v:", testcase.expected, testcase.line, args)
+		}
+		if !reflect.DeepEqual(raw, testcase.expectedRaw) {
+			t.Fatalf("Expected raw %#v for %q, but got %#v:", testcase.expectedRaw, testcase.line, raw)
+		}
+	}
+}
+
+func TestUnquoteWild(t *testing.T) {
+	for _, tc := range []struct {
+		line     string
+		expected string
+	}{
+		{`foo`, `foo`},
+		{`foo*`, `foo*`},
+		{`foo\*`, `foo*`},
+		{`foo\`, `foo\`},
+		{`foo\\*`, `foo\\*`},
+		{`foo\*\?\[`, `foo*?[`},
+	} {
+		if got, want := UnquoteWild(tc.line), tc.expected; got != want {
+			t.Errorf("UnquoteWild(%q) = %q, want %q", tc.line, got, want)
 		}
 	}
 }

@@ -19,7 +19,7 @@ Supported features:
 * [x] Keyboard interactive authentication.
 * [x] Public key authentication, with or without certificates.
 * [x] In-memory SSH agent and agent forwarding.
-* [x] Streaming upload and download.
+* [x] SFTP client with Streaming upload and download.
 * [x] Accept host certificates signed by a trusted authority.
 
 Not implemented:

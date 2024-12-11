@@ -7,6 +7,7 @@
 * Add an option to automatically fetch and refresh user certificates from an identity provider. This feature is intended to be used with tlsproxy's built-in SSH Certificate Authority. See `keys generate -h`
 * Add an option to connect to remote servers via jump hosts. See `ssh --help`.
 * Read a preset configuration from config.json, if present. See `config/config.go` and `docroot/config.json.example`.
+* Replace the `file` command with `sftp`, which implements a basic sftp client.
 
 ## v0.5.1
 
