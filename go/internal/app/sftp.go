@@ -431,7 +431,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 						list = append(list, file{name: strings.TrimPrefix(arg, cwd+"/"), FileInfo: info})
 						continue
 					}
-					ll, err := client.ReadDir(joinPath(cwd, arg))
+					ll, err := client.ReadDirContext(ctx.Context, joinPath(cwd, arg))
 					if err != nil {
 						fmt.Fprintf(t, "%q: %v\n", arg, err)
 						continue
@@ -444,7 +444,13 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 					return list[i].name < list[j].name
 				})
 				for _, f := range list {
-					fmt.Fprintf(t, "%s %10d %s %s\n", f.Mode(), f.Size(), f.ModTime().Format("Jan 02 2006"), f.name)
+					var extra string
+					if f.Mode()&os.ModeSymlink != 0 {
+						if link, err := client.ReadLink(joinPath(cwd, f.name)); err == nil {
+							extra = " -> " + link
+						}
+					}
+					fmt.Fprintf(t, "%s %10d %s %s%s\n", f.Mode(), f.Size(), f.ModTime().Format("Jan 02 2006"), f.name, extra)
 				}
 				return nil
 			},
@@ -477,7 +483,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 			if last != "" && !strings.HasSuffix(last, "/") {
 				dir, _ = path.Split(dir)
 			}
-			ll, err := client.ReadDir(dir)
+			ll, err := client.ReadDirContext(ctx, dir)
 			if err != nil {
 				return nil
 			}
@@ -485,6 +491,12 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 			var words []string
 			for _, f := range ll {
 				name := strings.TrimSuffix(dir, "/") + "/" + f.Name()
+				if f.Mode()&os.ModeSymlink != 0 {
+					st, err := client.Stat(name)
+					if err == nil {
+						f = st
+					}
+				}
 				if strings.HasPrefix(last, "~/") && strings.HasPrefix(name, homeDir+"/") {
 					name = "~" + name[len(homeDir):]
 				} else if !strings.HasPrefix(last, "/") {
