@@ -198,7 +198,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 				},
 			},
 			Action: func(ctx *cli.Context) error {
-				if ctx.Args().Len() != 1 {
+				if ctx.Args().Len() == 0 {
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}

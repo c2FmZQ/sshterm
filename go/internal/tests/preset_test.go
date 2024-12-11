@@ -211,11 +211,4 @@ func TestPresetKeys(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatalf("Run(): %v", err)
 	}
-
-	if a, err = app.New(&cfg); err != nil {
-		t.Fatalf("app.New: %v", err)
-	}
-	go func() {
-		result <- a.Run()
-	}()
 }
