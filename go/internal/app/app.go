@@ -95,7 +95,7 @@ func New(cfg *Config) (*App, error) {
 			},
 		},
 		app.sshCommand(),
-		app.fileCommand(),
+		app.sftpCommand(),
 		app.caCommand(),
 		app.epCommand(),
 		app.hostsCommand(),
@@ -557,7 +557,7 @@ func (a *App) autoCompleteWords(args []string) []string {
 		}
 		return words
 	}
-	if (args[0] == "ssh" || args[0] == "file") && strings.Index(last, "@") > 0 {
+	if (args[0] == "ssh" || args[0] == "sftp") && strings.Index(last, "@") > 0 {
 		u, h, _ := strings.Cut(last, "@")
 		var words []string
 		for _, ep := range a.data.Endpoints {

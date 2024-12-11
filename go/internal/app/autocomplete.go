@@ -64,7 +64,7 @@ func (ac *autoCompleter) autoCompleteLeft(line string) (newLine string, newPos i
 	case 1:
 		lastWord := argsRaw[len(argsRaw)-1]
 		newLine = line[:len(line)-len(lastWord)] + maybeQuote(m[0])
-		if !strings.HasSuffix(m[0], "=") {
+		if !strings.HasSuffix(m[0], "=") && !strings.HasSuffix(m[0], "/") {
 			newLine += " "
 		}
 		newPos = len(newLine)
