@@ -33,8 +33,10 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/pkg/sftp"
 	"github.com/urfave/cli/v2"
@@ -47,7 +49,7 @@ import (
 func (a *App) sftpCommand() *cli.App {
 	return &cli.App{
 		Name:            "sftp",
-		Usage:           "Start an SFTP connection with a remote server.",
+		Usage:           "Start an SFTP connection",
 		UsageText:       "sftp [-i <keyname>] <username>@<hostname>",
 		Description:     "The sftp command is used to copy files to or from a remote server.",
 		HideHelpCommand: true,
@@ -153,6 +155,13 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 					setPrompt()
 					return nil
 				}
+				st, err := client.Stat(joinPath(cwd, dir))
+				if err != nil {
+					return err
+				}
+				if !st.IsDir() {
+					return fmt.Errorf("%s is not a directory", dir)
+				}
 				realDir, err := client.RealPath(joinPath(cwd, dir))
 				if err != nil {
 					return err
@@ -180,8 +189,14 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		{
 			Name:            "mkdir",
 			Usage:           "Create a directory",
-			UsageText:       "mkdir <name>",
+			UsageText:       "mkdir <name> [<name> ...]",
 			HideHelpCommand: true,
+			Flags: []cli.Flag{
+				&cli.BoolFlag{
+					Name:  "p",
+					Usage: "Also create parent directories.",
+				},
+			},
 			Action: func(ctx *cli.Context) error {
 				if ctx.Args().Len() != 1 {
 					cli.ShowSubcommandHelp(ctx)
@@ -189,7 +204,13 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 				}
 				var e []error
 				for _, dir := range ctx.Args().Slice() {
-					if err := client.Mkdir(joinPath(cwd, dir)); err != nil {
+					var err error
+					if ctx.Bool("p") {
+						err = client.MkdirAll(joinPath(cwd, dir))
+					} else {
+						err = client.Mkdir(joinPath(cwd, dir))
+					}
+					if err != nil {
 						e = append(e, fmt.Errorf("%q: %w", dir, err))
 					}
 				}
@@ -199,7 +220,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		{
 			Name:            "rmdir",
 			Usage:           "Remove a directory",
-			UsageText:       "rmdir <name>",
+			UsageText:       "rmdir <name> [<name> ...]",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
 				if ctx.Args().Len() == 0 {
@@ -218,8 +239,14 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		{
 			Name:            "rm",
 			Usage:           "Remove a file",
-			UsageText:       "rm <name>",
+			UsageText:       "rm <name> [<name> ...]",
 			HideHelpCommand: true,
+			Flags: []cli.Flag{
+				&cli.BoolFlag{
+					Name:  "R",
+					Usage: "Remove files and directories recursively.",
+				},
+			},
 			Action: func(ctx *cli.Context) error {
 				if ctx.Args().Len() == 0 {
 					cli.ShowSubcommandHelp(ctx)
@@ -227,7 +254,13 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 				}
 				var e []error
 				for _, dir := range ctx.Args().Slice() {
-					if err := client.Remove(joinPath(cwd, dir)); err != nil {
+					var err error
+					if ctx.Bool("R") {
+						err = client.RemoveAll(joinPath(cwd, dir))
+					} else {
+						err = client.Remove(joinPath(cwd, dir))
+					}
+					if err != nil {
 						e = append(e, fmt.Errorf("%q: %w", dir, err))
 					}
 				}
@@ -237,7 +270,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		{
 			Name:            "mv",
 			Usage:           "Rename a file",
-			UsageText:       "mv <oldname> <newname>\nmv <name> <directory>",
+			UsageText:       "mv <oldname> <newname>\nmv <name> [<name>...] <directory>",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
 				if ctx.Args().Len() < 2 {
@@ -275,9 +308,58 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 			},
 		},
 		{
+			Name:            "chmod",
+			Usage:           "Change permissions",
+			UsageText:       "chmod <mode> <name> [<name>...]",
+			HideHelpCommand: true,
+			Action: func(ctx *cli.Context) error {
+				if ctx.Args().Len() < 2 {
+					cli.ShowSubcommandHelp(ctx)
+					return nil
+				}
+				args := ctx.Args().Slice()
+				mode, err := strconv.ParseInt(args[0], 8, 32)
+				if err != nil {
+					return fmt.Errorf("mode: %w", err)
+				}
+				var e []error
+				for _, f := range args[1:] {
+					if err := client.Chmod(joinPath(cwd, f), os.FileMode(mode&0o1777)); err != nil {
+						e = append(e, err)
+					}
+				}
+				return errors.Join(e...)
+			},
+		},
+		{
+			Name:            "ln",
+			Usage:           "Create a link",
+			UsageText:       "ln [-s] <oldname> <newname>",
+			HideHelpCommand: true,
+			Flags: []cli.Flag{
+				&cli.BoolFlag{
+					Name:  "s",
+					Usage: "Create a symbolic link.",
+				},
+			},
+			Action: func(ctx *cli.Context) error {
+				if ctx.Args().Len() != 2 {
+					cli.ShowSubcommandHelp(ctx)
+					return nil
+				}
+				oldName := ctx.Args().Get(0)
+				newName := ctx.Args().Get(1)
+				if ctx.Bool("s") {
+					return client.Symlink(oldName, joinPath(cwd, newName))
+				}
+				return client.Link(joinPath(cwd, oldName), joinPath(cwd, newName))
+			},
+		},
+		{
 			Name:            "put",
 			Usage:           "Upload a file",
-			UsageText:       "put [dest]",
+			UsageText:       "put\nput <dir>\nput <name>",
+			Description:     "The put command initiates the upload of one of more files. Without\narguments, it uploads to the current directory. With the name of an\nexisting directory as argument, it uploads to that directory. With\na non-existent file name, it upload one file to that file name.",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
 				if ctx.Args().Len() > 1 {
@@ -346,7 +428,8 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		{
 			Name:            "get",
 			Usage:           "Download a file",
-			UsageText:       "get <name>",
+			UsageText:       "get <name> [<name>...]",
+			Description:     "The get command initiates the download of one of more files.",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
 				if ctx.Args().Len() == 0 {
@@ -398,7 +481,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		{
 			Name:            "ls",
 			Usage:           "List files",
-			UsageText:       "ls [glob]",
+			UsageText:       "ls [<name>...]",
 			HideHelpCommand: true,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
@@ -415,37 +498,100 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 					name string
 					os.FileInfo
 				}
-				var list []file
+				var files, dirs []file
 				for _, arg := range args {
 					info, err := client.Lstat(joinPath(cwd, arg))
 					if err != nil {
 						fmt.Fprintf(t, "%q: %v\n", arg, err)
 						continue
 					}
-					if !info.IsDir() {
-						list = append(list, file{name: strings.TrimPrefix(arg, cwd+"/"), FileInfo: info})
-						continue
+					if info.IsDir() || (info.Mode()&os.ModeSymlink != 0 && strings.HasSuffix(arg, "/")) {
+						dirs = append(dirs, file{name: arg, FileInfo: info})
+					} else {
+						files = append(files, file{name: strings.TrimPrefix(arg, cwd+"/"), FileInfo: info})
 					}
-					ll, err := client.ReadDirContext(ctx.Context, joinPath(cwd, arg))
+				}
+				now := time.Now().UTC()
+				longFormat := func(files []file) {
+					var szUID, szGID, szSize int
+					for _, f := range files {
+						szSize = max(szSize, len(fmt.Sprintf("%d", f.Size())))
+						if st, ok := f.Sys().(*sftp.FileStat); ok {
+							szUID = max(szUID, len(fmt.Sprintf("%d", st.UID)))
+							szGID = max(szGID, len(fmt.Sprintf("%d", st.GID)))
+						}
+					}
+					for _, f := range files {
+						var extra string
+						if f.Mode()&os.ModeSymlink != 0 {
+							if link, err := client.ReadLink(joinPath(cwd, f.name)); err == nil {
+								extra = " -> " + link
+							}
+						}
+						var ts string
+						if now.Sub(f.ModTime()) > 180*24*time.Hour {
+							ts = f.ModTime().Format("Jan 02  2006")
+						} else {
+							ts = f.ModTime().Format("Jan 02 15:04")
+						}
+						var uid, gid uint32
+						if st, ok := f.Sys().(*sftp.FileStat); ok {
+							uid = st.UID
+							gid = st.GID
+						}
+						fmt.Fprintf(t, "%s %*d %*d %*d %s %s%s\n", f.Mode(), szUID, uid, szGID, gid, szSize, f.Size(), ts, f.name, extra)
+					}
+				}
+				shortFormat := func(files []file) {
+					if len(files) == 0 {
+						return
+					}
+					var w int
+					for _, f := range files {
+						w = max(len(f.name)+1, w)
+					}
+					step := max(a.term.Cols()/w, 1)
+					for i, f := range files {
+						if (i+1)%step == 0 || i == len(files)-1 {
+							fmt.Fprintf(t, "%s\n", f.name)
+						} else {
+							fmt.Fprintf(t, "%*s", -w, f.name)
+						}
+					}
+				}
+				displayFiles := func(files []file) {
+					if ctx.Bool("l") {
+						longFormat(files)
+					} else {
+						shortFormat(files)
+					}
+				}
+				var haveOutput bool
+				if len(files) > 0 {
+					haveOutput = true
+					displayFiles(files)
+				}
+				for _, d := range dirs {
+					if haveOutput {
+						fmt.Fprintln(t)
+					}
+					haveOutput = true
+					if len(files)+len(dirs) > 1 {
+						fmt.Fprintf(t, "%s:\n", d.name)
+					}
+					var files []file
+					ll, err := client.ReadDirContext(ctx.Context, joinPath(cwd, d.name))
 					if err != nil {
-						fmt.Fprintf(t, "%q: %v\n", arg, err)
+						fmt.Fprintf(t, "%q: %v\n", d.name, err)
 						continue
 					}
 					for _, info := range ll {
-						list = append(list, file{name: strings.TrimPrefix(joinPath(cwd, arg, info.Name()), cwd+"/"), FileInfo: info})
+						files = append(files, file{name: info.Name(), FileInfo: info})
 					}
-				}
-				sort.Slice(list, func(i, j int) bool {
-					return list[i].name < list[j].name
-				})
-				for _, f := range list {
-					var extra string
-					if f.Mode()&os.ModeSymlink != 0 {
-						if link, err := client.ReadLink(joinPath(cwd, f.name)); err == nil {
-							extra = " -> " + link
-						}
-					}
-					fmt.Fprintf(t, "%s %10d %s %s%s\n", f.Mode(), f.Size(), f.ModTime().Format("Jan 02 2006"), f.name, extra)
+					sort.Slice(files, func(i, j int) bool {
+						return strings.ToLower(files[i].name) < strings.ToLower(files[j].name)
+					})
+					displayFiles(files)
 				}
 				return nil
 			},
@@ -555,13 +701,26 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 				args = append(args, shellwords.UnquoteWild(pa))
 				continue
 			}
+			dirOnly := strings.HasSuffix(pa, "/")
 			matches, err := client.Glob(joinPath(cwd, pa))
-			if err != nil || len(matches) == 0 {
+			if err != nil {
 				args = append(args, shellwords.UnquoteWild(pa))
 				continue
 			}
+			count := 0
 			for _, m := range matches {
+				if dirOnly {
+					if st, err := client.Stat(m); err == nil && st.IsDir() {
+						count++
+						args = append(args, strings.TrimPrefix(m+"/", cwd+"/"))
+					}
+					continue
+				}
+				count++
 				args = append(args, strings.TrimPrefix(m, cwd+"/"))
+			}
+			if count == 0 {
+				args = append(args, shellwords.UnquoteWild(pa))
 			}
 		}
 		switch name := args[0]; name {
