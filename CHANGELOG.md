@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## v0.6.1
+
+### :wrench: Bug fix
+
+* Fix the sftp mkdir command to accept more than one argument.
+
 ## v0.6.0
 
 ### :star2: New features
