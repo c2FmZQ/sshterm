@@ -40,6 +40,7 @@ func TestTab(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	content := []byte("hello world 1 2 3")
 	fileUploader.enqueue("foo.txt", "text/plain", int64(len(content)), content)
