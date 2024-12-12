@@ -77,6 +77,7 @@ func TestHelp(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	script(t, []line{
 		{Expect: prompt},
@@ -98,6 +99,7 @@ func TestEndpoint(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	script(t, []line{
 		{Expect: prompt},
@@ -125,6 +127,7 @@ func TestKeys(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	downloadCh := fileDownloader.wait()
 
@@ -178,6 +181,7 @@ func TestDB(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	downloadCh := fileDownloader.wait()
 
@@ -228,6 +232,7 @@ func TestSSH(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	txt := []byte("Hello World!")
 	fileUploader.enqueue("hello.txt", "text/plain", int64(len(txt)), txt)
@@ -292,6 +297,7 @@ func TestDownload(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	txt := []byte("Hello World!")
 	fileUploader.enqueue("hello-again.txt", "text/plain", int64(len(txt)), txt)
@@ -333,6 +339,7 @@ func TestHostCerts(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	resp, err := http.Get("/cakey")
 	if err != nil {
@@ -396,6 +403,7 @@ func TestJumpHosts(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	resp, err := http.Get("/cakey")
 	if err != nil {
@@ -443,6 +451,7 @@ func TestSFTP(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	txt := []byte("Hello World!")
 	fileUploader.enqueue("hello.txt", "text/plain", int64(len(txt)), txt)

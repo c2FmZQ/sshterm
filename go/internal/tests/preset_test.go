@@ -54,6 +54,7 @@ func TestPresetPersist(t *testing.T) {
 			go func() {
 				result <- a.Run()
 			}()
+			t.Cleanup(a.Stop)
 
 			var expect string
 			if tc {
@@ -120,6 +121,7 @@ func TestPresetAuthorities(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	script(t, []line{
 		{Type: "db persist on\n", Expect: prompt},
@@ -143,6 +145,7 @@ func TestPresetAuthorities(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	script(t, []line{
 		{Type: "ca list\n", Expect: `testca ` + regexp.QuoteMeta(fp) + ` \*\.example\.com`},
@@ -200,6 +203,7 @@ func TestPresetKeys(t *testing.T) {
 	go func() {
 		result <- a.Run()
 	}()
+	t.Cleanup(a.Stop)
 
 	script(t, []line{
 		{Type: "ssh testuser@myserver.example.com foo\n", Expect: `(?s)Host certificate for myserver.example.com is trusted.\r\nexec: foo`},
@@ -211,11 +215,4 @@ func TestPresetKeys(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatalf("Run(): %v", err)
 	}
-
-	if a, err = app.New(&cfg); err != nil {
-		t.Fatalf("app.New: %v", err)
-	}
-	go func() {
-		result <- a.Run()
-	}()
 }

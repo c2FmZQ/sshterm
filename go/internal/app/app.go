@@ -116,6 +116,7 @@ func New(cfg *Config) (*App, error) {
 type App struct {
 	cfg           Config
 	ctx           context.Context
+	cancel        context.CancelFunc
 	term          *terminal.Terminal
 	agent         agent.Agent
 	autoCompleter *autoCompleter
@@ -242,10 +243,17 @@ func (a *App) initDB() error {
 	return nil
 }
 
+func (a *App) Stop() {
+	if a.cancel != nil {
+		a.cancel()
+	}
+}
+
 func (a *App) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	a.ctx = ctx
+	a.cancel = cancel
 	a.term = terminal.New(ctx, a.cfg.Term)
 	defer a.term.Close()
 	t := a.term

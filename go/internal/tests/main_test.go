@@ -289,6 +289,7 @@ func (t *termIO) Expect(tt *testing.T, re string) []string {
 		t.expectCh = nil
 		return result
 	case <-time.After(5 * time.Second):
+		appConfig.Term.Call("writeln", fmt.Sprintf("\r\nexpecting %q, timed out\r\nbuffer: %q", re, t.buf.String()))
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		t.expect = nil
