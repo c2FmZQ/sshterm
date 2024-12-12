@@ -293,7 +293,7 @@ func (t *termIO) Expect(tt *testing.T, re string) []string {
 		defer t.mu.Unlock()
 		t.expect = nil
 		t.expectCh = nil
-		tt.Fatalf("expecting %q, timed out", re)
+		tt.Fatalf("expecting %q, timed out\nbuffer: %q", re, t.buf.String())
 	}
 	return nil
 }
