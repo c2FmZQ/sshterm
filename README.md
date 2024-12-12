@@ -41,7 +41,7 @@ If all goes well, all the needed files will be in the `docroot` directory.
 
 ```
 $ ls docroot/
-index.html  ssh.js  ssh.wasm  wasm_exec.js  xterm.css  xterm.js
+config.json.example  index.html  LICENSE.xterm.txt  ssh.js  ssh.png  ssh.wasm  ssh.webmanifest  stream-helper.js  tests.html  tests.wasm  wasm_exec.js  xterm.css  xterm.js
 ```
 
 ### Download a release package
@@ -73,6 +73,7 @@ The first time you connect, the server endpoint must be configured when the `ep`
 ```bash
 ep add myserver wss://ssh.EXAMPLE.COM/myserver
 ```
+(Alternatively, create a `config.json` file and set the endpoint there)
 
 Then, you can SSH to your server with:
 
