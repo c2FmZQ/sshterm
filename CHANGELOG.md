@@ -1,5 +1,12 @@
 # SSH Term Release Notes
 
+## v0.6.2
+
+### :wrench: Misc
+
+* Update go v1.23.5
+* Update go dependencies
+
 ## v0.6.1
 
 ### :wrench: Bug fix
