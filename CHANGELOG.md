@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :star2: New features
+
+* Add light and dark themes. (`set theme -h`)
+
 ## v0.6.2
 
 ### :wrench: Misc

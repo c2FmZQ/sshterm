@@ -30,6 +30,9 @@ type Config struct {
 	// "sshterm".
 	DBName string `json:"dbName,omitempty"`
 
+	// Theme is the default color theme.
+	Theme string `json:"theme,omitempty"`
+
 	// Persist, if set, forces database persistence to be on or off and
 	// cannot be changed from the app.
 	Persist *bool `json:"persist,omitempty"`

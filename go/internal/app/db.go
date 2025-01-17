@@ -111,6 +111,7 @@ func (a *App) dbCommand() *cli.App {
 					a.data.Endpoints = make(map[string]*endpoint)
 					a.data.Hosts = make(map[string]*host)
 					a.data.Keys = make(map[string]*key)
+					a.data.Params = make(map[string]any)
 					if err := a.saveAll(); err != nil {
 						return err
 					}
