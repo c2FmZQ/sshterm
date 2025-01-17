@@ -1,5 +1,6 @@
 {
 	"persist": false,
+	"theme": "dark",
 	"certificateAuthorities": [{
 		"name": "my_ca_example_com",
 		"publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOO4jC9AcVsCOfapTGboTKOuMbil0Z8jKnt3pb3M8eqi",

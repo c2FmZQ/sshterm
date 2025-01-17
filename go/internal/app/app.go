@@ -70,6 +70,7 @@ func New(cfg *Config) (*App, error) {
 			Endpoints:   make(map[string]*endpoint),
 			Hosts:       make(map[string]*host),
 			Keys:        make(map[string]*key),
+			Params:      make(map[string]any),
 		},
 		inShell: new(atomic.Bool),
 	}
@@ -102,6 +103,7 @@ func New(cfg *Config) (*App, error) {
 		app.keysCommand(),
 		app.agentCommand(),
 		app.dbCommand(),
+		app.setCommand(),
 	}
 	app.autoCompleter = &autoCompleter{
 		cmds:      app.commands,
@@ -136,6 +138,7 @@ type appData struct {
 	Endpoints   map[string]*endpoint  `json:"endpoints"`
 	Hosts       map[string]*host      `json:"hosts"`
 	Keys        map[string]*key       `json:"keys"`
+	Params      map[string]any        `json:"params"`
 }
 
 type authority struct {
@@ -230,6 +233,9 @@ func (a *App) initDB() error {
 	if err := db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("keys load: %w", err)
 	}
+	if err := db.Get("params", &a.data.Params); err != nil && err != indexeddb.ErrNotFound {
+		return fmt.Errorf("params load: %w", err)
+	}
 	for k, v := range a.data.Endpoints {
 		if len(v.HostKey) == 0 {
 			continue
@@ -263,6 +269,11 @@ func (a *App) Run() error {
 	}
 	if err := a.initPresetConfig(); err != nil {
 		t.Errorf("%v", err)
+	}
+	if theme, ok := a.data.Params["theme"].(string); ok {
+		a.setTheme(theme)
+	} else if theme := a.cfg.Theme; theme != "" {
+		a.setTheme(theme)
 	}
 	jsutil.UnregisterServiceWorker()
 	defer func() {
@@ -436,6 +447,9 @@ func (a *App) saveAll() error {
 	if err := a.saveKeys(); err != nil {
 		return err
 	}
+	if err := a.saveParams(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -465,6 +479,13 @@ func (a *App) saveKeys() error {
 		return nil
 	}
 	return a.db.Set("keys", a.data.Keys)
+}
+
+func (a *App) saveParams() error {
+	if a.db == nil {
+		return nil
+	}
+	return a.db.Set("params", a.data.Params)
 }
 
 func (a *App) importFiles(accept string, multiple bool) []jsutil.ImportedFile {
