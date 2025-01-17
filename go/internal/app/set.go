@@ -42,6 +42,7 @@ func (a *App) setTheme(t string) {
 			"selectionBackground": "black",
 			"selectionForeground": "#e0e0e0",
 		}))
+		a.cfg.Term.Get("element").Get("parentElement").Set("style", "background-color: #e0e0e0;")
 	case "dark":
 		a.cfg.Term.Get("options").Set("theme", jsutil.NewObject(map[string]any{
 			"background":          "black",
@@ -51,6 +52,7 @@ func (a *App) setTheme(t string) {
 			"selectionBackground": "white",
 			"selectionForeground": "black",
 		}))
+		a.cfg.Term.Get("element").Get("parentElement").Set("style", "background-color: black;")
 	case "green":
 		a.cfg.Term.Get("options").Set("theme", jsutil.NewObject(map[string]any{
 			"background":          "#003000",
@@ -60,6 +62,7 @@ func (a *App) setTheme(t string) {
 			"selectionBackground": "lightgreen",
 			"selectionForeground": "#003000",
 		}))
+		a.cfg.Term.Get("element").Get("parentElement").Set("style", "background-color: #003000;")
 	}
 }
 
