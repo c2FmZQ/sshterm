@@ -32,35 +32,24 @@ import (
 )
 
 func (a *App) setTheme(t string) {
+	var bg, fg string
 	switch t {
 	case "light":
-		a.cfg.Term.Get("options").Set("theme", jsutil.NewObject(map[string]any{
-			"background":          "#e0e0e0",
-			"foreground":          "black",
-			"cursor":              "black",
-			"cursorAccent":        "#e0e0e0",
-			"selectionBackground": "black",
-			"selectionForeground": "#e0e0e0",
-		}))
+		bg, fg = "#e0e0e0", "black"
 	case "dark":
-		a.cfg.Term.Get("options").Set("theme", jsutil.NewObject(map[string]any{
-			"background":          "black",
-			"foreground":          "white",
-			"cursor":              "white",
-			"cursorAccent":        "black",
-			"selectionBackground": "white",
-			"selectionForeground": "black",
-		}))
+		bg, fg = "black", "white"
 	case "green":
-		a.cfg.Term.Get("options").Set("theme", jsutil.NewObject(map[string]any{
-			"background":          "#003000",
-			"foreground":          "lightgreen",
-			"cursor":              "lightgreen",
-			"cursorAccent":        "#003000",
-			"selectionBackground": "lightgreen",
-			"selectionForeground": "#003000",
-		}))
+		bg, fg = "#003000", "lightgreen"
 	}
+	a.cfg.Term.Get("options").Set("theme", jsutil.NewObject(map[string]any{
+		"background":          bg,
+		"foreground":          fg,
+		"cursor":              fg,
+		"cursorAccent":        bg,
+		"selectionBackground": fg,
+		"selectionForeground": bg,
+	}))
+	a.cfg.Term.Get("element").Get("parentElement").Get("style").Set("backgroundColor", bg)
 }
 
 func (a *App) setCommand() *cli.App {
