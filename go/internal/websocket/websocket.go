@@ -48,7 +48,7 @@ func New(ctx context.Context, url string, log io.Writer) (*WebSocket, error) {
 		ctx:     ctx,
 		ws:      jsWS,
 		log:     log,
-		ch:      make(chan js.Value, 100),
+		ch:      make(chan js.Value, 4096),
 		closeCh: make(chan struct{}),
 	}
 	errCh := make(chan error)

@@ -62,7 +62,21 @@ window.addEventListener('load', () => {
   term.loadAddon(fitAddon);
   term.open(document.getElementById('terminal'));
   sshApp.disposables = [
-    term.onTitleChange(t => document.querySelector('head title').textContent = t),
+    term.onTitleChange(t => {
+      document.querySelector('head title').textContent = t;
+      let e = document.createElement('div');
+      e.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
+      e.textContent = t;
+      term.element.parentElement.appendChild(e);
+      setTimeout(() => term.element.parentElement.removeChild(e), 3000);
+    }),
+    term.onBell(() => {
+      let e = document.createElement('div');
+      e.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
+      e.textContent = '** BEEP **';
+      term.element.parentElement.appendChild(e);
+      setTimeout(() => term.element.parentElement.removeChild(e), 3000);
+    }),
     term.onSelectionChange(() => {
       const v = term.getSelection();
       if (v !== '' && navigator.clipboard) {
