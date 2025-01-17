@@ -9,6 +9,7 @@
 ### :wrench: Misc
 
 * Let the middle mouse button paste.
+* Other usability changes.
 
 ## v0.6.2
 
