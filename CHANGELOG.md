@@ -6,6 +6,10 @@
 
 * Add light and dark themes. (`set theme -h`)
 
+### :wrench: Misc
+
+* Let the middle mouse button paste.
+
 ## v0.6.2
 
 ### :wrench: Misc

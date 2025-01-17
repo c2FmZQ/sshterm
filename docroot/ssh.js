@@ -76,6 +76,11 @@ window.addEventListener('load', () => {
     event.stopPropagation();
     navigator.clipboard.readText().then(t => term.paste(t));
   });
+  term.element.addEventListener('mousedown', event => {
+      if (event.button === 1) {
+        navigator.clipboard.readText().then(t => term.paste(t));
+      }
+  });
   window.addEventListener('resize', () => fitAddon.fit())
   fitAddon.fit();
   sshApp.term = term;
