@@ -115,18 +115,25 @@ func start(this js.Value, args []js.Value) any {
 	}
 
 	return jsutil.NewPromise(func() (any, error) {
-		if _, err := http.Get("/reset"); err != nil {
-			appConfig.Term.Call("writeln", "reset: "+err.Error())
-		}
+		return jsutil.NewObject(map[string]any{
+			"close": js.FuncOf(func(this js.Value, args []js.Value) any {
+				return nil
+			}),
+			"done": jsutil.NewPromise(func() (any, error) {
+				if _, err := http.Get("/reset"); err != nil {
+					appConfig.Term.Call("writeln", "reset: "+err.Error())
+				}
 
-		out := "PASS"
-		if res := testingM.Run(); res != 0 {
-			out = "FAIL"
-		}
-		terminalIO.Stop()
-		appConfig.Term.Call("writeln", out)
-		close(done)
-		return out, nil
+				out := "PASS"
+				if res := testingM.Run(); res != 0 {
+					out = "FAIL"
+				}
+				terminalIO.Stop()
+				appConfig.Term.Call("writeln", out)
+				close(done)
+				return out, nil
+			}),
+		}), nil
 	})
 }
 
