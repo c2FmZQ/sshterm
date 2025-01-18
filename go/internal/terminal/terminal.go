@@ -183,12 +183,15 @@ func (t *termWrapper) readChunk() error {
 }
 
 func (t *termWrapper) Read(b []byte) (int, error) {
+	var err error
 	for len(t.r) == 0 || (len(b) > len(t.r) && len(t.dataCh) > 0) {
-		t.readChunk()
+		if err = t.readChunk(); err != nil {
+			break
+		}
 	}
 	n := copy(b, t.r)
 	t.r = t.r[n:]
-	return n, nil
+	return n, err
 }
 
 func (t *termWrapper) Write(b []byte) (int, error) {

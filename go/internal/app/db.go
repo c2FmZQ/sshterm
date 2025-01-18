@@ -106,7 +106,7 @@ func (a *App) dbCommand() *cli.App {
 					if !a.term.Confirm("You are about to WIPE the database.\nContinue? ", false) {
 						return errors.New("aborted")
 					}
-					a.agent = &keyRing{}
+					globalAgent = &keyRing{}
 					a.data.Authorities = make(map[string]*authority)
 					a.data.Endpoints = make(map[string]*endpoint)
 					a.data.Hosts = make(map[string]*host)
@@ -217,7 +217,7 @@ func (a *App) dbCommand() *cli.App {
 					if !ok {
 						return fmt.Errorf("unable to decrypt file")
 					}
-					a.agent = &keyRing{}
+					globalAgent = &keyRing{}
 					a.data.Endpoints = nil
 					a.data.Keys = nil
 					if err := json.Unmarshal(payload, &a.data); err != nil {
