@@ -91,6 +91,9 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 	}
 	defer client.Close()
 
+	a.term.Printf("\x1b]0;sftp %s\x07", target)
+	defer a.term.Printf("\x1b]0;sshterm\x07")
+
 	raw := a.term.Raw()
 
 	t := term.NewTerminal(raw, "sftp> ")

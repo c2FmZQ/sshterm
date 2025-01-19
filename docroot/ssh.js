@@ -134,8 +134,7 @@ async function addScreen() {
     parent.appendChild(buttons);
     const b = document.createElement('button');
     b.addEventListener('click', addScreen);
-    b.textContent = '+';
-    b.style.fontFamily = 'monospace';
+    b.textContent = '➕';
     buttons.appendChild(b);
     buttons.addEventListener('mouseenter', () => {
       buttons.style.opacity = 1;
@@ -168,11 +167,13 @@ async function addScreen() {
     screens[b.id].title = title;
     screens[b.id].b.title = title;
     document.querySelector('head title').textContent = title;
-    const msg = document.createElement('div');
-    msg.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
-    msg.textContent = title;
-    e.appendChild(msg);
-    setTimeout(() => e.removeChild(msg), 3000);
+    if (title !== 'sshterm') {
+      const msg = document.createElement('div');
+      msg.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
+      msg.textContent = title;
+      e.appendChild(msg);
+      setTimeout(() => e.removeChild(msg), 3000);
+    }
   };
   const onBell = () => {
     const msg = document.createElement('div');

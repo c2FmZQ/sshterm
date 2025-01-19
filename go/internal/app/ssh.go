@@ -94,6 +94,9 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 		return err
 	}
 
+	t.Printf("\x1b]0;ssh %s\x07", target)
+	defer t.Printf("\x1b]0;sshterm\x07")
+
 	session, err := client.NewSession()
 	if err != nil {
 		return fmt.Errorf("client.NewSession: %w", err)
