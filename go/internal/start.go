@@ -26,11 +26,11 @@
 package internal
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"syscall/js"
 
 	"github.com/c2FmZQ/sshterm/internal/app"
@@ -76,17 +76,25 @@ func Start(this js.Value, args []js.Value) (result any) {
 	cfg.Term.Call("writeln", "")
 
 	return jsutil.NewPromise(func() (any, error) {
-		defer func() {
-			fmt.Fprintf(os.Stderr, "Start Promise return\n")
-		}()
 		a, err := app.New(&cfg)
 		if err != nil {
 			return nil, err
 		}
-		for {
-			if err = a.Run(); err != io.EOF {
-				return "exited", err
-			}
-		}
+		return jsutil.NewObject(map[string]any{
+			"close": js.FuncOf(func(this js.Value, args []js.Value) any {
+				a.Stop()
+				return nil
+			}),
+			"done": jsutil.NewPromise(func() (any, error) {
+				for {
+					if err = a.Run(); err != io.EOF {
+						if err == context.Canceled {
+							return "closed", nil
+						}
+						return "exited", err
+					}
+				}
+			}),
+		}), nil
 	})
 }

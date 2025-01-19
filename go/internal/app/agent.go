@@ -53,7 +53,7 @@ func (a *App) agentCommand() *cli.App {
 				Usage:     "List the keys currently in the agent",
 				UsageText: "agent list",
 				Action: func(ctx *cli.Context) error {
-					keys, err := a.agent.List()
+					keys, err := globalAgent.List()
 					if err != nil {
 						return fmt.Errorf("agent.List: %w", err)
 					}
@@ -90,7 +90,7 @@ func (a *App) agentCommand() *cli.App {
 					if err != nil {
 						return fmt.Errorf("key.Signer: %w", err)
 					}
-					return a.agent.(*keyRing).AddSigner(signer, name)
+					return globalAgent.(*keyRing).AddSigner(signer, name)
 				},
 			},
 			{
@@ -110,7 +110,7 @@ func (a *App) agentCommand() *cli.App {
 						return nil
 					}
 					if ctx.Bool("all") {
-						if err := a.agent.RemoveAll(); err != nil {
+						if err := globalAgent.RemoveAll(); err != nil {
 							return fmt.Errorf("agent.RemoveAll: %w", err)
 						}
 						return nil
@@ -124,7 +124,7 @@ func (a *App) agentCommand() *cli.App {
 					if err != nil {
 						return fmt.Errorf("ssh.ParsePublicKey: %w", err)
 					}
-					if err := a.agent.Remove(pub); err != nil {
+					if err := globalAgent.Remove(pub); err != nil {
 						return fmt.Errorf("agent.Remove: %w", err)
 					}
 					return nil
@@ -143,7 +143,7 @@ func (a *App) agentCommand() *cli.App {
 					if err != nil {
 						return err
 					}
-					return a.agent.Lock([]byte(passphrase))
+					return globalAgent.Lock([]byte(passphrase))
 				},
 			},
 			{
@@ -159,7 +159,7 @@ func (a *App) agentCommand() *cli.App {
 					if err != nil {
 						return err
 					}
-					return a.agent.Unlock([]byte(passphrase))
+					return globalAgent.Unlock([]byte(passphrase))
 				},
 			},
 		},

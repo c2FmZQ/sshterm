@@ -103,7 +103,7 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	}()
 
 	if forwardAgent {
-		if err := agent.ForwardToAgent(client, a.agent); err != nil {
+		if err := agent.ForwardToAgent(client, globalAgent); err != nil {
 			return fmt.Errorf("agent.ForwardToAgent: %w", err)
 		}
 		if err := agent.RequestAgentForwarding(session); err != nil {
@@ -218,7 +218,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 }
 
 func (a *App) sshSigners(keyName string) ([]ssh.Signer, error) {
-	signers, err := a.agent.Signers()
+	signers, err := globalAgent.Signers()
 	if err != nil {
 		a.term.Errorf("%v", err)
 	}

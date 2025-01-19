@@ -60,10 +60,11 @@ type Config struct {
 	StreamHook   func(url string) error                                   `json:"-"`
 }
 
+var globalAgent agent.Agent = &keyRing{}
+
 func New(cfg *Config) (*App, error) {
 	app := &App{
-		cfg:   *cfg,
-		agent: &keyRing{},
+		cfg: *cfg,
 		data: appData{
 			Persist:     true,
 			Authorities: make(map[string]*authority),
@@ -120,7 +121,6 @@ type App struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	term          *terminal.Terminal
-	agent         agent.Agent
 	autoCompleter *autoCompleter
 	db            *indexeddb.DB
 	data          appData
@@ -189,7 +189,7 @@ func (a *App) initPresetConfig() error {
 			if err != nil {
 				return fmt.Errorf("generateKeys[%d]: %w", i, err)
 			}
-			if err := a.agent.(*keyRing).AddSigner(signer, k.Name); err != nil {
+			if err := globalAgent.(*keyRing).AddSigner(signer, k.Name); err != nil {
 				return fmt.Errorf("generateKeys[%d]: %w", i, err)
 			}
 		}

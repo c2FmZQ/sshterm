@@ -114,12 +114,16 @@ window.addEventListener('load', () => {
   ]).then(v => {
     let cfg = v[1];
     cfg.term = term;
-    sshApp.start(cfg)
-    .then(v => sshApp.onExit(v))
-    .catch(e => {
-      console.log('SSH ERROR', e);
-      term.writeln(e.message);
-      sshApp.onExit(e.message);
-    });
+    return sshApp.start(cfg)
+      .then(v => {
+        sshApp.close = v.close;
+        return v.done;
+      })
+      .then(done => sshApp.onExit(done))
+      .catch(e => {
+        console.log('SSH ERROR', e);
+        term.writeln(e.message);
+        sshApp.onExit(e.message);
+      });
   });
 });
