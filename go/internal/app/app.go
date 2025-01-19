@@ -35,6 +35,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall/js"
+	"time"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh/agent"
@@ -61,6 +62,7 @@ type Config struct {
 }
 
 var globalAgent agent.Agent = &keyRing{}
+var globalLastDBChange = time.Now()
 
 func New(cfg *Config) (*App, error) {
 	app := &App{
@@ -124,6 +126,7 @@ type App struct {
 	autoCompleter *autoCompleter
 	db            *indexeddb.DB
 	data          appData
+	lastDBRefresh time.Time
 
 	commands     []*cli.App
 	streamHelper *jsutil.StreamHelper
@@ -201,11 +204,6 @@ func (a *App) initDB() error {
 	if a.cfg.DBName == "" {
 		a.cfg.DBName = defaultDBName
 	}
-	defer func() {
-		for _, k := range a.data.Keys {
-			k.errorf = a.term.Errorf
-		}
-	}()
 	if a.cfg.Persist != nil {
 		a.data.Persist = *a.cfg.Persist
 	}
@@ -221,19 +219,35 @@ func (a *App) initDB() error {
 		return fmt.Errorf("indexeddb.New: %w", err)
 	}
 	a.db = db
-	if err := db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
+	return a.refreshDB()
+}
+
+func (a *App) refreshDB() error {
+	if a.db == nil || !a.data.Persist {
+		return nil
+	}
+	if a.lastDBRefresh == globalLastDBChange {
+		return nil
+	}
+	defer func() {
+		for _, k := range a.data.Keys {
+			k.errorf = a.term.Errorf
+		}
+		a.lastDBRefresh = globalLastDBChange
+	}()
+	if err := a.db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("authorities load: %w", err)
 	}
-	if err := db.Get("endpoints", &a.data.Endpoints); err != nil && err != indexeddb.ErrNotFound {
+	if err := a.db.Get("endpoints", &a.data.Endpoints); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("endpoints load: %w", err)
 	}
-	if err := db.Get("hosts", &a.data.Hosts); err != nil && err != indexeddb.ErrNotFound {
+	if err := a.db.Get("hosts", &a.data.Hosts); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("hosts load: %w", err)
 	}
-	if err := db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
+	if err := a.db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("keys load: %w", err)
 	}
-	if err := db.Get("params", &a.data.Params); err != nil && err != indexeddb.ErrNotFound {
+	if err := a.db.Get("params", &a.data.Params); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("params load: %w", err)
 	}
 	for k, v := range a.data.Endpoints {
@@ -353,6 +367,7 @@ func (a *App) Run() error {
 		if len(args) == 0 {
 			continue
 		}
+		a.refreshDB()
 		switch name := args[0]; name {
 		case "help", "?":
 			if len(args) == 2 && args[1] == "shortcuts" {
@@ -457,6 +472,7 @@ func (a *App) saveAuthorities() error {
 	if a.db == nil {
 		return nil
 	}
+	globalLastDBChange = time.Now()
 	return a.db.Set("authorities", a.data.Authorities)
 }
 
@@ -464,6 +480,7 @@ func (a *App) saveEndpoints() error {
 	if a.db == nil {
 		return nil
 	}
+	globalLastDBChange = time.Now()
 	return a.db.Set("endpoints", a.data.Endpoints)
 }
 
@@ -471,6 +488,7 @@ func (a *App) saveHosts() error {
 	if a.db == nil {
 		return nil
 	}
+	globalLastDBChange = time.Now()
 	return a.db.Set("hosts", a.data.Hosts)
 }
 
@@ -478,6 +496,7 @@ func (a *App) saveKeys() error {
 	if a.db == nil {
 		return nil
 	}
+	globalLastDBChange = time.Now()
 	return a.db.Set("keys", a.data.Keys)
 }
 
@@ -485,6 +504,7 @@ func (a *App) saveParams() error {
 	if a.db == nil {
 		return nil
 	}
+	globalLastDBChange = time.Now()
 	return a.db.Set("params", a.data.Params)
 }
 
