@@ -36,6 +36,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall/js"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -378,50 +379,15 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 					isDir = true
 				}
 
-				cp := func(f jsutil.ImportedFile) error {
-					defer f.Content.Close()
+				for _, f := range a.importFiles("", isDir) {
+					fmt.Fprintf(t, "%s ", f.Name)
 					var fn string
 					if isDir {
 						fn = joinPath(cwd, dest, f.Name)
 					} else {
 						fn = joinPath(cwd, dest)
 					}
-					w, err := client.OpenFile(fn, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
-					if err != nil {
-						return fmt.Errorf("%s: %v", fn, err)
-					}
-					buf := make([]byte, 16384)
-					var total int64
-					for loop := 0; ; loop++ {
-						n, err := f.Content.Read(buf)
-						if n > 0 {
-							if nn, err := w.Write(buf[:n]); err != nil {
-								w.Close()
-								return err
-							} else if n != nn {
-								w.Close()
-								return io.ErrShortWrite
-							}
-							total += int64(n)
-							if loop%100 == 0 {
-								fmt.Fprintf(t, "%3d%%\b\b\b\b", 100*total/f.Size)
-							}
-						}
-						if err == io.EOF {
-							fmt.Fprintf(t, "%3d%%\n", 100*total/f.Size)
-							break
-						}
-						if err != nil {
-							w.Close()
-							return err
-						}
-
-					}
-					return w.Close()
-				}
-				for _, f := range a.importFiles("", isDir) {
-					fmt.Fprintf(t, "%s ", f.Name)
-					if err := cp(f); err != nil {
+					if err := a.sftpUploadFile(client, f, fn); err != nil {
 						return err
 					}
 				}
@@ -686,6 +652,34 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 		return
 	}
 
+	dragoverHandler := js.FuncOf(func(this js.Value, args []js.Value) any {
+		event := args[0]
+		event.Get("dataTransfer").Set("dropEffect", "copy")
+		event.Call("preventDefault")
+		return nil
+	})
+	dropHandler := js.FuncOf(func(this js.Value, args []js.Value) any {
+		event := args[0]
+		event.Call("preventDefault")
+		event.Call("stopPropagation")
+		files := jsutil.AcceptFileDrop(event)
+		go func() {
+			a.term.Printf("\n")
+			for _, f := range files {
+				a.term.Printf("%s ", f.Name)
+				if err := a.sftpUploadFile(client, f, joinPath(cwd, f.Name)); err != nil {
+					a.term.Errorf("drop: %v", err)
+					return
+				}
+			}
+		}()
+		return nil
+	})
+	a.cfg.Term.Get("element").Call("addEventListener", "dragover", dragoverHandler)
+	a.cfg.Term.Get("element").Call("addEventListener", "drop", dropHandler)
+	defer a.cfg.Term.Get("element").Call("removeEventListener", "dragover", dragoverHandler)
+	defer a.cfg.Term.Get("element").Call("removeEventListener", "drop", dropHandler)
+
 	for {
 		line, err := t.ReadLine()
 		if err != nil {
@@ -762,4 +756,40 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) er
 			)
 		}
 	}
+}
+
+func (a *App) sftpUploadFile(client *sftp.Client, f jsutil.ImportedFile, fn string) error {
+	defer f.Content.Close()
+	w, err := client.OpenFile(fn, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		return fmt.Errorf("%s: %v", fn, err)
+	}
+	buf := make([]byte, 16384)
+	var total int64
+	for loop := 0; ; loop++ {
+		n, err := f.Content.Read(buf)
+		if n > 0 {
+			if nn, err := w.Write(buf[:n]); err != nil {
+				w.Close()
+				return err
+			} else if n != nn {
+				w.Close()
+				return io.ErrShortWrite
+			}
+			total += int64(n)
+			if loop%100 == 0 {
+				fmt.Fprintf(a.term, "%3d%%\b\b\b\b", 100*total/f.Size)
+			}
+		}
+		if err == io.EOF {
+			fmt.Fprintf(a.term, "%3d%%\n", 100*total/f.Size)
+			break
+		}
+		if err != nil {
+			w.Close()
+			return err
+		}
+
+	}
+	return w.Close()
 }

@@ -133,6 +133,22 @@ func (f *ImportedFile) ReadAll() ([]byte, error) {
 	return b, err
 }
 
+func AcceptFileDrop(event js.Value) []ImportedFile {
+	files := event.Get("dataTransfer").Get("files")
+	length := files.Length()
+	out := make([]ImportedFile, 0, length)
+	for i := 0; i < length; i++ {
+		f := files.Index(i)
+		out = append(out, ImportedFile{
+			Name:    f.Get("name").String(),
+			Type:    f.Get("type").String(),
+			Size:    int64(f.Get("size").Float()),
+			Content: NewStreamReader(f.Call("stream")),
+		})
+	}
+	return out
+}
+
 func ImportFiles(accept string, multiple bool) []ImportedFile {
 	input := Document.Call("createElement", "input")
 	input.Set("type", "file")
