@@ -349,7 +349,7 @@ func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) er
 		if ca, exists := a.data.Authorities[caFP]; exists {
 			ca.Hostnames = append(ca.Hostnames, hostname)
 			a.data.Authorities[caFP] = ca
-			return a.saveAuthorities()
+			return a.saveAuthorities(true)
 		}
 		a.data.Authorities[caFP] = &authority{
 			Fingerprint: caFP,
@@ -359,7 +359,7 @@ func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) er
 				hostname,
 			},
 		}
-		return a.saveAuthorities()
+		return a.saveAuthorities(true)
 	default:
 		return err
 	}
@@ -399,7 +399,7 @@ func (a *App) hostKeyCallback(hostname string, key ssh.PublicKey) error {
 			a.data.Hosts[hostname] = h
 		}
 		h.Key = hk
-		return a.saveHosts()
+		return a.saveHosts(true)
 	default:
 		return errors.New("host key rejected by user")
 	}

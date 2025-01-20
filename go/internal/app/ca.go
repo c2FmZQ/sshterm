@@ -132,7 +132,7 @@ func (a *App) caCommand() *cli.App {
 					if err := a.addAuthority(name, string(content), ctx.Args().Slice()[1:]); err != nil {
 						return err
 					}
-					if err := a.saveAuthorities(); err != nil {
+					if err := a.saveAuthorities(true); err != nil {
 						return err
 					}
 					a.term.Printf("New CA %q imported from %q\n", name, f.Name)
@@ -157,7 +157,7 @@ func (a *App) caCommand() *cli.App {
 							delete(a.data.Authorities, k)
 						}
 					}
-					return a.saveAuthorities()
+					return a.saveAuthorities(true)
 				},
 			},
 			{
@@ -183,7 +183,7 @@ func (a *App) caCommand() *cli.App {
 					ca := a.data.Authorities[fp]
 					ca.Hostnames = append(ca.Hostnames, ctx.Args().Slice()[1:]...)
 					a.data.Authorities[fp] = ca
-					return a.saveAuthorities()
+					return a.saveAuthorities(true)
 				},
 			},
 			{
@@ -213,7 +213,7 @@ func (a *App) caCommand() *cli.App {
 						})
 					}
 					a.data.Authorities[fp] = ca
-					return a.saveAuthorities()
+					return a.saveAuthorities(true)
 				},
 			},
 		},

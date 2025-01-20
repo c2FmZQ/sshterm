@@ -97,7 +97,7 @@ func (a *App) epCommand() *cli.App {
 					if err := a.addEndpoint(name, url); err != nil {
 						return err
 					}
-					return a.saveEndpoints()
+					return a.saveEndpoints(true)
 				},
 			},
 			{
@@ -111,7 +111,7 @@ func (a *App) epCommand() *cli.App {
 					}
 					name := ctx.Args().Get(0)
 					delete(a.data.Endpoints, name)
-					return a.saveEndpoints()
+					return a.saveEndpoints(true)
 				},
 			},
 		},

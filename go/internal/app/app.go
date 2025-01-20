@@ -458,24 +458,6 @@ func (a *App) ctrlC(cancel context.CancelFunc) context.CancelFunc {
 		cancel()
 	}
 }
-func (a *App) saveAll() error {
-	if err := a.saveAuthorities(); err != nil {
-		return err
-	}
-	if err := a.saveEndpoints(); err != nil {
-		return err
-	}
-	if err := a.saveHosts(); err != nil {
-		return err
-	}
-	if err := a.saveKeys(); err != nil {
-		return err
-	}
-	if err := a.saveParams(); err != nil {
-		return err
-	}
-	return nil
-}
 
 func (a *App) broadcastDBChange() {
 	globalLastDBChange = time.Now().UTC()
@@ -501,43 +483,101 @@ func (a *App) onBroadcastDBChange(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func (a *App) saveAuthorities() error {
+func (a *App) checkRefresh() error {
+	if a.lastDBRefresh != globalLastDBChange {
+		return errors.New("out of sync")
+	}
+	return nil
+}
+
+func (a *App) saveAll() error {
 	if a.db == nil {
 		return nil
 	}
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
 	defer a.broadcastDBChange()
+	if err := a.saveAuthorities(false); err != nil {
+		return err
+	}
+	if err := a.saveEndpoints(false); err != nil {
+		return err
+	}
+	if err := a.saveHosts(false); err != nil {
+		return err
+	}
+	if err := a.saveKeys(false); err != nil {
+		return err
+	}
+	if err := a.saveParams(false); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *App) saveAuthorities(broadcast bool) error {
+	if a.db == nil {
+		return nil
+	}
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
+	if broadcast {
+		defer a.broadcastDBChange()
+	}
 	return a.db.Set("authorities", a.data.Authorities)
 }
 
-func (a *App) saveEndpoints() error {
+func (a *App) saveEndpoints(broadcast bool) error {
 	if a.db == nil {
 		return nil
 	}
-	defer a.broadcastDBChange()
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
+	if broadcast {
+		defer a.broadcastDBChange()
+	}
 	return a.db.Set("endpoints", a.data.Endpoints)
 }
 
-func (a *App) saveHosts() error {
+func (a *App) saveHosts(broadcast bool) error {
 	if a.db == nil {
 		return nil
 	}
-	defer a.broadcastDBChange()
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
+	if broadcast {
+		defer a.broadcastDBChange()
+	}
 	return a.db.Set("hosts", a.data.Hosts)
 }
 
-func (a *App) saveKeys() error {
+func (a *App) saveKeys(broadcast bool) error {
 	if a.db == nil {
 		return nil
 	}
-	defer a.broadcastDBChange()
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
+	if broadcast {
+		defer a.broadcastDBChange()
+	}
 	return a.db.Set("keys", a.data.Keys)
 }
 
-func (a *App) saveParams() error {
+func (a *App) saveParams(broadcast bool) error {
 	if a.db == nil {
 		return nil
 	}
-	defer a.broadcastDBChange()
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
+	if broadcast {
+		defer a.broadcastDBChange()
+	}
 	return a.db.Set("params", a.data.Params)
 }
 
