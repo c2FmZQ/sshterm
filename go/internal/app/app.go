@@ -62,7 +62,7 @@ type Config struct {
 }
 
 var globalAgent agent.Agent = &keyRing{}
-var globalLastDBChange = time.Now()
+var globalLastDBChange time.Time
 
 func New(cfg *Config) (*App, error) {
 	app := &App{
@@ -127,6 +127,7 @@ type App struct {
 	db            *indexeddb.DB
 	data          appData
 	lastDBRefresh time.Time
+	bc            js.Value
 
 	commands     []*cli.App
 	streamHelper *jsutil.StreamHelper
@@ -226,14 +227,15 @@ func (a *App) refreshDB() error {
 	if a.db == nil || !a.data.Persist {
 		return nil
 	}
-	if a.lastDBRefresh == globalLastDBChange {
+	if ts := globalLastDBChange; a.lastDBRefresh.Equal(ts) && !ts.IsZero() {
 		return nil
+	} else {
+		a.lastDBRefresh = ts
 	}
 	defer func() {
 		for _, k := range a.data.Keys {
 			k.errorf = a.term.Errorf
 		}
-		a.lastDBRefresh = globalLastDBChange
 	}()
 	if err := a.db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("authorities load: %w", err)
@@ -278,6 +280,13 @@ func (a *App) Run() error {
 	defer a.term.Close()
 	t := a.term
 	t.Focus()
+
+	if broadcastChannel := js.Global().Get("BroadcastChannel"); !broadcastChannel.IsUndefined() {
+		a.bc = broadcastChannel.New("update:" + a.cfg.DBName)
+		defer a.bc.Call("close")
+		a.bc.Set("onmessage", js.FuncOf(a.onBroadcastDBChange))
+	}
+
 	if err := a.initDB(); err != nil {
 		t.Errorf("%v", err)
 	}
@@ -468,11 +477,35 @@ func (a *App) saveAll() error {
 	return nil
 }
 
+func (a *App) broadcastDBChange() {
+	globalLastDBChange = time.Now().UTC()
+	if a.bc.IsUndefined() {
+		return
+	}
+	if v, err := globalLastDBChange.MarshalText(); err == nil {
+		a.bc.Call("postMessage", string(v))
+	}
+}
+
+func (a *App) onBroadcastDBChange(_ js.Value, args []js.Value) any {
+	if len(args) == 0 {
+		return nil
+	}
+	t := new(time.Time)
+	if err := t.UnmarshalText([]byte(args[0].Get("data").String())); err != nil {
+		return err
+	}
+	if t.After(globalLastDBChange) {
+		globalLastDBChange = *t
+	}
+	return nil
+}
+
 func (a *App) saveAuthorities() error {
 	if a.db == nil {
 		return nil
 	}
-	globalLastDBChange = time.Now()
+	defer a.broadcastDBChange()
 	return a.db.Set("authorities", a.data.Authorities)
 }
 
@@ -480,7 +513,7 @@ func (a *App) saveEndpoints() error {
 	if a.db == nil {
 		return nil
 	}
-	globalLastDBChange = time.Now()
+	defer a.broadcastDBChange()
 	return a.db.Set("endpoints", a.data.Endpoints)
 }
 
@@ -488,7 +521,7 @@ func (a *App) saveHosts() error {
 	if a.db == nil {
 		return nil
 	}
-	globalLastDBChange = time.Now()
+	defer a.broadcastDBChange()
 	return a.db.Set("hosts", a.data.Hosts)
 }
 
@@ -496,7 +529,7 @@ func (a *App) saveKeys() error {
 	if a.db == nil {
 		return nil
 	}
-	globalLastDBChange = time.Now()
+	defer a.broadcastDBChange()
 	return a.db.Set("keys", a.data.Keys)
 }
 
@@ -504,7 +537,7 @@ func (a *App) saveParams() error {
 	if a.db == nil {
 		return nil
 	}
-	globalLastDBChange = time.Now()
+	defer a.broadcastDBChange()
 	return a.db.Set("params", a.data.Params)
 }
 
