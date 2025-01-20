@@ -218,11 +218,11 @@ func (a *App) dbCommand() *cli.App {
 						return fmt.Errorf("unable to decrypt file")
 					}
 					globalAgent = &keyRing{}
-					a.data.Endpoints = nil
-					a.data.Keys = nil
-					if err := json.Unmarshal(payload, &a.data); err != nil {
+					var newData appData
+					if err := json.Unmarshal(payload, &newData); err != nil {
 						return fmt.Errorf("json.Unmarshal: %w", err)
 					}
+					a.data = newData
 					return a.saveAll()
 				},
 			},
