@@ -206,7 +206,7 @@ func TestPresetKeys(t *testing.T) {
 	t.Cleanup(a.Stop)
 
 	script(t, []line{
-		{Type: "ssh testuser@myserver.example.com foo\n", Expect: `(?s)Host certificate for myserver.example.com is trusted.\r\nexec: foo`},
+		{Type: "ssh testuser@myserver.example.com foo\n", Expect: `(?s)Host certificate for myserver.example.com is trusted.\r\n.*exec: foo`},
 		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "keys show foo\n", Expect: prompt},

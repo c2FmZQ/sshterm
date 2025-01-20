@@ -89,7 +89,7 @@ func (a *App) hostsCommand() *cli.App {
 					}
 					name := ctx.Args().Get(0)
 					delete(a.data.Hosts, name)
-					return a.saveHosts()
+					return a.saveHosts(true)
 				},
 			},
 		},

@@ -27,19 +27,6 @@
 
 window.sshApp = {};
 sshApp.exited = null;
-sshApp.onExit = result => {
-  for (let i = 0; i < sshApp.disposables; i++) {
-    sshApp.disposables[i]('dispose');
-  }
-  window.sshApp.exited = result;
-  const b = document.createElement('button');
-  b.id = 'done';
-  b.addEventListener('click', () => window.location.reload());
-  b.textContent = 'reload';
-  b.style = 'position: fixed; top: 0; right: 0;';
-  document.body.appendChild(b);
-  console.log('SSH', result);
-};
 window.sshApp.ready = new Promise(resolve => {
   sshApp.sshIsReady = () => {
     console.log('SSH WASM is ready');
@@ -48,11 +35,12 @@ window.sshApp.ready = new Promise(resolve => {
 });
 
 const go = new Go();
-const wasmFile = window.location.pathname.indexOf('tests.html') !== -1 ? 'tests.wasm' : 'ssh.wasm';
+const isTest = window.location.pathname.indexOf('tests.html') !== -1;
+const wasmFile = isTest ? 'tests.wasm' : 'ssh.wasm';
 WebAssembly.instantiateStreaming(fetch(wasmFile), go.importObject)
   .then(r => go.run(r.instance));
 
-window.addEventListener('load', () => {
+function createTerminal(elem, setTitle, onBell) {
   const term = new Terminal({
     cursorBlink: true,
     cursorInactiveStyle: 'outline',
@@ -60,70 +48,177 @@ window.addEventListener('load', () => {
   });
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
-  term.open(document.getElementById('terminal'));
-  sshApp.disposables = [
-    term.onTitleChange(t => {
-      document.querySelector('head title').textContent = t;
-      let e = document.createElement('div');
-      e.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
-      e.textContent = t;
-      term.element.parentElement.appendChild(e);
-      setTimeout(() => term.element.parentElement.removeChild(e), 3000);
-    }),
-    term.onBell(() => {
-      let e = document.createElement('div');
-      e.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
-      e.textContent = '** BEEP **';
-      term.element.parentElement.appendChild(e);
-      setTimeout(() => term.element.parentElement.removeChild(e), 3000);
-    }),
+  term.open(elem);
+  fitAddon.fit();
+  const disposables = [
+    term.onTitleChange(setTitle),
+    term.onBell(onBell),
     term.onSelectionChange(() => {
       const v = term.getSelection();
       if (v !== '' && navigator.clipboard) {
         navigator.clipboard.writeText(v);
       }
     }),
+    term,
   ];
-  // Override the right-click to paste instead of bring up the context menu.
-  term.element.addEventListener('contextmenu', event => {
+  const contextmenuHandler = event => {
     event.preventDefault();
     event.stopPropagation();
     navigator.clipboard.readText().then(t => term.paste(t));
+  };
+  const mousedownHandler = event => {
+    if (event.button === 1) {
+      navigator.clipboard.readText().then(t => term.paste(t));
+    }
+  };
+  const resizeHandler = () => fitAddon.fit();
+
+  term.element.addEventListener('contextmenu', contextmenuHandler);
+  term.element.addEventListener('mousedown', mousedownHandler);
+  window.addEventListener('resize', resizeHandler);
+
+  const cleanup = result => {
+    term.element.removeEventListener('contextmenu', contextmenuHandler);
+    term.element.removeEventListener('mousedown', mousedownHandler);
+    window.removeEventListener('resize', resizeHandler);
+    for (let i = 0; i < disposables; i++) {
+      disposables[i]('dispose');
+    }
+    if (isTest) {
+      window.sshApp.exited = result;
+      const b = document.createElement('button');
+      b.id = 'done';
+      b.addEventListener('click', () => window.location.reload());
+      b.textContent = 'reload';
+      b.style = 'position: fixed; top: 0; right: 0;';
+      document.body.appendChild(b);
+    }
+    console.log('SSH', result);
+  };
+
+  if (isTest) {
+    sshApp.term = term;
+  }
+  return {term,cleanup};
+}
+
+let buttons;
+let count = 1;
+let screens = {};
+
+function selectScreen(id) {
+  for (let s in screens) {
+    if (s !== id) {
+      screens[s].e.style.zIndex = 0;
+      screens[s].b.style.backgroundColor = 'white';
+      screens[s].b.style.color = 'black';
+      screens[s].b.style.fontWeight = 'normal';
+    }
+  }
+  screens[id].e.style.zIndex = 1;
+  screens[id].b.style.backgroundColor = 'black';
+  screens[id].b.style.color = 'white';
+  screens[id].b.style.fontWeight = 'bold';
+  screens[id].term.focus();
+  document.querySelector('head title').textContent = screens[id].title;
+}
+
+async function addScreen() {
+  await sshApp.ready;
+  const parent = document.getElementById('terminal');
+  parent.style.display = 'grid';
+  if (!buttons) {
+    buttons = document.createElement('div');
+    buttons.className = 'buttons';
+    buttons.style = 'position: fixed; top: 0; right: 0; z-index: 1000; opacity: 0.2;';
+    parent.appendChild(buttons);
+    const b = document.createElement('button');
+    b.addEventListener('click', addScreen);
+    b.textContent = '➕';
+    buttons.appendChild(b);
+    buttons.addEventListener('mouseenter', () => {
+      buttons.style.opacity = 1;
+    });
+    buttons.addEventListener('mouseleave', () => {
+      buttons.style.opacity = 0.2;
+    });
+  }
+
+  const id = count++;
+  const e = document.createElement('div');
+  e.id = 'screen-' + id;
+  e.style = 'grid-row: 1; grid-column: 1; z-index: 1';
+  parent.appendChild(e);
+
+  const b = document.createElement('button');
+  b.id = 'button-'+id;
+  b.title = 'sshterm';
+  b.style.fontFamily = 'monospace';
+  b.addEventListener('click', () => {
+    selectScreen(b.id);
   });
-  term.element.addEventListener('mousedown', event => {
-      if (event.button === 1) {
-        navigator.clipboard.readText().then(t => term.paste(t));
-      }
+  b.textContent = '' + id;
+  buttons.insertBefore(b, buttons.lastChild);
+
+  screens[b.id] = {e,b};
+  screens[b.id].title = 'sshterm';
+
+  const setTitle = title => {
+    screens[b.id].title = title;
+    screens[b.id].b.title = title;
+    document.querySelector('head title').textContent = title;
+    if (title !== 'sshterm') {
+      const msg = document.createElement('div');
+      msg.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
+      msg.textContent = title;
+      e.appendChild(msg);
+      setTimeout(() => e.removeChild(msg), 3000);
+    }
+  };
+  const onBell = () => {
+    const msg = document.createElement('div');
+    msg.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
+    msg.textContent = '** BEEP **';
+    e.appendChild(msg);
+    setTimeout(() => e.removeChild(msg), 3000);
+  };
+
+  const {term,cleanup} = createTerminal(e, setTitle, onBell);
+  screens[b.id].term = term;
+  selectScreen(b.id);
+
+  const cfg = await fetch('config.json')
+  .then(r => {
+    if (r.ok) return r.json();
+    return {};
+  })
+  .catch(e => {
+    term.writeln('\x1b[31mError reading config.json:\x1b[0m');
+    term.writeln('\x1b[31m'+e.message+'\x1b[0m');
+    term.writeln('');
+    return {};
   });
-  window.addEventListener('resize', () => fitAddon.fit())
-  fitAddon.fit();
-  sshApp.term = term;
-  Promise.all([
-    sshApp.ready,
-    fetch('config.json')
-    .then(r => {
-      if (r.ok) return r.json();
-      return {};
-    })
-    .catch(e => {
-      term.writeln('\x1b[31mError reading config.json:\x1b[0m');
-      term.writeln('\x1b[31m'+e.message+'\x1b[0m');
-      term.writeln('');
-      return {};
-    }),
-  ]).then(v => {
-    let cfg = v[1];
-    cfg.term = term;
-    return sshApp.start(cfg)
-      .then(v => {
-        sshApp.close = v.close;
-        return v.done;
-      })
-      .then(done => sshApp.onExit(done))
-      .catch(e => {
-        console.log('SSH ERROR', e);
-        term.writeln(e.message);
-        sshApp.onExit(e.message);
-      });
+  cfg.term = term;
+
+  const app = await sshApp.start(cfg);
+  screens[b.id].close = app.close;
+
+  app.done
+  .then(done => {
+    cleanup(done);
+    if (isTest) return;
+    delete screens[b.id];
+    parent.removeChild(e);
+    buttons.removeChild(b);
+    if (buttons.firstChild.id in screens) {
+      selectScreen(buttons.firstChild.id);
+    }
+  })
+  .catch(e => {
+    console.log('SSH ERROR', e);
+    term.writeln(e.message);
+    cleanup(e.message);
   });
-});
+}
+
+window.addEventListener('load', addScreen);

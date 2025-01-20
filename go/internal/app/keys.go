@@ -154,7 +154,7 @@ func (a *App) keysCommand() *cli.App {
 					if _, err := a.generateKey(name, passphrase, ctx.String("idp"), ctx.String("type"), ctx.Int("bits")); err != nil {
 						return err
 					}
-					if err := a.saveKeys(); err != nil {
+					if err := a.saveKeys(true); err != nil {
 						return err
 					}
 					a.term.Printf("New key %q added\n", name)
@@ -175,7 +175,7 @@ func (a *App) keysCommand() *cli.App {
 						return errors.New("aborted")
 					}
 					delete(a.data.Keys, name)
-					return a.saveKeys()
+					return a.saveKeys(true)
 				},
 			},
 			{
@@ -260,7 +260,7 @@ func (a *App) keysCommand() *cli.App {
 					}
 					key.Public = sshPub.Marshal()
 					a.data.Keys[name] = key
-					if err := a.saveKeys(); err != nil {
+					if err := a.saveKeys(true); err != nil {
 						return err
 					}
 					a.term.Printf("New key %q imported from %q\n", name, f.Name)
@@ -352,7 +352,7 @@ func (a *App) keysCommand() *cli.App {
 					key.CertBytes = content
 					a.data.Keys[name] = key
 
-					if err := a.saveKeys(); err != nil {
+					if err := a.saveKeys(true); err != nil {
 						return err
 					}
 					a.term.Printf("New certificate for key %q imported from %q\n", name, f.Name)

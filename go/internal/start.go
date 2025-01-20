@@ -87,7 +87,7 @@ func Start(this js.Value, args []js.Value) (result any) {
 			}),
 			"done": jsutil.NewPromise(func() (any, error) {
 				for {
-					if err = a.Run(); err != io.EOF {
+					if err := a.Run(); err != io.EOF {
 						if err == context.Canceled {
 							return "closed", nil
 						}

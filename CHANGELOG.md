@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :star2: New features
+
+* Add support for multiple screens.
+
 ## v0.6.3
 
 ### :star2: New features

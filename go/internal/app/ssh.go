@@ -94,6 +94,9 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 		return err
 	}
 
+	t.Printf("\x1b]0;ssh %s\x07", target)
+	defer t.Printf("\x1b]0;sshterm\x07")
+
 	session, err := client.NewSession()
 	if err != nil {
 		return fmt.Errorf("client.NewSession: %w", err)
@@ -346,7 +349,7 @@ func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) er
 		if ca, exists := a.data.Authorities[caFP]; exists {
 			ca.Hostnames = append(ca.Hostnames, hostname)
 			a.data.Authorities[caFP] = ca
-			return a.saveAuthorities()
+			return a.saveAuthorities(true)
 		}
 		a.data.Authorities[caFP] = &authority{
 			Fingerprint: caFP,
@@ -356,7 +359,7 @@ func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) er
 				hostname,
 			},
 		}
-		return a.saveAuthorities()
+		return a.saveAuthorities(true)
 	default:
 		return err
 	}
@@ -396,7 +399,7 @@ func (a *App) hostKeyCallback(hostname string, key ssh.PublicKey) error {
 			a.data.Hosts[hostname] = h
 		}
 		h.Key = hk
-		return a.saveHosts()
+		return a.saveHosts(true)
 	default:
 		return errors.New("host key rejected by user")
 	}

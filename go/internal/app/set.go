@@ -73,7 +73,7 @@ func (a *App) setCommand() *cli.App {
 					case "light", "dark", "green":
 						a.setTheme(v)
 						a.data.Params["theme"] = v
-						return a.saveParams()
+						return a.saveParams(true)
 
 					default:
 						cli.ShowSubcommandHelp(ctx)

@@ -35,6 +35,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall/js"
+	"time"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh/agent"
@@ -61,6 +62,7 @@ type Config struct {
 }
 
 var globalAgent agent.Agent = &keyRing{}
+var globalLastDBChange time.Time
 
 func New(cfg *Config) (*App, error) {
 	app := &App{
@@ -124,6 +126,8 @@ type App struct {
 	autoCompleter *autoCompleter
 	db            *indexeddb.DB
 	data          appData
+	lastDBRefresh time.Time
+	bc            js.Value
 
 	commands     []*cli.App
 	streamHelper *jsutil.StreamHelper
@@ -201,11 +205,6 @@ func (a *App) initDB() error {
 	if a.cfg.DBName == "" {
 		a.cfg.DBName = defaultDBName
 	}
-	defer func() {
-		for _, k := range a.data.Keys {
-			k.errorf = a.term.Errorf
-		}
-	}()
 	if a.cfg.Persist != nil {
 		a.data.Persist = *a.cfg.Persist
 	}
@@ -221,19 +220,36 @@ func (a *App) initDB() error {
 		return fmt.Errorf("indexeddb.New: %w", err)
 	}
 	a.db = db
-	if err := db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
+	return a.refreshDB()
+}
+
+func (a *App) refreshDB() error {
+	if a.db == nil || !a.data.Persist {
+		return nil
+	}
+	if ts := globalLastDBChange; a.lastDBRefresh.Equal(ts) && !ts.IsZero() {
+		return nil
+	} else {
+		a.lastDBRefresh = ts
+	}
+	defer func() {
+		for _, k := range a.data.Keys {
+			k.errorf = a.term.Errorf
+		}
+	}()
+	if err := a.db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("authorities load: %w", err)
 	}
-	if err := db.Get("endpoints", &a.data.Endpoints); err != nil && err != indexeddb.ErrNotFound {
+	if err := a.db.Get("endpoints", &a.data.Endpoints); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("endpoints load: %w", err)
 	}
-	if err := db.Get("hosts", &a.data.Hosts); err != nil && err != indexeddb.ErrNotFound {
+	if err := a.db.Get("hosts", &a.data.Hosts); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("hosts load: %w", err)
 	}
-	if err := db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
+	if err := a.db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("keys load: %w", err)
 	}
-	if err := db.Get("params", &a.data.Params); err != nil && err != indexeddb.ErrNotFound {
+	if err := a.db.Get("params", &a.data.Params); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("params load: %w", err)
 	}
 	for k, v := range a.data.Endpoints {
@@ -264,6 +280,13 @@ func (a *App) Run() error {
 	defer a.term.Close()
 	t := a.term
 	t.Focus()
+
+	if broadcastChannel := js.Global().Get("BroadcastChannel"); !broadcastChannel.IsUndefined() {
+		a.bc = broadcastChannel.New("update:" + a.cfg.DBName)
+		defer a.bc.Call("close")
+		a.bc.Set("onmessage", js.FuncOf(a.onBroadcastDBChange))
+	}
+
 	if err := a.initDB(); err != nil {
 		t.Errorf("%v", err)
 	}
@@ -353,6 +376,7 @@ func (a *App) Run() error {
 		if len(args) == 0 {
 			continue
 		}
+		a.refreshDB()
 		switch name := args[0]; name {
 		case "help", "?":
 			if len(args) == 2 && args[1] == "shortcuts" {
@@ -434,56 +458,125 @@ func (a *App) ctrlC(cancel context.CancelFunc) context.CancelFunc {
 		cancel()
 	}
 }
+
+func (a *App) broadcastDBChange() {
+	globalLastDBChange = time.Now().UTC()
+	if a.bc.IsUndefined() {
+		return
+	}
+	if v, err := globalLastDBChange.MarshalText(); err == nil {
+		a.bc.Call("postMessage", string(v))
+	}
+}
+
+func (a *App) onBroadcastDBChange(_ js.Value, args []js.Value) any {
+	if len(args) == 0 {
+		return nil
+	}
+	t := new(time.Time)
+	if err := t.UnmarshalText([]byte(args[0].Get("data").String())); err != nil {
+		return err
+	}
+	if t.After(globalLastDBChange) {
+		globalLastDBChange = *t
+	}
+	return nil
+}
+
+func (a *App) checkRefresh() error {
+	if a.lastDBRefresh != globalLastDBChange {
+		return errors.New("out of sync")
+	}
+	return nil
+}
+
 func (a *App) saveAll() error {
-	if err := a.saveAuthorities(); err != nil {
+	if a.db == nil {
+		return nil
+	}
+	if err := a.checkRefresh(); err != nil {
 		return err
 	}
-	if err := a.saveEndpoints(); err != nil {
+	defer a.broadcastDBChange()
+	if err := a.saveAuthorities(false); err != nil {
 		return err
 	}
-	if err := a.saveHosts(); err != nil {
+	if err := a.saveEndpoints(false); err != nil {
 		return err
 	}
-	if err := a.saveKeys(); err != nil {
+	if err := a.saveHosts(false); err != nil {
 		return err
 	}
-	if err := a.saveParams(); err != nil {
+	if err := a.saveKeys(false); err != nil {
+		return err
+	}
+	if err := a.saveParams(false); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (a *App) saveAuthorities() error {
+func (a *App) saveAuthorities(broadcast bool) error {
 	if a.db == nil {
 		return nil
+	}
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
+	if broadcast {
+		defer a.broadcastDBChange()
 	}
 	return a.db.Set("authorities", a.data.Authorities)
 }
 
-func (a *App) saveEndpoints() error {
+func (a *App) saveEndpoints(broadcast bool) error {
 	if a.db == nil {
 		return nil
+	}
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
+	if broadcast {
+		defer a.broadcastDBChange()
 	}
 	return a.db.Set("endpoints", a.data.Endpoints)
 }
 
-func (a *App) saveHosts() error {
+func (a *App) saveHosts(broadcast bool) error {
 	if a.db == nil {
 		return nil
+	}
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
+	if broadcast {
+		defer a.broadcastDBChange()
 	}
 	return a.db.Set("hosts", a.data.Hosts)
 }
 
-func (a *App) saveKeys() error {
+func (a *App) saveKeys(broadcast bool) error {
 	if a.db == nil {
 		return nil
+	}
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
+	if broadcast {
+		defer a.broadcastDBChange()
 	}
 	return a.db.Set("keys", a.data.Keys)
 }
 
-func (a *App) saveParams() error {
+func (a *App) saveParams(broadcast bool) error {
 	if a.db == nil {
 		return nil
+	}
+	if err := a.checkRefresh(); err != nil {
+		return err
+	}
+	if broadcast {
+		defer a.broadcastDBChange()
 	}
 	return a.db.Set("params", a.data.Params)
 }
