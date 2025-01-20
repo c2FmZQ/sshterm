@@ -6,6 +6,10 @@
 
 * Add support for multiple screens.
 
+### :wrench: Misc
+
+* File drops are now accepted when sftp is running. Files are uploaded to the current directory.
+
 ## v0.6.3
 
 ### :star2: New features
