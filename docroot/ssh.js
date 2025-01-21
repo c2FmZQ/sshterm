@@ -109,12 +109,14 @@ let screens = {};
 function selectScreen(id) {
   for (let s in screens) {
     if (s !== id) {
+      screens[s].selected = false;
       screens[s].e.style.zIndex = 0;
       screens[s].b.style.backgroundColor = 'white';
       screens[s].b.style.color = 'black';
       screens[s].b.style.fontWeight = 'normal';
     }
   }
+  screens[id].selected = true;
   screens[id].e.style.zIndex = 1;
   screens[id].b.style.backgroundColor = 'black';
   screens[id].b.style.color = 'white';
@@ -207,10 +209,11 @@ async function addScreen() {
   .then(done => {
     cleanup(done);
     if (isTest) return;
+    const wasSelected = screens[b.id].selected;
     delete screens[b.id];
     parent.removeChild(e);
     buttons.removeChild(b);
-    if (buttons.firstChild.id in screens) {
+    if (wasSelected && buttons.firstChild.id in screens) {
       selectScreen(buttons.firstChild.id);
     }
   })
