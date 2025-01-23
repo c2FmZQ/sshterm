@@ -78,14 +78,21 @@ func (a *App) cmdSFTP(ctx *cli.Context) error {
 	return a.runSFTP(ctx.Context, ctx.Args().Get(0), ctx.String("identity"), ctx.String("jump-hosts"))
 }
 
-func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (err error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer func() {
+		if e := context.Cause(ctx); e != nil {
+			err = e
+		}
+		cancel(nil)
+	}()
 
 	c, err := a.sshClient(ctx, target, keyName, jumpHosts)
 	if err != nil {
 		return err
 	}
+	go sshKeepAlive(ctx, c, cancel)
+
 	client, err := sftp.NewClient(c)
 	if err != nil {
 		return err
