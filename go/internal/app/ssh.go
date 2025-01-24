@@ -34,6 +34,7 @@ import (
 	"net"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
@@ -84,15 +85,21 @@ func (a *App) ssh(ctx *cli.Context) error {
 	return a.runSSH(ctx.Context, ctx.Args().Get(0), ctx.String("identity"), command, ctx.Bool("forward-agent"), ctx.String("jump-hosts"))
 }
 
-func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwardAgent bool, jumpHosts string) error {
+func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwardAgent bool, jumpHosts string) (err error) {
 	t := a.term
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer func() {
+		if e := context.Cause(ctx); e != nil {
+			err = e
+		}
+		cancel(nil)
+	}()
 
 	client, err := a.sshClient(ctx, target, keyName, jumpHosts)
 	if err != nil {
 		return err
 	}
+	go sshKeepAlive(ctx, client, cancel)
 
 	t.Printf("\x1b]0;ssh %s\x07", target)
 	defer t.Printf("\x1b]0;sshterm\x07")
@@ -217,6 +224,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 			return nil, err
 		}
 	}
+
 	return client, nil
 }
 
@@ -414,4 +422,28 @@ func maskControl(s string) string {
 			return '#'
 		}
 	}, s)
+}
+
+func sshKeepAlive(ctx context.Context, client *ssh.Client, cancel context.CancelCauseFunc) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(30 * time.Second):
+		}
+		ch := make(chan struct{})
+		go func() {
+			select {
+			case <-ch:
+			case <-time.After(30 * time.Second):
+				cancel(errors.New("remote server not responding"))
+			}
+		}()
+		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+		close(ch)
+		if err != nil {
+			cancel(errors.New("remote server not responding"))
+			return
+		}
+	}
 }

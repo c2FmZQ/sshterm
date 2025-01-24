@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## Next
+
+### :wrench: Misc
+
+* Add SSH keepalive. Keepalive messages are sent every 30 seconds. No user-visible change.
+
 ## v0.7.0
 
 ### :star2: New features
