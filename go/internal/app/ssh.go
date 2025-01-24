@@ -432,7 +432,6 @@ func sshKeepAlive(ctx context.Context, client *ssh.Client, cancel context.Cancel
 		case <-time.After(30 * time.Second):
 		}
 		ch := make(chan struct{})
-		defer close(ch)
 		go func() {
 			select {
 			case <-ch:
@@ -445,5 +444,6 @@ func sshKeepAlive(ctx context.Context, client *ssh.Client, cancel context.Cancel
 			cancel(errors.New("keepalive timeout"))
 			return
 		}
+		close(ch)
 	}
 }
