@@ -4,7 +4,7 @@
 
 ### :wrench: Misc
 
-* Add SSH keepalive. Keepalive messages are sent every 15 seconds. No user-visible change.
+* Add SSH keepalive. Keepalive messages are sent every 30 seconds. No user-visible change.
 
 ## v0.7.0
 

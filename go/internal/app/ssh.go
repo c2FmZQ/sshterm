@@ -429,10 +429,20 @@ func sshKeepAlive(ctx context.Context, client *ssh.Client, cancel context.Cancel
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(15 * time.Second):
+		case <-time.After(30 * time.Second):
 		}
+		ch := make(chan struct{})
+		defer close(ch)
+		go func() {
+			select {
+			case <-ch:
+			case <-ctx.Done():
+			case <-time.After(30 * time.Second):
+				cancel(errors.New("keepalive timeout"))
+			}
+		}()
 		if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
-			cancel(errors.New("keepalive failed"))
+			cancel(errors.New("keepalive timeout"))
 			return
 		}
 	}
