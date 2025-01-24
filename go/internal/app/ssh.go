@@ -435,15 +435,15 @@ func sshKeepAlive(ctx context.Context, client *ssh.Client, cancel context.Cancel
 		go func() {
 			select {
 			case <-ch:
-			case <-ctx.Done():
 			case <-time.After(30 * time.Second):
-				cancel(errors.New("keepalive timeout"))
+				cancel(errors.New("remote server not responding"))
 			}
 		}()
-		if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
-			cancel(errors.New("keepalive timeout"))
+		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+		close(ch)
+		if err != nil {
+			cancel(errors.New("remote server not responding"))
 			return
 		}
-		close(ch)
 	}
 }
