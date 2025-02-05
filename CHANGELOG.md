@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## test
+
+### :wrench: Misc
+
+* Update go 1.23.6, and go deps.
+
 ## v0.7.1
 
 ### :wrench: Misc
