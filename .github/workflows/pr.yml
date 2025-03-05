@@ -3,7 +3,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/*'
-      - 'go.*'
+      - '.goversion'
+      - 'go/go.*'
       - '**.go'
       - '**.sh'
       - '**.js'
