@@ -1,5 +1,12 @@
 # SSH Term Release Notes
 
+## v0.7.6
+
+### :wrench: Misc
+
+* Update go 1.24.5, and go deps.
+* Fix tests for recents changes to golang.org/x/crypto.
+
 ## v0.7.5
 
 ### :wrench: Misc
