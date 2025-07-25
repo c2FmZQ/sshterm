@@ -117,9 +117,12 @@ func main() {
 		fmt.Fprintln(w, "OK")
 	})
 	mux.HandleFunc("/cakey", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprintf(w, "%s\n", ssh.MarshalAuthorizedKey(sshServerWithCert.pubKey))
+		k := ssh.MarshalAuthorizedKey(sshServerWithCert.pubKey)
+		log.Printf("/cakey: %s", k)
+		fmt.Fprintf(w, "%s\n", k)
 	})
 	mux.HandleFunc("/cert", func(w http.ResponseWriter, req *http.Request) {
+		log.Print("/cert")
 		if req.Method != "POST" {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
 			return
@@ -127,11 +130,13 @@ func main() {
 		defer req.Body.Close()
 		body, err := io.ReadAll(req.Body)
 		if err != nil {
+			log.Printf("/cert: ReadAll: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		pub, _, _, _, err := ssh.ParseAuthorizedKey(body)
 		if err != nil {
+			log.Printf("/cert: ParseAuthorizedKey: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -143,7 +148,8 @@ func main() {
 			ValidAfter:  uint64(now.Add(-5 * time.Minute).Unix()),
 			ValidBefore: uint64(now.Add(10 * time.Minute).Unix()),
 		}
-		if err := cert.SignCert(rand.Reader, sshServerWithCert.signer); err != nil {
+		if err := cert.SignCert(rand.Reader, sshServerWithCert.authority); err != nil {
+			log.Printf("/cert: SignCert: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -257,8 +263,9 @@ type sshServer struct {
 	config         *ssh.ServerConfig
 	dir            string
 
-	signer ssh.Signer
-	pubKey ssh.PublicKey
+	authority ssh.Signer
+	signer    ssh.Signer
+	pubKey    ssh.PublicKey
 }
 
 func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
@@ -270,10 +277,11 @@ func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ssh.NewPublicKey: %w", err)
 	}
-	signer, err := ssh.NewSignerFromKey(priv)
+	authority, err := ssh.NewSignerFromKey(priv)
 	if err != nil {
 		return nil, fmt.Errorf("ssh.NewSignerFromKey: %w", err)
 	}
+	signer := authority
 	if hostCert {
 		cert := &ssh.Certificate{
 			Key:      sshPub,
@@ -284,8 +292,10 @@ func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
 				"test-server",
 			},
 		}
-		cert.SignCert(rand.Reader, signer)
-		certSigner, err := ssh.NewCertSigner(cert, signer)
+		if err := cert.SignCert(rand.Reader, authority); err != nil {
+			log.Fatalf("unable to create signer cert: %v", err)
+		}
+		certSigner, err := ssh.NewCertSigner(cert, authority)
 		if err != nil {
 			return nil, fmt.Errorf("ssh.NewCertSigner: %w", err)
 		}
@@ -295,13 +305,14 @@ func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
 	server := &sshServer{
 		authorizedKeys: make(map[string]bool),
 		dir:            dir,
+		authority:      authority,
 		signer:         signer,
 		pubKey:         sshPub,
 	}
 
 	certChecker := &ssh.CertChecker{
 		IsUserAuthority: func(auth ssh.PublicKey) bool {
-			return bytes.Equal(signer.PublicKey().Marshal(), auth.Marshal())
+			return bytes.Equal(authority.PublicKey().Marshal(), auth.Marshal())
 		},
 		UserKeyFallback: func(c ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
 			server.mu.Lock()

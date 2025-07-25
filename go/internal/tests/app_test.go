@@ -360,6 +360,7 @@ func TestHostCerts(t *testing.T) {
 		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 		{Type: "ca import testca test-server\n", Expect: prompt},
+		{Type: "ca list\n", Expect: prompt},
 		{Type: "ep add test-server websocket?cert=true\n", Expect: prompt},
 		{Type: "ssh testuser@test-server foo\n", Expect: `Host certificate for test-server is trusted`},
 		{Expect: "Password: "},
