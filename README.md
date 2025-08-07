@@ -98,3 +98,6 @@ To run the tests and watch the output, start the test server:
 ```
 
 and then open `http://<hostname>:8880/tests.html` in your favorite browser.
+
+[Watch the video](https://www.youtube.com/watch?v=wwoTMb_pqw8)
+
