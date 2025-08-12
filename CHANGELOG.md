@@ -1,6 +1,6 @@
 # SSH Term Release Notes
 
-## next
+## v0.7.7
 
 ### :wrench: Misc
 
