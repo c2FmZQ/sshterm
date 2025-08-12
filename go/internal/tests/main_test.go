@@ -255,9 +255,6 @@ func (t *termIO) Type(input string) {
 	t.buf.Reset()
 	for _, c := range input {
 		time.Sleep(20 * time.Millisecond)
-		if c == '\n' {
-			appConfig.Term.Call("input", "\r", true)
-		}
 		appConfig.Term.Call("input", fmt.Sprintf("%c", c), true)
 	}
 }

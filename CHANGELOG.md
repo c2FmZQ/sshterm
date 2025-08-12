@@ -1,5 +1,12 @@
 # SSH Term Release Notes
 
+## next
+
+### :wrench: Misc
+
+* Update go 1.25.0, and go deps.
+* Small fix for a change in term/Terminal (https://cs.opensource.google/go/x/term/+/4f53e0cd3924d70667107169374a480bfd208348)
+
 ## v0.7.6
 
 ### :wrench: Misc
