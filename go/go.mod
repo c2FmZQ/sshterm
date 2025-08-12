@@ -9,8 +9,8 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/pkg/sftp v1.13.9
 	github.com/urfave/cli/v2 v2.27.7
-	golang.org/x/crypto v0.40.0
-	golang.org/x/term v0.33.0
+	golang.org/x/crypto v0.41.0
+	golang.org/x/term v0.34.0
 )
 
 require (
@@ -24,5 +24,5 @@ require (
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20250705151800-55b8f293f342 // indirect
-	golang.org/x/sys v0.34.0 // indirect
+	golang.org/x/sys v0.35.0 // indirect
 )

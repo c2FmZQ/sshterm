@@ -430,8 +430,6 @@ func (a *App) Run() error {
 							t.Errorf("%v", err)
 						}
 					}
-					a.cfg.Term.Call("input", "\n")
-					a.cfg.Term.Call("input", "\n")
 				},
 				func(err any) { // catch
 					t.Errorf("%T %v", err, err)
