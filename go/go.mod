@@ -5,7 +5,7 @@ go 1.24
 toolchain go1.24.0
 
 require (
-	github.com/chromedp/chromedp v0.13.7
+	github.com/chromedp/chromedp v0.14.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/pkg/sftp v1.13.9
 	github.com/urfave/cli/v2 v2.27.7
@@ -14,10 +14,10 @@ require (
 )
 
 require (
-	github.com/chromedp/cdproto v0.0.0-20250518235601-40b4c35ec9fe // indirect
+	github.com/chromedp/cdproto v0.0.0-20250803210736-d308e07a266d // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
-	github.com/go-json-experiment/json v0.0.0-20250714165856-be8212f5270d // indirect
+	github.com/go-json-experiment/json v0.0.0-20250812200409-1b6c92ecbf10 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
