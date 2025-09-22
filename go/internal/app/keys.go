@@ -45,6 +45,8 @@ import (
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/c2FmZQ/sshterm/internal/jsutil"
 )
 
 func (a *App) generateKey(name, passphrase, idp, typ string, bits int) (*key, error) {
@@ -502,7 +504,9 @@ func (k *key) updateCert() error {
 		return err
 	}
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("x-csrf-check", "1")
+	if sid := jsutil.TLSProxySID(); sid != "" {
+		req.Header.Set("x-csrf-token", sid)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("%q: %w", k.Provider, err)

@@ -1,5 +1,15 @@
 # SSH Term Release Notes
 
+## v0.7.8
+
+### :wrench: Bug fix
+
+* Update to use the new TLSPROXY csrf token format. This only affected ssh certificates coming from a TLSPROXY SSH CA.
+
+### :wrench: Misc
+
+* Update go 1.25.1, and go deps.
+
 ## v0.7.7
 
 ### :wrench: Misc
