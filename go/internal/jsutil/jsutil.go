@@ -28,6 +28,7 @@ package jsutil
 import (
 	"fmt"
 	"io"
+	"regexp"
 	"syscall/js"
 )
 
@@ -204,4 +205,13 @@ func ExportFile(data []byte, filename, mimeType string) error {
 	anchor.Call("click")
 	Body.Call("removeChild", anchor)
 	return nil
+}
+
+func TLSProxySID() string {
+	re := regexp.MustCompile(`__tlsproxySid=([^;]*)(;|$)`)
+	m := re.FindStringSubmatch(Document.Get("cookie").String())
+	if len(m) > 1 {
+		return m[1]
+	}
+	return ""
 }
