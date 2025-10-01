@@ -50,21 +50,30 @@ import (
 )
 
 func (a *App) generateKey(name, passphrase, idp, typ string, bits int) (*key, error) {
-	pub, priv, err := createKey(typ, bits)
+	pub, priv, err := a.createKey(typ, bits, name)
 	if err != nil {
 		return nil, err
 	}
-	sshPub, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		return nil, fmt.Errorf("ssh.NewPublicKey: %w", err)
-	}
+	var sshPub ssh.PublicKey
 	var privPEM *pem.Block
-	if passphrase == "" {
-		if privPEM, err = ssh.MarshalPrivateKey(priv, ""); err != nil {
-			return nil, fmt.Errorf("ssh.MarshalPrivateKey: %w", err)
+	if k, ok := priv.(*webAuthnKey); ok {
+		pp, err := k.Private(passphrase)
+		if err != nil {
+			return nil, err
 		}
-	} else if privPEM, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase)); err != nil {
-		return nil, fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
+		privPEM = pp
+		sshPub = k.PublicKey()
+	} else {
+		if sshPub, err = ssh.NewPublicKey(pub); err != nil {
+			return nil, fmt.Errorf("ssh.NewPublicKey: %w", err)
+		}
+		if passphrase == "" {
+			if privPEM, err = ssh.MarshalPrivateKey(priv, ""); err != nil {
+				return nil, fmt.Errorf("ssh.MarshalPrivateKey: %w", err)
+			}
+		} else if privPEM, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase)); err != nil {
+			return nil, fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
+		}
 	}
 	k := &key{
 		Name:     name,
@@ -102,9 +111,9 @@ func (a *App) keysCommand() *cli.App {
 					sort.Strings(names)
 					for _, n := range names {
 						key := a.data.Keys[n]
-						pub, err := ssh.ParsePublicKey(key.Public)
+						pub, err := key.sshPublicKey()
 						if err != nil {
-							a.term.Errorf("ssh.ParsePublicKey: %v", err)
+							a.term.Errorf("sshPublicKey: %v", err)
 							continue
 						}
 						m := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub)))
@@ -123,7 +132,7 @@ func (a *App) keysCommand() *cli.App {
 						Name:    "type",
 						Aliases: []string{"t"},
 						Value:   "ed25519",
-						Usage:   "The type of key to generate: ecdsa, ed25519, or rsa.",
+						Usage:   "The type of key to generate: ecdsa, ecdsa-sk, ed25519, or rsa.",
 					},
 					&cli.IntFlag{
 						Name:    "bits",
@@ -194,7 +203,7 @@ func (a *App) keysCommand() *cli.App {
 					if !exists {
 						return fmt.Errorf("unknown key %q", name)
 					}
-					pub, err := ssh.ParsePublicKey(key.Public)
+					pub, err := key.sshPublicKey()
 					if err != nil {
 						return err
 					}
@@ -296,7 +305,7 @@ func (a *App) keysCommand() *cli.App {
 						}
 						return a.exportFile(key.Private, name+".key", "application/octet-stream")
 					}
-					pub, err := ssh.ParsePublicKey(key.Public)
+					pub, err := key.sshPublicKey()
 					if err != nil {
 						return err
 					}
@@ -338,13 +347,13 @@ func (a *App) keysCommand() *cli.App {
 					}
 					pcert, _, _, _, err := ssh.ParseAuthorizedKey(content)
 					if err != nil {
-						return fmt.Errorf("ssh.ParsePublicKey: %v", err)
+						return fmt.Errorf("ssh.ParseAuthorizedKey: %v", err)
 					}
 					cert, ok := pcert.(*ssh.Certificate)
 					if !ok {
 						return fmt.Errorf("file %q does not contain a valid certificate", f.Name)
 					}
-					pub, err := ssh.ParsePublicKey(key.Public)
+					pub, err := key.sshPublicKey()
 					if err != nil {
 						return err
 					}
@@ -366,10 +375,20 @@ func (a *App) keysCommand() *cli.App {
 	}
 }
 
-func createKey(t string, b int) (crypto.PublicKey, crypto.PrivateKey, error) {
+func (a *App) createKey(t string, b int, name string) (crypto.PublicKey, crypto.PrivateKey, error) {
 	switch t {
 	case "ed25519", "":
 		return ed25519.GenerateKey(rand.Reader)
+
+	case "ecdsa-sk":
+		if b != 0 && b != 256 {
+			return nil, nil, fmt.Errorf("invalid key length %d", b)
+		}
+		key, err := createWebAuthnKey(name)
+		if err != nil {
+			return nil, nil, err
+		}
+		return key.PublicKey(), key, nil
 
 	case "ecdsa":
 		if b == 0 {
@@ -469,6 +488,17 @@ type key struct {
 	errorf func(string, ...any)
 }
 
+func (k *key) isWebAuthn() bool {
+	return bytes.HasPrefix(k.Private, []byte("-----BEGIN WEBAUTHN "))
+}
+
+func (k *key) sshPublicKey() (ssh.PublicKey, error) {
+	if k.isWebAuthn() {
+		return unmarshalWebAuthnKey(nil, k.Public, k.Name, nil)
+	}
+	return ssh.ParsePublicKey(k.Public)
+}
+
 func (k *key) Certificate() (cert *ssh.Certificate) {
 	parseCert := func() *ssh.Certificate {
 		c, _, _, _, err := ssh.ParseAuthorizedKey(k.CertBytes)
@@ -495,7 +525,7 @@ func (k *key) updateCert() error {
 	if k.Provider == "" {
 		return nil
 	}
-	pub, err := ssh.ParsePublicKey(k.Public)
+	pub, err := k.sshPublicKey()
 	if err != nil {
 		return err
 	}
@@ -552,6 +582,16 @@ func (k *key) PrivateKey(rp func(string) (string, error)) (any, error) {
 }
 
 func (k *key) Signer(rp func(string) (string, error)) (ssh.Signer, error) {
+	if k.isWebAuthn() {
+		key, err := unmarshalWebAuthnKey(k.Private, k.Public, k.Name, rp)
+		if err != nil {
+			return nil, err
+		}
+		return &dynSigner{
+			Signer: key,
+			key:    k,
+		}, nil
+	}
 	priv, err := k.PrivateKey(rp)
 	if err != nil {
 		return nil, err

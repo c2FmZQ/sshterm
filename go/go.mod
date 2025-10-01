@@ -4,6 +4,7 @@ go 1.25
 
 require (
 	github.com/chromedp/chromedp v0.14.1
+	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/pkg/sftp v1.13.9
 	github.com/urfave/cli/v2 v2.27.7
@@ -21,6 +22,7 @@ require (
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xrash/smetrics v0.0.0-20250705151800-55b8f293f342 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 )
