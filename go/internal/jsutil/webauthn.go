@@ -27,7 +27,6 @@ package jsutil
 
 import (
 	"errors"
-	"log"
 	"syscall/js"
 )
 
@@ -131,7 +130,6 @@ func WebAuthnGet(opts GetOptions) (*GetResponse, error) {
 		}),
 	))
 	if err != nil {
-		log.Printf("XXXX get: %#v", err)
 		return nil, err
 	}
 	pkc := creds.Get("response")
