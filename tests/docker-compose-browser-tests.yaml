@@ -1,21 +1,29 @@
 services:
   chrome:
     container_name: "headless-shell"
-    image: "chromedp/headless-shell:141.0.7340.0"
+    image: "chromedp/headless-shell:141.0.7390.37"
     user: "65534:65534"
     shm_size: "2gb"
     command: [
       "--ignore-certificate-errors",
-      "--enable-features=WebAuthentication,WebAuthnTestingAPI"
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
     ]
     healthcheck:
       test: ["CMD", "true"]
       interval: 5s
       retries: 5
       start_period: 5s
+    volumes:
+      - type: tmpfs
+        target: /nonexistent
+        tmpfs:
+          size: 10M
+          mode: 0o777
 
   devtest:
     container_name: "devtest"
+    hostname: "devtest.local"
     image: "sshterm-testserver"
     user: "65534:65534"
     command: "--with-chromedp=ws://chrome:9222"
@@ -25,7 +33,7 @@ services:
         target: /tmp
         tmpfs:
           size: 100M
-          mode: 0o777
+          mode: 0o1777
     depends_on:
       chrome:
         condition: service_healthy

@@ -102,8 +102,7 @@ func Await(p js.Value) (js.Value, error) {
 		return nil
 	}
 	reject := func(this js.Value, args []js.Value) any {
-		e <- fmt.Errorf("%v", js.Global().Get("JSON").Call("stringify", args[0]).String())
-		//e <- fmt.Errorf("%v", args[0])
+		e <- fmt.Errorf("promise rejected: %#v", args)
 		return nil
 	}
 	p.Call("then", js.FuncOf(resolve)).

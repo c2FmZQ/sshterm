@@ -61,10 +61,11 @@ type webAuthnKey struct {
 func createWebAuthnKey(name string) (*webAuthnKey, error) {
 	challenge := make([]byte, 32)
 	rand.Read(challenge)
+	uid := sha256.Sum256([]byte(name))
 	resp, err := jsutil.WebAuthnCreate(jsutil.CreateOptions{
 		Challenge: challenge,
 		Alg:       webauthn.AlgES256,
-		UserID:    []byte(name),
+		UserID:    uid[:],
 		UserName:  name,
 	})
 	if err != nil {

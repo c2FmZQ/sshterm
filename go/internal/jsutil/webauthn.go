@@ -56,33 +56,37 @@ func WebAuthnCreate(opts CreateOptions) (*CreateResponse, error) {
 			"type": "public-key",
 		}))
 	}
-
-	creds, err := Await(cc.Call("create",
-		NewObject(map[string]any{
-			"publicKey": NewObject(map[string]any{
-				"attestation":        "none",
-				"residentKey":        "preferred",
-				"userVerification":   "required",
-				"challenge":          Uint8ArrayFromBytes(opts.Challenge),
-				"excludeCredentials": NewArray(exclude),
-				"pubKeyCredParams": NewArray([]any{
-					NewObject(map[string]any{
-						"alg":  opts.Alg,
-						"type": "public-key",
-					}),
+	host := Hostname()
+	creationOptions := NewObject(map[string]any{
+		"publicKey": NewObject(map[string]any{
+			"attestation":        "none",
+			"residentKey":        "preferred",
+			"userVerification":   "required",
+			"challenge":          Uint8ArrayFromBytes(opts.Challenge),
+			"excludeCredentials": NewArray(exclude),
+			"pubKeyCredParams": NewArray([]any{
+				NewObject(map[string]any{
+					"alg":  opts.Alg,
+					"type": "public-key",
 				}),
-				"rp": NewObject(map[string]any{
-					"name": Hostname(),
-				}),
-				"timeout": 120000,
-				"user": NewObject(map[string]any{
-					"displayName": "SSH TERM: " + opts.UserName,
-					"id":          Uint8ArrayFromBytes(opts.UserID),
-					"name":        opts.UserName,
+				NewObject(map[string]any{
+					"alg":  -257, // RSA, just to remove a warning from chrome
+					"type": "public-key",
 				}),
 			}),
+			"rp": NewObject(map[string]any{
+				"id":   host,
+				"name": host,
+			}),
+			"timeout": 120000,
+			"user": NewObject(map[string]any{
+				"displayName": "SSHTERM KEY: " + opts.UserName,
+				"id":          Uint8ArrayFromBytes(opts.UserID),
+				"name":        opts.UserName,
+			}),
 		}),
-	))
+	})
+	creds, err := Await(cc.Call("create", creationOptions))
 	if err != nil {
 		return nil, err
 	}
