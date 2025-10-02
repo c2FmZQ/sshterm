@@ -26,12 +26,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -50,7 +56,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "This tool is intended to run in a container.\n")
 		os.Exit(1)
 	}
-	addr := flag.String("addr", ":8880", "The TCP address to listen to")
+	addr := flag.String("addr", ":8443", "The TCP address to listen to")
 	docRoot := flag.String("document-root", "", "The document root directory")
 	withChromeDP := flag.String("with-chromedp", "", "The url of the remote debugging port")
 
@@ -171,13 +177,53 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Generate self-signed certificate
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		log.Fatal(err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"Test"},
+		},
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(time.Hour),
+		KeyUsage:    x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:    []string{"devtest"},
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	certFile := tmpDir + "/cert.pem"
+	certOut, err := os.Create(certFile)
+	if err != nil {
+		log.Fatalf("failed to open cert.pem for writing: %s", err)
+	}
+	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	certOut.Close()
+
+	keyFile := tmpDir + "/key.pem"
+	keyOut, err := os.Create(keyFile)
+	if err != nil {
+		log.Fatalf("failed to open key.pem for writing: %s", err)
+	}
+	b, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		log.Fatalf("Unable to marshal ECDSA private key: %v", err)
+	}
+	pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: b})
+	keyOut.Close()
+
 	go func() {
 		l, err := net.Listen("tcp", *addr)
 		if err != nil {
 			log.Fatalf("listen: %v", err)
 		}
-		log.Printf("HTTP Server listening on %s. Document root is %s\n", l.Addr(), *docRoot)
-		if err := httpServer.Serve(l); err != nil && err != http.ErrServerClosed {
+		log.Printf("HTTPS Server listening on %s. Document root is %s\n", l.Addr(), *docRoot)
+		if err := httpServer.ServeTLS(l, certFile, keyFile); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
 	}()
@@ -194,7 +240,7 @@ func main() {
 
 	var res, output string
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate("http://devtest:8880/tests.html"),
+		chromedp.Navigate("https://devtest:8443/tests.html"),
 		chromedp.WaitVisible("#done"),
 		chromedp.Evaluate(`window.sshApp.exited`, &res),
 		chromedp.Evaluate(`window.sshApp.term.selectAll(), window.sshApp.term.getSelection()`, &output),

@@ -4,6 +4,10 @@ services:
     image: "chromedp/headless-shell:141.0.7340.0"
     user: "65534:65534"
     shm_size: "2gb"
+    command: [
+      "--ignore-certificate-errors",
+      "--enable-features=WebAuthentication,WebAuthnTestingAPI"
+    ]
     healthcheck:
       test: ["CMD", "true"]
       interval: 5s
@@ -21,6 +25,7 @@ services:
         target: /tmp
         tmpfs:
           size: 100M
+          mode: 0o777
     depends_on:
       chrome:
         condition: service_healthy
