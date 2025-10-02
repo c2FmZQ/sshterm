@@ -59,9 +59,11 @@ func WebAuthnCreate(opts CreateOptions) (*CreateResponse, error) {
 	host := Hostname()
 	creationOptions := NewObject(map[string]any{
 		"publicKey": NewObject(map[string]any{
-			"attestation":        "none",
-			"residentKey":        "preferred",
-			"userVerification":   "required",
+			"attestation": "none",
+			"authenticatorSelection": NewObject(map[string]any{
+				"residentKey":      "preferred",
+				"userVerification": "preferred",
+			}),
 			"challenge":          Uint8ArrayFromBytes(opts.Challenge),
 			"excludeCredentials": NewArray(exclude),
 			"pubKeyCredParams": NewArray([]any{
@@ -128,8 +130,9 @@ func WebAuthnGet(opts GetOptions) (*GetResponse, error) {
 			"publicKey": NewObject(map[string]any{
 				"allowCredentials": NewArray(allow),
 				"challenge":        Uint8ArrayFromBytes(opts.Challenge),
+				"rpId":             Hostname(),
 				"timeout":          120000,
-				"userVerification": "required",
+				"userVerification": "preferred",
 			}),
 		}),
 	))

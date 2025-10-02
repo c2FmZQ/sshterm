@@ -102,7 +102,7 @@ func Await(p js.Value) (js.Value, error) {
 		return nil
 	}
 	reject := func(this js.Value, args []js.Value) any {
-		e <- fmt.Errorf("promise rejected: %#v", args)
+		e <- fmt.Errorf("%s", args[0].Call("toString"))
 		return nil
 	}
 	p.Call("then", js.FuncOf(resolve)).
