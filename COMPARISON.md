@@ -7,10 +7,24 @@ This document compares the architecture and security model of SSH Term with othe
 Web-based SSH solutions generally fall into two architectural categories:
 
 1.  **Server-Side Gateway Model:** The web server runs the actual `ssh` client process. The browser acts as a thin client, rendering a terminal UI (like xterm.js) and relaying keystrokes to the server. The server pipes the I/O of the `ssh` process back and forth to the browser, usually over a WebSocket.
-    *   *Examples: Shell In A Box, Wetty, Gate One, Apache Guacamole.*
+    **Examples:**
+
+*   [Shell In A Box](https://github.com/shellinabox/shellinabox) (Server-side web terminal)
+*   [Wetty](https://github.com/butlerx/wetty) (Server-side web terminal)
+*   [Gate One](https://github.com/liftoff/GateOne) (Server-side web terminal)
+*   [Apache Guacamole](https://guacamole.apache.org/) (Clientless remote desktop gateway)
+*   [WebSSH (Python)](https://github.com/huashengdun/webssh) (Server-side web terminal)
+*   [GoTTY](https://github.com/yudai/gotty) (Server-side web terminal)
+*   [Bastillion](https://bastillion.io/) (Web-based SSH bastion host)
 
 2.  **Client-Side WASM Model:** The entire SSH client is compiled to WebAssembly (WASM) and runs directly inside the user's browser. The browser is the SSH client. A lightweight, stateless WebSocket-to-TCP proxy is still required on the server-side, but it does not run the `ssh` process or handle any credentials.
-    *   *Examples: SSH Term, Google's [Secure Shell App](https://chrome.google.com/webstore/detail/secure-shell-app/pnhechapfaindjhompbnflcldabbghjo) (for ChromeOS & Chrome browser), [hullarb/ssheasy](https://github.com/hullarb/ssheasy).*
+**Examples:**
+
+*   [sshterm](https://github.com/c2FmZQ/sshterm) (WebAssembly-based client)
+*   [ssheasy](https://github.com/hullarb/ssheasy) (WebAssembly-based client)
+*   [piping-ssh](https://github.com/nwtgck/piping-ssh-web) (WebAssembly-based client)
+*   [Tailscale SSH Console](https://tailscale.com/blog/ssh-console/) (WebAssembly-based client)
+*   [SSHy](https://github.com/stuicey/SSHy) (HTML5/JavaScript-based client)
 
 SSH Term is a prime example of the Client-Side WASM model, which gives it a fundamentally different security posture and operational profile compared to the more traditional Server-Side Gateway model.
 
