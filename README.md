@@ -68,6 +68,7 @@ SSH Term connects to SSH servers via a WebSocket proxy. You will need to configu
     ```console
     ep add myserver wss://ssh.example.com/myserver
     ```
+    The URL can also be a relative path, e.g. `./myserver`.
     Alternatively, you can provide this configuration in a `config.json` file in the `docroot` directory.
 
 ### Using `config.json`
@@ -134,7 +135,7 @@ Follow these steps to get connected for the first time.
     ```console
     ep add my-server wss://ssh.example.com/my-server
     ```
-    Replace `my-server` with a name of your choice and the URL with the one provided by your `tlsproxy` configuration.
+    Replace `my-server` with a name of your choice and the URL with the one provided by your `tlsproxy` configuration. The URL can be absolute or relative.
 
 2.  **Generate an SSH Key**
 
