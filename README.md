@@ -257,18 +257,17 @@ The codebase is organized into the following main directories:
 
 *   `go/`: Contains all the Go source code for the SSH client. This code is compiled into a WebAssembly (`.wasm`) module.
     *   `go/internal/app/`: Defines all the application's commands (`ssh`, `keys`, `ep`, etc.).
-    *   `go/internal/terminal/`: A Go wrapper for the `xterm.js` terminal to handle I/O.
-    *   `go/internal/websocket/`: Implements a `net.Conn` interface over a browser WebSocket.
     *   `go/internal/indexeddb/`: A Go wrapper for the browser's IndexedDB API for local storage.
     *   `go/internal/jsutil/`: Utilities for Go-to-JavaScript interoperability.
-    *   `go/internal/webauthnsk/`: Implements the `ecdsa-sk` (WebAuthn) key type.
+    *   `go/internal/terminal/`: A Go wrapper for the `xterm.js` terminal to handle I/O.
     *   `go/internal/shellwords/`: Handles shell-style command-line parsing.
+    *   `go/internal/websocket/`: Implements a `net.Conn` interface over a browser WebSocket.
+    *   `go/internal/webauthnsk/`: Implements the `ecdsa-sk` (WebAuthn) key type.
     *   `go/internal/tests/`: Contains internal end-to-end tests for the Go application, which are also compiled to WASM and run in a browser.
     *   `go/internal/testserver/`: A backend server used for running the internal Go tests, providing a mock SSH server and other endpoints.
 *   `docroot/`: The web root for the application. It contains the main `index.html`, the compiled `ssh.wasm` binary, and the necessary JavaScript and CSS assets. This is the directory you would serve to users.
 *   `xterm/`: Contains the `xterm.js` frontend component and its dependencies, which provides the terminal UI.
 *   `tests/`: Contains scripts and Docker configurations for running the end-to-end browser tests.
-*   `.github/`: Holds the GitHub Actions workflow definitions for continuous integration (CI).
 *   `build.sh`: The main build script that compiles the Go code into WASM and moves all necessary assets into the `docroot/` directory.
 
 2.  **Run the tests:**
