@@ -195,10 +195,10 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 *   `agent lock` - Locks the agent with a passphrase.
 *   `agent unlock` - Unlocks the agent.
 
-#### Known Hosts Management (`host`)
+#### Known Hosts Management (`hosts`)
 
-*   `host list` - Lists all known hosts.
-*   `host delete <name>` - Deletes a known host.
+*   `hosts list` - Lists all known hosts.
+*   `hosts delete <name>` - Deletes a known host.
 
 #### Certificate Authority Management (`ca`)
 
