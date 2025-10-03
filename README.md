@@ -12,7 +12,7 @@ Supported features:
 
 * [x] Connect to any WebSocket endpoints configured in tlsproxy.
 * [x] Connect to remote servers via jump hosts.
-* [x] Generate SSH keys (rsa, ecdsa, ed25519).
+* [x] Generate SSH keys (rsa, ecdsa, ecdsa-sk, ed25519).
 * [x] Import and export SSH keys (rsa, dsa, ecdsa, ed25519).
 * [x] Backup & restore.
 * [x] Persist data to local storage (optional, on by default).
@@ -21,11 +21,11 @@ Supported features:
 * [x] In-memory SSH agent and agent forwarding.
 * [x] SFTP client with Streaming upload and download.
 * [x] Accept host certificates signed by a trusted authority.
+* [x] WebAuthn security keys / passkeys.
 
 Not implemented:
 
 * [ ] Port forwarding.
-* [ ] Security keys.
 
 ## How to install
 

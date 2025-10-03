@@ -47,24 +47,42 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
+	"github.com/c2FmZQ/sshterm/internal/webauthnsk"
 )
 
 func (a *App) generateKey(name, passphrase, idp, typ string, bits int) (*key, error) {
-	pub, priv, err := createKey(typ, bits)
-	if err != nil {
-		return nil, err
-	}
-	sshPub, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		return nil, fmt.Errorf("ssh.NewPublicKey: %w", err)
-	}
+	var sshPub ssh.PublicKey
 	var privPEM *pem.Block
-	if passphrase == "" {
-		if privPEM, err = ssh.MarshalPrivateKey(priv, ""); err != nil {
-			return nil, fmt.Errorf("ssh.MarshalPrivateKey: %w", err)
+
+	if typ == "ecdsa-sk" {
+		if bits != 0 && bits != 256 {
+			return nil, fmt.Errorf("invalid key length %d", bits)
 		}
-	} else if privPEM, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase)); err != nil {
-		return nil, fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
+		sk, err := webauthnsk.Create(name)
+		if err != nil {
+			return nil, fmt.Errorf("webauthnsk.Create: %w", err)
+		}
+		pp, err := sk.MarshalPrivate(passphrase)
+		if err != nil {
+			return nil, fmt.Errorf("sk.MarshalPrivate: %w", err)
+		}
+		privPEM = pp
+		sshPub = sk.PublicKey()
+	} else {
+		pub, priv, err := createKey(typ, bits)
+		if err != nil {
+			return nil, err
+		}
+		if sshPub, err = ssh.NewPublicKey(pub); err != nil {
+			return nil, fmt.Errorf("ssh.NewPublicKey: %w", err)
+		}
+		if passphrase == "" {
+			if privPEM, err = ssh.MarshalPrivateKey(priv, ""); err != nil {
+				return nil, fmt.Errorf("ssh.MarshalPrivateKey: %w", err)
+			}
+		} else if privPEM, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase)); err != nil {
+			return nil, fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
+		}
 	}
 	k := &key{
 		Name:     name,
@@ -81,7 +99,7 @@ func (a *App) keysCommand() *cli.App {
 	return &cli.App{
 		Name:            "keys",
 		Usage:           "Manage user keys and certificates",
-		UsageText:       "keys <list|generate|delete|show|import|import-cert|export>",
+		UsageText:       "keys <list|generate|delete|show|change-pass|import|import-cert|export>",
 		Description:     "The keys command is used to manage user keys and certificates.",
 		HideHelpCommand: true,
 		DefaultCommand:  "list",
@@ -102,9 +120,9 @@ func (a *App) keysCommand() *cli.App {
 					sort.Strings(names)
 					for _, n := range names {
 						key := a.data.Keys[n]
-						pub, err := ssh.ParsePublicKey(key.Public)
+						pub, err := key.sshPublicKey()
 						if err != nil {
-							a.term.Errorf("ssh.ParsePublicKey: %v", err)
+							a.term.Errorf("sshPublicKey: %v", err)
 							continue
 						}
 						m := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub)))
@@ -123,7 +141,7 @@ func (a *App) keysCommand() *cli.App {
 						Name:    "type",
 						Aliases: []string{"t"},
 						Value:   "ed25519",
-						Usage:   "The type of key to generate: ecdsa, ed25519, or rsa.",
+						Usage:   "The type of key to generate: ecdsa, ecdsa-sk, ed25519, or rsa.",
 					},
 					&cli.IntFlag{
 						Name:    "bits",
@@ -141,7 +159,7 @@ func (a *App) keysCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
-					passphrase, err := a.term.ReadPassword("Enter passphrase for private key: ")
+					passphrase, err := a.term.ReadPassword("Enter a passphrase for the private key: ")
 					if err != nil {
 						return fmt.Errorf("ReadPassword: %w", err)
 					}
@@ -194,7 +212,7 @@ func (a *App) keysCommand() *cli.App {
 					if !exists {
 						return fmt.Errorf("unknown key %q", name)
 					}
-					pub, err := ssh.ParsePublicKey(key.Public)
+					pub, err := key.sshPublicKey()
 					if err != nil {
 						return err
 					}
@@ -211,6 +229,73 @@ func (a *App) keysCommand() *cli.App {
 					if key.Provider != "" {
 						a.term.Printf("Identity Provider: %s\n", key.Provider)
 					}
+					return nil
+				},
+			},
+			{
+				Name:      "change-pass",
+				Usage:     "Change a key's passphrase",
+				UsageText: "keys change-pass <name>",
+				Action: func(ctx *cli.Context) error {
+					if ctx.Args().Len() != 1 {
+						cli.ShowSubcommandHelp(ctx)
+						return nil
+					}
+					name := ctx.Args().Get(0)
+					key, exists := a.data.Keys[name]
+					if !exists {
+						return fmt.Errorf("unknown key %q", name)
+					}
+					prompt := func() (string, error) {
+						passphrase, err := a.term.ReadPassword("Enter a NEW passphrase for the private key: ")
+						if err != nil {
+							return "", fmt.Errorf("ReadPassword: %w", err)
+						}
+						passphrase2, err := a.term.ReadPassword("Re-enter the same new passphrase: ")
+						if err != nil {
+							return "", fmt.Errorf("ReadPassword: %w", err)
+						}
+						if passphrase != passphrase2 {
+							return "", fmt.Errorf("passphrase doesn't match")
+						}
+						return passphrase, nil
+					}
+					var privPEM *pem.Block
+					if bytes.HasPrefix(key.Private, []byte("-----BEGIN WEBAUTHN ")) {
+						sk, err := webauthnsk.Unmarshal(key.Private, name, a.term.ReadPassword)
+						if err != nil {
+							return fmt.Errorf("webauthnsk.Unmarshal: %w", err)
+						}
+						pp, err := prompt()
+						if err != nil {
+							return err
+						}
+						if privPEM, err = sk.MarshalPrivate(pp); err != nil {
+							return err
+						}
+					} else {
+						priv, err := key.PrivateKey(a.term.ReadPassword)
+						if err != nil {
+							return fmt.Errorf("%q: %w", name, err)
+						}
+						pp, err := prompt()
+						if err != nil {
+							return err
+						}
+						if pp == "" {
+							if privPEM, err = ssh.MarshalPrivateKey(priv, ""); err != nil {
+								return fmt.Errorf("ssh.MarshalPrivateKey: %w", err)
+							}
+						} else if privPEM, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(pp)); err != nil {
+							return fmt.Errorf("ssh.MarshalPrivateKeyWithPassphrase: %w", err)
+						}
+					}
+					key.Private = pem.EncodeToMemory(privPEM)
+					a.data.Keys[name] = key
+					if err := a.saveKeys(true); err != nil {
+						return err
+					}
+					a.term.Printf("Passphrase changed for key %q\n", name)
 					return nil
 				},
 			},
@@ -246,21 +331,29 @@ func (a *App) keysCommand() *cli.App {
 						Private: content,
 						errorf:  a.term.Errorf,
 					}
-					priv, err := key.PrivateKey(a.term.ReadPassword)
-					if err != nil {
-						return fmt.Errorf("%q: %w", f.Name, err)
-					}
-					var pub crypto.PublicKey
-					if k, ok := priv.(crypto.Signer); ok {
-						pub = k.Public()
+					if key.isWebAuthn() {
+						sk, err := webauthnsk.Unmarshal(content, name, a.term.ReadPassword)
+						if err != nil {
+							return fmt.Errorf("webauthnsk.Unmarshal: %w", err)
+						}
+						key.Public = sk.Marshal()
 					} else {
-						return fmt.Errorf("key type %T is not supported", priv)
+						priv, err := key.PrivateKey(a.term.ReadPassword)
+						if err != nil {
+							return fmt.Errorf("%q: %w", f.Name, err)
+						}
+						var pub crypto.PublicKey
+						if k, ok := priv.(crypto.Signer); ok {
+							pub = k.Public()
+						} else {
+							return fmt.Errorf("key type %T is not supported", priv)
+						}
+						sshPub, err := ssh.NewPublicKey(pub)
+						if err != nil {
+							return fmt.Errorf("ssh.NewPublicKey: %w", err)
+						}
+						key.Public = sshPub.Marshal()
 					}
-					sshPub, err := ssh.NewPublicKey(pub)
-					if err != nil {
-						return fmt.Errorf("ssh.NewPublicKey: %w", err)
-					}
-					key.Public = sshPub.Marshal()
 					a.data.Keys[name] = key
 					if err := a.saveKeys(true); err != nil {
 						return err
@@ -296,7 +389,7 @@ func (a *App) keysCommand() *cli.App {
 						}
 						return a.exportFile(key.Private, name+".key", "application/octet-stream")
 					}
-					pub, err := ssh.ParsePublicKey(key.Public)
+					pub, err := key.sshPublicKey()
 					if err != nil {
 						return err
 					}
@@ -338,13 +431,13 @@ func (a *App) keysCommand() *cli.App {
 					}
 					pcert, _, _, _, err := ssh.ParseAuthorizedKey(content)
 					if err != nil {
-						return fmt.Errorf("ssh.ParsePublicKey: %v", err)
+						return fmt.Errorf("ssh.ParseAuthorizedKey: %v", err)
 					}
 					cert, ok := pcert.(*ssh.Certificate)
 					if !ok {
 						return fmt.Errorf("file %q does not contain a valid certificate", f.Name)
 					}
-					pub, err := ssh.ParsePublicKey(key.Public)
+					pub, err := key.sshPublicKey()
 					if err != nil {
 						return err
 					}
@@ -469,6 +562,17 @@ type key struct {
 	errorf func(string, ...any)
 }
 
+func (k *key) isWebAuthn() bool {
+	return bytes.HasPrefix(k.Private, []byte("-----BEGIN WEBAUTHN "))
+}
+
+func (k *key) sshPublicKey() (ssh.PublicKey, error) {
+	if k.isWebAuthn() {
+		return webauthnsk.UnmarshalPublic(k.Public)
+	}
+	return ssh.ParsePublicKey(k.Public)
+}
+
 func (k *key) Certificate() (cert *ssh.Certificate) {
 	parseCert := func() *ssh.Certificate {
 		c, _, _, _, err := ssh.ParseAuthorizedKey(k.CertBytes)
@@ -495,7 +599,7 @@ func (k *key) updateCert() error {
 	if k.Provider == "" {
 		return nil
 	}
-	pub, err := ssh.ParsePublicKey(k.Public)
+	pub, err := k.sshPublicKey()
 	if err != nil {
 		return err
 	}
@@ -544,7 +648,7 @@ func (k *key) PrivateKey(rp func(string) (string, error)) (any, error) {
 	if _, ok := err.(*ssh.PassphraseMissingError); !ok || rp == nil {
 		return nil, err
 	}
-	passphrase, err := rp("Enter passphrase for " + k.Name + ": ")
+	passphrase, err := rp("Enter the passphrase for " + k.Name + ": ")
 	if err != nil {
 		return nil, err
 	}
@@ -552,6 +656,16 @@ func (k *key) PrivateKey(rp func(string) (string, error)) (any, error) {
 }
 
 func (k *key) Signer(rp func(string) (string, error)) (ssh.Signer, error) {
+	if k.isWebAuthn() {
+		sk, err := webauthnsk.Unmarshal(k.Private, k.Name, rp)
+		if err != nil {
+			return nil, err
+		}
+		return &dynSigner{
+			Signer: sk,
+			key:    k,
+		}, nil
+	}
 	priv, err := k.PrivateKey(rp)
 	if err != nil {
 		return nil, err

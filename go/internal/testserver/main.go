@@ -26,18 +26,28 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto"
+	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/cdproto/webauthn"
 	"github.com/chromedp/chromedp"
 	"github.com/gorilla/websocket"
 	"github.com/pkg/sftp"
@@ -50,7 +60,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "This tool is intended to run in a container.\n")
 		os.Exit(1)
 	}
-	addr := flag.String("addr", ":8880", "The TCP address to listen to")
+	addr := flag.String("addr", ":8443", "The TCP address to listen to")
 	docRoot := flag.String("document-root", "", "The document root directory")
 	withChromeDP := flag.String("with-chromedp", "", "The url of the remote debugging port")
 
@@ -171,13 +181,44 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Generate self-signed certificate
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		log.Fatal(err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "devtest"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"devtest", "devtest.local"},
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		log.Fatalf("x509.CreateCertificate: %v", err)
+	}
+	certFile := filepath.Join(tmpDir, "cert.pem")
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), 0o600); err != nil {
+		log.Fatalf("cert: %s", err)
+	}
+	b, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		log.Fatalf("x509.MarshalECPrivateKey: %v", err)
+	}
+	keyFile := filepath.Join(tmpDir, "key.pem")
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: b}), 0o600); err != nil {
+		log.Fatalf("key: %s", err)
+	}
+
 	go func() {
 		l, err := net.Listen("tcp", *addr)
 		if err != nil {
 			log.Fatalf("listen: %v", err)
 		}
-		log.Printf("HTTP Server listening on %s. Document root is %s\n", l.Addr(), *docRoot)
-		if err := httpServer.Serve(l); err != nil && err != http.ErrServerClosed {
+		log.Printf("HTTPS Server listening on %s. Document root is %s\n", l.Addr(), *docRoot)
+		if err := httpServer.ServeTLS(l, certFile, keyFile); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
 	}()
@@ -189,17 +230,75 @@ func main() {
 
 	ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
 	defer cancel()
-	ctx, cancel = chromedp.NewContext(ctx, chromedp.WithLogf(log.Printf))
+
+	ctx, cancel = chromedp.NewContext(ctx,
+		//chromedp.WithDebugf(log.Printf),
+		chromedp.WithErrorf(log.Printf),
+		chromedp.WithLogf(log.Printf),
+	)
 	defer cancel()
+
+	chromedp.ListenTarget(ctx, func(ev any) {
+		switch ev := ev.(type) {
+		case *cdproto.Message:
+		case *runtime.EventConsoleAPICalled:
+			//log.Printf("* console.%s call:", ev.Type)
+			//for _, arg := range ev.Args {
+			//	log.Printf("   %s - %s", arg.Type, arg.Value)
+			//}
+		case *runtime.EventExceptionThrown:
+			log.Printf("Exception: * %s", ev.ExceptionDetails.Error())
+		case *webauthn.EventCredentialAdded, *webauthn.EventCredentialAsserted, *webauthn.EventCredentialDeleted, *webauthn.EventCredentialUpdated:
+			log.Printf("WebAuthn event: %#v", ev)
+		default:
+			//log.Printf("Target event: %#v", ev)
+		}
+	})
+
+	if err := chromedp.Run(ctx, webauthn.Enable().WithEnableUI(false)); err != nil {
+		log.Fatalf("webauthn.Enable(): %v", err)
+	}
+
+	var authenticatorID webauthn.AuthenticatorID
+	if err := chromedp.Run(ctx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			authID, err := webauthn.AddVirtualAuthenticator(&webauthn.VirtualAuthenticatorOptions{
+				Protocol:                    webauthn.AuthenticatorProtocolCtap2,
+				Ctap2version:                webauthn.Ctap2versionCtap21,
+				Transport:                   webauthn.AuthenticatorTransportInternal,
+				HasResidentKey:              true,
+				HasUserVerification:         true,
+				AutomaticPresenceSimulation: true,
+				IsUserVerified:              true,
+			}).Do(ctx)
+			authenticatorID = authID
+			return err
+		}),
+	); err != nil {
+		log.Fatalf("webauthn.AddVirtualAuthenticator(): %v", err)
+	}
+	log.Printf("AddVirtualAuthenticator: %q", authenticatorID)
+
+	if err := chromedp.Run(ctx,
+		webauthn.ClearCredentials(authenticatorID),
+		webauthn.SetAutomaticPresenceSimulation(authenticatorID, true),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			creds, err := webauthn.GetCredentials(authenticatorID).Do(ctx)
+			log.Printf("Credentials: %v", creds)
+			return err
+		}),
+	); err != nil {
+		log.Fatalf("webauthn.SetAutomaticPresenceSimulation(): %v", err)
+	}
 
 	var res, output string
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate("http://devtest:8880/tests.html"),
+		chromedp.Navigate("https://devtest.local:8443/tests.html"),
 		chromedp.WaitVisible("#done"),
 		chromedp.Evaluate(`window.sshApp.exited`, &res),
 		chromedp.Evaluate(`window.sshApp.term.selectAll(), window.sshApp.term.getSelection()`, &output),
 	); err != nil {
-		log.Fatal(err)
+		log.Printf("chromedp.Run: %v", err)
 	}
 	fmt.Println(output)
 	fmt.Println(res)

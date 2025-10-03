@@ -61,6 +61,14 @@ func NewObject(m map[string]any) js.Value {
 	return obj
 }
 
+func NewArray(a []any) js.Value {
+	arr := Array.New()
+	for _, v := range a {
+		arr.Call("push", v)
+	}
+	return arr
+}
+
 func NewResolvedPromise(v any) js.Value {
 	return Promise.Call("resolve", v)
 }
@@ -94,7 +102,7 @@ func Await(p js.Value) (js.Value, error) {
 		return nil
 	}
 	reject := func(this js.Value, args []js.Value) any {
-		e <- fmt.Errorf("%v", args[0])
+		e <- fmt.Errorf("%s", args[0].Call("toString"))
 		return nil
 	}
 	p.Call("then", js.FuncOf(resolve)).
@@ -214,4 +222,8 @@ func TLSProxySID() string {
 		return m[1]
 	}
 	return ""
+}
+
+func Hostname() string {
+	return Document.Get("location").Get("hostname").String()
 }

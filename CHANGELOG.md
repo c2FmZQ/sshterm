@@ -1,5 +1,13 @@
 # SSH Term Release Notes
 
+## next
+
+### :star2: New features
+
+* Add WebAuthn keys. The keys can be generated with `keys generate -t ecdsa-sk <name>`. The private key is on a hardware security key, or in a passkey manager.
+  Note that the SSH server config needs to have `PubkeyAcceptedAlgorithms +webauthn-sk-ecdsa-sha2-nistp256@openssh.com`.
+* Add `keys change-pass` command to change the passphrase of keys.
+
 ## v0.7.8
 
 ### :wrench: Bug fix
