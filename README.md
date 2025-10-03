@@ -254,6 +254,8 @@ Contributions are welcome! We appreciate help with bug fixes, feature developmen
 
 ### Code Structure
 
+For a detailed explanation of the project's architecture and design, please see [DESIGN.md](DESIGN.md).
+
 The codebase is organized into the following main directories:
 
 *   `go/`: Contains all the Go source code for the SSH client. This code is compiled into a WebAssembly (`.wasm`) module.
@@ -301,4 +303,3 @@ We follow a standard GitHub pull request workflow.
 
 *   **Tests**: Please ensure that your changes are covered by new or existing tests. You can run the test suite locally using the instructions in the "Development Setup" section. All pull requests must pass the automated CI checks.
 *   **Documentation**: If you introduce a new command, option, or user-facing feature, please update the relevant sections of this `README.md` file.
-

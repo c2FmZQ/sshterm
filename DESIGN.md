@@ -77,7 +77,8 @@ Security is paramount for an SSH client. Running in a browser introduces a uniqu
     *   **Solution:** Private keys are encrypted with a user-provided passphrase before being stored in IndexedDB. The application also leverages the WebAuthn API to support hardware-backed keys, where the private key never leaves the security token.
 
 *   **File Transfers (SFTP):** Getting files in and out of the browser sandbox is not straightforward.
-    *   **Solution:** For downloads, the application uses a Service Worker to stream files from the SFTP server directly to the user's machine, avoiding the need to buffer large files in memory. For uploads, it uses the standard file input element and streams the file content to the SFTP server. Drag-and-drop is also supported.
+    *   **Solution:** For downloads, the application uses a Service Worker to stream files from the SFTP server directly to the user's machine, avoiding the need to buffer large files in memory. For uploads, it uses the standard file input element and streams the file content to the SFTP server. Drag-and-drop is also supported. For a more detailed explanation of the streaming implementation, see [STREAMS.md](STREAMS.md).
 
 *   **Agent Forwarding:** Implementing SSH agent functionality in the browser.
     *   **Solution:** The project includes an in-memory SSH agent implementation in Go. This agent can be populated with keys (after decrypting them with a passphrase) and forwarded to remote servers, just like a native SSH agent. The agent's contents are cleared on page reload.
+
