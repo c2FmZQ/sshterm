@@ -28,6 +28,30 @@ Streaming uploads are relatively straightforward and do not involve the Service 
 
 This "pull" model is efficient for memory, as only small chunks of the file are held in memory at any given time during the transfer.
 
+### Upload Visualization
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Browser (JS Frontend)
+    participant Go (WASM)
+    participant SFTP Server
+
+    User->>Go (WASM): Enters "put" command
+    Go (WASM)->>Browser (JS Frontend): Request file import
+    Browser (JS Frontend)->>User: Show file picker
+    User->>Browser (JS Frontend): Selects local file
+    Browser (JS Frontend)->>Go (WASM): Provide ReadableStream for the file
+    Note over Go (WASM): Wraps JS stream in a Go io.Reader
+    loop Read file in chunks
+        Go (WASM)->>Browser (JS Frontend): Read chunk from stream
+        Browser (JS Frontend)-->>Go (WASM): Return chunk
+        Go (WASM)->>SFTP Server: Send chunk over SSH
+    end
+    SFTP Server-->>Go (WASM): Acknowledge transfer
+    Go (WASM)-->>User: Show completion
+```
+
 ## Streaming Downloads (Remote Server to Local Machine)
 
 Streaming downloads are more complex due to the browser sandbox. The WASM application cannot directly write a file to the user's disk. To solve this, SSH Term uses a Service Worker (`stream-helper.js`) to act as a proxy between the Go application and the browser's download manager. This allows the application to serve a file to the browser as if it were a regular web download, without buffering the entire file in the main application's memory.
@@ -72,3 +96,29 @@ Streaming downloads are more complex due to the browser sandbox. The WASM applic
 8.  **File Download:** The browser receives the `Response` from the Service Worker and treats it as a standard file download, saving the streamed data to the user's local disk. The main application page never has to hold the entire file in memory.
 
 This solution allows the sandboxed Go application to provide a data stream that the browser can consume natively for downloads, providing an efficient and user-friendly experience for large files.
+
+### Download Visualization
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Go (WASM)
+    participant Browser (JS Frontend)
+    participant Service Worker
+    participant SFTP Server
+
+    User->>Go (WASM): Enters "get" command
+    Go (WASM)->>SFTP Server: Request remote file
+    SFTP Server-->>Go (WASM): Provide file stream (io.Reader)
+    Note over Go (WASM): Generates stream ID, stores reader in map
+    Go (WASM)->>Browser (JS Frontend): Trigger download of /stream/&lt;id&gt;
+    Browser (JS Frontend)->>Service Worker: fetch("/stream/&lt;id&gt;")
+    Service Worker->>Browser (JS Frontend): postMessage({streamId: &lt;id&gt;})
+    Note right of Browser (JS Frontend): Message is received by the<br/>main page's JS context.
+    Browser (JS Frontend)->>Go (WASM): Forward stream request
+    Note over Go (WASM): Finds io.Reader by ID,<br/>wraps it in a JS ReadableStream.
+    Go (WASM)->>Browser (JS Frontend): Return ReadableStream
+    Browser (JS Frontend)->>Service Worker: postMessage({body: ReadableStream})
+    Service Worker->>Browser (JS Frontend): respondWith(new Response(ReadableStream))
+    Browser (JS Frontend)->>User: Show "Save As" dialog
+```
