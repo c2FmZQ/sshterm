@@ -331,7 +331,7 @@ func (a *App) keysCommand() *cli.App {
 						Private: content,
 						errorf:  a.term.Errorf,
 					}
-					if bytes.HasPrefix(content, []byte("-----BEGIN WEBAUTHN ")) {
+					if key.isWebAuthn() {
 						sk, err := webauthnsk.Unmarshal(content, name, a.term.ReadPassword)
 						if err != nil {
 							return fmt.Errorf("webauthnsk.Unmarshal: %w", err)

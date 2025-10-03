@@ -148,11 +148,11 @@ func Unmarshal(priv []byte, name string, rp func(string) (string, error)) (*Key,
 		dk := pbkdf2.Key([]byte(passphrase), salt, int(numIter), 32, sha256.New)
 		block, err := aes.NewCipher(dk)
 		if err != nil {
-			return nil, errTooShort
+			return nil, err
 		}
 		gcm, err := cipher.NewGCM(block)
 		if err != nil {
-			return nil, errTooShort
+			return nil, err
 		}
 		nonce := make([]byte, gcm.NonceSize())
 		if !privBytes.ReadBytes(&nonce, len(nonce)) {
@@ -160,7 +160,7 @@ func Unmarshal(priv []byte, name string, rp func(string) (string, error)) (*Key,
 		}
 		keyID, err := gcm.Open(nil, nonce, []byte(privBytes), nil)
 		if err != nil {
-			return nil, errTooShort
+			return nil, errors.New("invalid passphrase")
 		}
 		key.id = keyID
 	default:
