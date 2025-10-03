@@ -4,8 +4,6 @@ SSH Term is a full-featured SSH client that runs entirely in your web browser.
 
 The core client is written in Go and compiled to WebAssembly (WASM), allowing it to run client-side. It uses [xterm.js](https://xtermjs.org/) for the terminal interface and connects to standard SSH servers through a [tlsproxy](https://github.com/c2FmZQ/tlsproxy) WebSocket proxy.
 
-For a detailed analysis of how this project compares to other web-based SSH solutions, see [COMPARISON.md](COMPARISON.md).
-
 ![screenshot](https://github.com/c2FmZQ/sshterm/blob/main/images/sshterm.png "SSH Term")
 
 ## Features
