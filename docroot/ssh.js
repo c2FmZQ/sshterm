@@ -30,6 +30,9 @@ sshApp.exited = null;
 window.sshApp.ready = new Promise(resolve => {
   sshApp.sshIsReady = () => {
     console.log('SSH WASM is ready');
+    if (navigator.webdriver) {
+      console.log('User-Agent:', navigator.userAgent);
+    }
     resolve();
   };
 });

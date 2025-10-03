@@ -238,7 +238,6 @@ func main() {
 	)
 	defer cancel()
 
-	gotException := make(chan bool, 1)
 	chromedp.ListenTarget(ctx, func(ev any) {
 		switch ev := ev.(type) {
 		case *cdproto.Message:
@@ -249,7 +248,6 @@ func main() {
 			//}
 		case *runtime.EventExceptionThrown:
 			log.Printf("Exception: * %s", ev.ExceptionDetails.Error())
-			gotException <- true
 		case *webauthn.EventCredentialAdded, *webauthn.EventCredentialAsserted, *webauthn.EventCredentialDeleted, *webauthn.EventCredentialUpdated:
 			log.Printf("WebAuthn event: %#v", ev)
 		default:

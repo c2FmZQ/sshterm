@@ -1,7 +1,7 @@
 // MIT License
 //
-// Copyright (c) 2023 TTBT Enterprises LLC
-// Copyright (c) 2023 Robin Thellend <rthellend@rthellend.com>
+// Copyright (c) 2025 TTBT Enterprises LLC
+// Copyright (c) 2025 Robin Thellend <rthellend@rthellend.com>
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package webauthn
+package webauthnsk
 
 import (
 	"crypto"
@@ -36,29 +36,29 @@ import (
 	cbor "github.com/fxamacker/cbor/v2"
 )
 
-const AlgES256 = -7
+const algES256 = -7
 
 var errTooShort = errors.New("too short")
 
 // ClientData is a decoded ClientDataJSON object.
-type ClientData struct {
+type clientData struct {
 	Type      string `json:"type"`
 	Challenge string `json:"challenge"`
 	Origin    string `json:"origin"`
 }
 
 // Attestation. https://w3c.github.io/webauthn/#sctn-attestation
-type Attestation struct {
+type attestation struct {
 	Format      string          `cbor:"fmt"`
 	AttStmt     cbor.RawMessage `cbor:"attStmt"`
 	RawAuthData []byte          `cbor:"authData"`
 
-	AuthData AuthenticatorData `cbor:"-"`
+	AuthData authenticatorData `cbor:"-"`
 }
 
 // AuthenticatorData is the authenticator data provided during attestation and
 // assertion. https://w3c.github.io/webauthn/#sctn-authenticator-data
-type AuthenticatorData struct {
+type authenticatorData struct {
 	Flags                  byte
 	RPIDHash               []byte               `json:"rpIdHash"`
 	UserPresence           bool                 `json:"up"`
@@ -68,17 +68,17 @@ type AuthenticatorData struct {
 	AttestedCredentialData bool                 `json:"at"`
 	ExtensionData          bool                 `json:"ed"`
 	SignCount              uint32               `json:"signCount"`
-	AttestedCredentials    *AttestedCredentials `json:"attestedCredentialData"`
+	AttestedCredentials    *attestedCredentials `json:"attestedCredentialData"`
 }
 
 // AttestedCredentials. https://w3c.github.io/webauthn/#sctn-attested-credential-data
-type AttestedCredentials struct {
+type attestedCredentials struct {
 	AAGUID  []byte `json:"AAGUID"`
 	ID      []byte `json:"credentialId"`
 	COSEKey []byte `json:"credentialPublicKey"`
 }
 
-func (c AttestedCredentials) PublicKey() (crypto.PublicKey, error) {
+func (c attestedCredentials) PublicKey() (crypto.PublicKey, error) {
 	var kty struct {
 		KTY int `cbor:"1,keyasint"`
 	}
@@ -97,7 +97,7 @@ func (c AttestedCredentials) PublicKey() (crypto.PublicKey, error) {
 		if err := cbor.Unmarshal(c.COSEKey, &ecKey); err != nil {
 			return nil, err
 		}
-		if ecKey.ALG != AlgES256 {
+		if ecKey.ALG != algES256 {
 			return nil, errors.New("unexpected EC key alg")
 		}
 		if ecKey.Curve != 1 { // P-256
@@ -118,20 +118,20 @@ func (c AttestedCredentials) PublicKey() (crypto.PublicKey, error) {
 	}
 }
 
-// ParseAttestationObject parses an attestationObject. Passkeys don't typically
+// parseAttestationObject parses an attestationObject. Passkeys don't typically
 // provide attestation statements.
-func ParseAttestationObject(attestationObject []byte) (*Attestation, error) {
-	var att Attestation
+func parseAttestationObject(attestationObject []byte) (*attestation, error) {
+	var att attestation
 	if err := cbor.Unmarshal(attestationObject, &att); err != nil {
 		return nil, fmt.Errorf("cbor.Unmarshal: %w", err)
 	}
-	if err := ParseAuthenticatorData(att.RawAuthData, &att.AuthData); err != nil {
+	if err := parseAuthenticatorData(att.RawAuthData, &att.AuthData); err != nil {
 		return nil, fmt.Errorf("parseAuthenticatorData: %w", err)
 	}
 	return &att, nil
 }
 
-func ParseAuthenticatorData(raw []byte, ad *AuthenticatorData) error {
+func parseAuthenticatorData(raw []byte, ad *authenticatorData) error {
 	// https://w3c.github.io/webauthn/#sctn-authenticator-data
 	if len(raw) < 37 {
 		return errTooShort
@@ -154,7 +154,7 @@ func ParseAuthenticatorData(raw []byte, ad *AuthenticatorData) error {
 		if len(raw) < 18 {
 			return errTooShort
 		}
-		ad.AttestedCredentials = &AttestedCredentials{}
+		ad.AttestedCredentials = &attestedCredentials{}
 		ad.AttestedCredentials.AAGUID = raw[:16]
 		raw = raw[16:]
 
@@ -182,8 +182,8 @@ func ParseAuthenticatorData(raw []byte, ad *AuthenticatorData) error {
 	return nil
 }
 
-func ParseClientData(js []byte) (*ClientData, error) {
-	var out ClientData
+func parseClientData(js []byte) (*clientData, error) {
+	var out clientData
 	err := json.Unmarshal(js, &out)
 	return &out, err
 }

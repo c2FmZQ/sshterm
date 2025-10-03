@@ -141,11 +141,15 @@ func TestKeys(t *testing.T) {
 		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "<none>"},
-		{Type: "keys generate test\n", Expect: "Enter passphrase"},
+		{Type: "keys generate test\n", Expect: "Enter a passphrase"},
 		{Type: "foobar\n", Expect: "Re-enter the same passphrase"},
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
 		{Expect: prompt},
+		{Type: "keys change-pass test\n", Expect: "Enter the passphrase"},
+		{Type: "foobar\n", Expect: "Enter a NEW passphrase"},
+		{Type: "blah\n", Expect: "Re-enter the same new passphrase"},
+		{Type: "blah\n", Expect: prompt},
 		{Type: "keys export --private test\n", Expect: `Continue\?`},
 		{Type: "Y\n"},
 	})
@@ -157,8 +161,8 @@ func TestKeys(t *testing.T) {
 	fileUploader.enqueue(file.Name, file.Type, int64(len(file.Content)), file.Content)
 
 	script(t, []line{
-		{Type: "keys import samekey\n", Expect: "Enter passphrase for samekey"},
-		{Type: "foobar\n", Expect: prompt},
+		{Type: "keys import samekey\n", Expect: "Enter the passphrase for samekey"},
+		{Type: "blah\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "(?s)ssh-ed25519 .* samekey\r\nssh-ed25519 .* test\r\n"},
 		{Expect: prompt},
 		{Type: "keys delete test\n", Expect: `Continue\?`},
@@ -177,10 +181,9 @@ func TestKeys(t *testing.T) {
 	}
 }
 
-/*
 func TestWebAuthnKeys(t *testing.T) {
-	if js.Global().Get("navigator").Get("credentials").IsUndefined() {
-		t.Skip("WebAuthn not available")
+	if js.Global().Get("navigator").Get("webdriver").Truthy() {
+		t.Skip("TestWebAuthnKeys skipped with chromedp")
 	}
 	a, err := app.New(appConfig)
 	if err != nil {
@@ -197,7 +200,7 @@ func TestWebAuthnKeys(t *testing.T) {
 		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "<none>"},
-		{Type: "keys generate -t ecdsa-sk test\n", Expect: "Enter passphrase"},
+		{Type: "keys generate -t ecdsa-sk test\n", Expect: "Enter a passphrase"},
 		{Type: "foobar\n", Expect: "Re-enter the same passphrase"},
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: `webauthn-sk-ecdsa-sha2-nistp256@openssh\.com .* test`},
@@ -209,7 +212,6 @@ func TestWebAuthnKeys(t *testing.T) {
 		t.Fatalf("Run(): %v", err)
 	}
 }
-*/
 
 func TestDB(t *testing.T) {
 	a, err := app.New(appConfig)
@@ -230,7 +232,7 @@ func TestDB(t *testing.T) {
 		{Type: "Y\n", Expect: prompt},
 		{Type: "ep add test websocket\n", Expect: prompt},
 		{Type: "ep list\n", Expect: "test .* websocket"},
-		{Type: "keys generate test\n", Expect: "Enter passphrase"},
+		{Type: "keys generate test\n", Expect: "Enter a passphrase"},
 		{Type: "foobar\n", Expect: "Re-enter the same passphrase"},
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
@@ -287,7 +289,7 @@ func TestSSH(t *testing.T) {
 		{Type: "exit\n", Expect: prompt},
 		{Wait: time.Second, Type: "\n\n"},
 
-		{Type: "keys generate test\n", Expect: "Enter passphrase"},
+		{Type: "keys generate test\n", Expect: "Enter a passphrase"},
 		{Type: "foobar\n", Expect: "Re-enter the same passphrase"},
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test\r\n", Do: func(m []string) {
@@ -299,12 +301,12 @@ func TestSSH(t *testing.T) {
 				t.Fatalf("http.Post: %v", err)
 			}
 		}},
-		{Type: "ssh -i test testuser@test-server\n", Expect: "Enter passphrase for test:"},
+		{Type: "ssh -i test testuser@test-server\n", Expect: "Enter the passphrase for test:"},
 		{Type: "foobar\n", Expect: "remote> "},
 		{Type: "exit\n", Expect: prompt},
 		{Wait: time.Second, Type: "\n\n"},
 
-		{Type: "agent add test\n", Expect: "Enter passphrase for test:"},
+		{Type: "agent add test\n", Expect: "Enter the passphrase for test:"},
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "ssh testuser@test-server\n", Expect: "remote> "},
 		{Type: "exit\n", Expect: prompt},

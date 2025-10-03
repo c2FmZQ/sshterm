@@ -23,9 +23,10 @@
 
 //go:build wasm
 
-package app
+package webauthnsk
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdsa"
@@ -44,41 +45,39 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
-	"github.com/c2FmZQ/sshterm/internal/webauthn"
 )
 
-var (
-	errTooShort = errors.New("too short")
-)
+const ecdsa256KeyType = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
 
-type webAuthnKey struct {
-	Typ    string
-	ID     []byte
-	PubKey *ecdsa.PublicKey
-	RPID   []byte
+type Key struct {
+	typ    string
+	id     []byte
+	pubKey *ecdsa.PublicKey
+	rpID   []byte
 }
 
-func createWebAuthnKey(name string) (*webAuthnKey, error) {
+func Create(name string) (*Key, error) {
 	challenge := make([]byte, 32)
 	rand.Read(challenge)
-	uid := sha256.Sum256([]byte(name))
+	uid := make([]byte, 32)
+	rand.Read(uid)
 	resp, err := jsutil.WebAuthnCreate(jsutil.CreateOptions{
 		Challenge: challenge,
-		Alg:       webauthn.AlgES256,
-		UserID:    uid[:],
+		Alg:       algES256,
+		UserID:    uid,
 		UserName:  name,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("WebAuthnCreate: %w", err)
 	}
-	cd, err := webauthn.ParseClientData(resp.ClientDataJSON)
+	cd, err := parseClientData(resp.ClientDataJSON)
 	if err != nil {
 		return nil, fmt.Errorf("ParseClientData: %w", err)
 	}
 	if cd.Type != "webauthn.create" {
 		return nil, fmt.Errorf("unexpected client data type %q", cd.Type)
 	}
-	att, err := webauthn.ParseAttestationObject(resp.AttestationObject)
+	att, err := parseAttestationObject(resp.AttestationObject)
 	if err != nil {
 		return nil, fmt.Errorf("ParseAttestationObject: %w", err)
 	}
@@ -94,60 +93,83 @@ func createWebAuthnKey(name string) (*webAuthnKey, error) {
 	if !ok {
 		return nil, fmt.Errorf("PublicKey: unexpected public key type %T", pk)
 	}
-	return &webAuthnKey{
-		Typ:    "webauthn-sk-ecdsa-sha2-nistp256@openssh.com",
-		ID:     ac.ID,
-		PubKey: ecpk,
-		RPID:   []byte(jsutil.Hostname()),
+	return &Key{
+		typ:    ecdsa256KeyType,
+		id:     ac.ID,
+		pubKey: ecpk,
+		rpID:   []byte(jsutil.Hostname()),
 	}, nil
 }
 
-func unmarshalWebAuthnKey(priv, pub []byte, name string, rp func(string) (string, error)) (*webAuthnKey, error) {
-	key := &webAuthnKey{}
-
-	if priv != nil {
-		block, _ := pem.Decode(priv)
-		switch block.Type {
-		case "WEBAUTHN KEY ID":
-			key.ID = block.Bytes
-
-		case "WEBAUTHN ENCRYPTED KEY ID":
-			str := cryptobyte.String(block.Bytes)
-			salt := make([]byte, 16)
-			if !str.ReadBytes(&salt, 16) {
-				return nil, errTooShort
-			}
-			var numIter uint32
-			if !str.ReadUint32(&numIter) {
-				return nil, errTooShort
-			}
-			passphrase, err := rp("Enter passphrase for " + name + ": ")
-			if err != nil {
-				return nil, err
-			}
-			dk := pbkdf2.Key([]byte(passphrase), salt, int(numIter), 32, sha256.New)
-			block, err := aes.NewCipher(dk)
-			if err != nil {
-				return nil, errTooShort
-			}
-			gcm, err := cipher.NewGCM(block)
-			if err != nil {
-				return nil, errTooShort
-			}
-			nonce := make([]byte, gcm.NonceSize())
-			if !str.ReadBytes(&nonce, len(nonce)) {
-				return nil, errTooShort
-			}
-			keyID, err := gcm.Open(nil, nonce, []byte(str), nil)
-			if err != nil {
-				return nil, errTooShort
-			}
-			key.ID = keyID
-		default:
-			return nil, errors.New("invalid webauthn key ID")
-		}
+func Unmarshal(priv []byte, name string, rp func(string) (string, error)) (*Key, error) {
+	if !bytes.HasPrefix(priv, []byte("-----BEGIN WEBAUTHN ")) {
+		return nil, errors.New("unexpected key format")
+	}
+	block, _ := pem.Decode(priv)
+	str := cryptobyte.String(block.Bytes)
+	var ver uint8
+	if !str.ReadUint8(&ver) {
+		return nil, errTooShort
+	}
+	if ver != 1 {
+		return nil, fmt.Errorf("unexpected version %d", ver)
+	}
+	var pubBytes cryptobyte.String
+	if !str.ReadUint16LengthPrefixed(&pubBytes) {
+		return nil, errTooShort
+	}
+	key, err := UnmarshalPublic(pubBytes)
+	if err != nil {
+		return nil, err
 	}
 
+	var privBytes cryptobyte.String
+	if !str.ReadUint16LengthPrefixed(&privBytes) {
+		return nil, errTooShort
+	}
+
+	switch block.Type {
+	case "WEBAUTHN KEY":
+		key.id = privBytes
+
+	case "WEBAUTHN ENCRYPTED KEY":
+		salt := make([]byte, 16)
+		if !privBytes.ReadBytes(&salt, 16) {
+			return nil, errTooShort
+		}
+		var numIter uint32
+		if !privBytes.ReadUint32(&numIter) {
+			return nil, errTooShort
+		}
+		passphrase, err := rp("Enter the passphrase for " + name + ": ")
+		if err != nil {
+			return nil, err
+		}
+		dk := pbkdf2.Key([]byte(passphrase), salt, int(numIter), 32, sha256.New)
+		block, err := aes.NewCipher(dk)
+		if err != nil {
+			return nil, errTooShort
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return nil, errTooShort
+		}
+		nonce := make([]byte, gcm.NonceSize())
+		if !privBytes.ReadBytes(&nonce, len(nonce)) {
+			return nil, errTooShort
+		}
+		keyID, err := gcm.Open(nil, nonce, []byte(privBytes), nil)
+		if err != nil {
+			return nil, errTooShort
+		}
+		key.id = keyID
+	default:
+		return nil, errors.New("invalid webauthn key ID")
+	}
+	return key, nil
+}
+
+func UnmarshalPublic(pub []byte) (*Key, error) {
 	var data struct {
 		Name        string
 		ID          string
@@ -157,23 +179,37 @@ func unmarshalWebAuthnKey(priv, pub []byte, name string, rp func(string) (string
 	if err := ssh.Unmarshal(pub, &data); err != nil {
 		return nil, fmt.Errorf("Unmarshal: %w", err)
 	}
-	key.Typ = data.Name
-	key.RPID = []byte(data.Application)
-
-	x, y := elliptic.Unmarshal(elliptic.P256(), data.Key)
-	key.PubKey = &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     x,
-		Y:     y,
+	if data.Name != ecdsa256KeyType || data.ID != "nistp256" {
+		return nil, fmt.Errorf("unexpected key type %q", data.Name)
 	}
-	return key, nil
+	x, y := elliptic.Unmarshal(elliptic.P256(), data.Key)
+	return &Key{
+		typ:  data.Name,
+		rpID: []byte(data.Application),
+		pubKey: &ecdsa.PublicKey{
+			Curve: elliptic.P256(),
+			X:     x,
+			Y:     y,
+		},
+	}, nil
 }
 
-func (k *webAuthnKey) Private(passphrase string) (*pem.Block, error) {
+func (k *Key) MarshalPrivate(passphrase string) (*pem.Block, error) {
 	if passphrase == "" {
+		buf := cryptobyte.NewBuilder([]byte{1})
+		buf.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+			b.AddBytes(k.Marshal())
+		})
+		buf.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+			b.AddBytes(k.id)
+		})
+		data, err := buf.Bytes()
+		if err != nil {
+			return nil, err
+		}
 		return &pem.Block{
-			Type:  "WEBAUTHN KEY ID",
-			Bytes: k.ID,
+			Type:  "WEBAUTHN KEY",
+			Bytes: data,
 		}, nil
 	}
 	salt := make([]byte, 16)
@@ -190,26 +226,31 @@ func (k *webAuthnKey) Private(passphrase string) (*pem.Block, error) {
 	}
 	nonce := make([]byte, gcm.NonceSize())
 	rand.Read(nonce)
-	encID := gcm.Seal(nonce, nonce, k.ID, nil)
-	buf := cryptobyte.NewBuilder(nil)
-	buf.AddBytes(salt)
-	buf.AddUint32(uint32(numIter))
-	buf.AddBytes(encID)
+	encID := gcm.Seal(nonce, nonce, k.id, nil)
+	buf := cryptobyte.NewBuilder([]byte{1})
+	buf.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes(k.Marshal())
+	})
+	buf.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes(salt)
+		b.AddUint32(uint32(numIter))
+		b.AddBytes(encID)
+	})
 	data, err := buf.Bytes()
 	if err != nil {
 		return nil, err
 	}
 	return &pem.Block{
-		Type:  "WEBAUTHN ENCRYPTED KEY ID",
+		Type:  "WEBAUTHN ENCRYPTED KEY",
 		Bytes: data,
 	}, nil
 }
 
-func (k *webAuthnKey) Type() string {
-	return k.Typ
+func (k *Key) Type() string {
+	return k.typ
 }
 
-func (k *webAuthnKey) Marshal() []byte {
+func (k *Key) Marshal() []byte {
 	w := struct {
 		Name        string
 		ID          string
@@ -218,34 +259,34 @@ func (k *webAuthnKey) Marshal() []byte {
 	}{
 		k.Type(),
 		"nistp256",
-		elliptic.Marshal(k.PubKey.Curve, k.PubKey.X, k.PubKey.Y),
-		string(k.RPID),
+		elliptic.Marshal(k.pubKey.Curve, k.pubKey.X, k.pubKey.Y),
+		string(k.rpID),
 	}
 	return ssh.Marshal(&w)
 }
 
-func (k *webAuthnKey) Verify(data []byte, sig *ssh.Signature) error {
+func (k *Key) Verify(data []byte, sig *ssh.Signature) error {
 	return errors.New("verify not implemented")
 }
 
-func (k *webAuthnKey) PublicKey() ssh.PublicKey {
+func (k *Key) PublicKey() ssh.PublicKey {
 	return k
 }
 
-func (k *webAuthnKey) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
+func (k *Key) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	opts := jsutil.GetOptions{Challenge: data}
-	if len(k.ID) > 0 {
-		opts.Allow = [][]byte{k.ID}
+	if len(k.id) > 0 {
+		opts.Allow = [][]byte{k.id}
 	}
 	resp, err := jsutil.WebAuthnGet(opts)
 	if err != nil {
 		return nil, fmt.Errorf("WebAuthnGet: %w", err)
 	}
-	var ad webauthn.AuthenticatorData
-	if err := webauthn.ParseAuthenticatorData(resp.AuthenticatorData, &ad); err != nil {
+	var ad authenticatorData
+	if err := parseAuthenticatorData(resp.AuthenticatorData, &ad); err != nil {
 		return nil, fmt.Errorf("ParseAuthenticatorData: %w", err)
 	}
-	cd, err := webauthn.ParseClientData(resp.ClientDataJSON)
+	cd, err := parseClientData(resp.ClientDataJSON)
 	if err != nil {
 		return nil, fmt.Errorf("ParseClientData: %w", err)
 	}

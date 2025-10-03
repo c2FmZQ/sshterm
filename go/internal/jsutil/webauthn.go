@@ -35,7 +35,6 @@ type CreateOptions struct {
 	Alg       int
 	UserID    []byte
 	UserName  string
-	Exclude   [][]byte
 }
 
 type CreateResponse struct {
@@ -48,24 +47,14 @@ func WebAuthnCreate(opts CreateOptions) (*CreateResponse, error) {
 	if !cc.Truthy() {
 		return nil, errors.New("CredentialsContainer is unavailable")
 	}
-
-	exclude := make([]any, 0, len(opts.Exclude))
-	for _, v := range opts.Exclude {
-		exclude = append(exclude, NewObject(map[string]any{
-			"id":   Uint8ArrayFromBytes(v),
-			"type": "public-key",
-		}))
-	}
-	host := Hostname()
-	creationOptions := NewObject(map[string]any{
+	creds, err := Await(cc.Call("create", NewObject(map[string]any{
 		"publicKey": NewObject(map[string]any{
 			"attestation": "none",
 			"authenticatorSelection": NewObject(map[string]any{
-				"residentKey":      "preferred",
+				"residentKey":      "discouraged",
 				"userVerification": "preferred",
 			}),
-			"challenge":          Uint8ArrayFromBytes(opts.Challenge),
-			"excludeCredentials": NewArray(exclude),
+			"challenge": Uint8ArrayFromBytes(opts.Challenge),
 			"pubKeyCredParams": NewArray([]any{
 				NewObject(map[string]any{
 					"alg":  opts.Alg,
@@ -77,8 +66,7 @@ func WebAuthnCreate(opts CreateOptions) (*CreateResponse, error) {
 				}),
 			}),
 			"rp": NewObject(map[string]any{
-				"id":   host,
-				"name": host,
+				"name": Hostname(),
 			}),
 			"timeout": 120000,
 			"user": NewObject(map[string]any{
@@ -87,8 +75,7 @@ func WebAuthnCreate(opts CreateOptions) (*CreateResponse, error) {
 				"name":        opts.UserName,
 			}),
 		}),
-	})
-	creds, err := Await(cc.Call("create", creationOptions))
+	})))
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +117,6 @@ func WebAuthnGet(opts GetOptions) (*GetResponse, error) {
 			"publicKey": NewObject(map[string]any{
 				"allowCredentials": NewArray(allow),
 				"challenge":        Uint8ArrayFromBytes(opts.Challenge),
-				"rpId":             Hostname(),
 				"timeout":          120000,
 				"userVerification": "preferred",
 			}),
