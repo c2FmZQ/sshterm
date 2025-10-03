@@ -111,9 +111,9 @@ sequenceDiagram
     Go (WASM)->>SFTP Server: Request remote file
     SFTP Server-->>Go (WASM): Provide file stream (io.Reader)
     Note over Go (WASM): Generates stream ID, stores reader in map
-    Go (WASM)->>Browser (JS Frontend): Trigger download of /stream/&lt;id&gt;
-    Browser (JS Frontend)->>Service Worker: fetch("/stream/&lt;id&gt;")
-    Service Worker->>Browser (JS Frontend): postMessage({streamId: &lt;id&gt;})
+    Go (WASM)->>Browser (JS Frontend): 'Trigger download of /stream/<id>'
+    Browser (JS Frontend)->>Service Worker: 'fetch("/stream/<id>")'
+    Service Worker->>Browser (JS Frontend): 'postMessage({streamId: <id>})'
     Note right of Browser (JS Frontend): Message is received by the<br/>main page's JS context.
     Browser (JS Frontend)->>Go (WASM): Forward stream request
     Note over Go (WASM): Finds io.Reader by ID,<br/>wraps it in a JS ReadableStream.
