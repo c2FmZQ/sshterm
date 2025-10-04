@@ -122,3 +122,17 @@ sequenceDiagram
     Service Worker->>Browser (JS Frontend): respondWith(new Response(ReadableStream))
     Browser (JS Frontend)->>User: Show "Save As" dialog
 ```
+
+## Service Worker Trade-offs
+
+Using a Service Worker for streaming downloads is a powerful technique, but it comes with certain trade-offs.
+
+*   **Complexity:** The Service Worker introduces significant architectural complexity. It runs in a separate thread from the main application, manages its own lifecycle (install, activate, fetch), and communicates with the main page via asynchronous messaging (`postMessage`). This is more complex than a standard, single-threaded web application.
+
+*   **Debugging:** Debugging interactions between the main application and the Service Worker can be challenging. Developers need to use the browser's developer tools to inspect the Service Worker's state, view its console logs separately, and trace messages passed between the two contexts.
+
+*   **Browser and Security Requirements:** Service Workers are only available in secure contexts. This means the application must be served over HTTPS for them to function in a production environment (localhost is considered a secure context for development). While this enforces good security practices, it is a strict prerequisite.
+
+*   **Browser Compatibility:** While Service Workers are now widely supported across modern browsers, there can be subtle implementation differences or bugs that may require browser-specific workarounds.
+
+Despite these challenges, the Service Worker approach is the most effective solution for enabling large, memory-efficient file downloads from a sandboxed WASM application, providing a seamless experience for the end-user.

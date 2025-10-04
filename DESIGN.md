@@ -29,11 +29,34 @@ The application is composed of three main parts:
 2.  **JavaScript Frontend (`ssh.js`, `xterm.js`):** The frontend code is responsible for loading the WASM module, creating the xterm.js terminal, and handling user interaction. It acts as the glue between the Go application and the browser environment.
 3.  **WebSocket Proxy (`TLSPROXY`):** A separate server component that bridges the WebSocket connection from the browser to the TCP connection required by the SSH server. This is a critical piece of infrastructure that makes the whole system work.
 
+The following diagram illustrates the overall architecture and data flow:
+
+```mermaid
+graph TD
+    subgraph Browser
+        A[User] -- Input --> B(xterm.js Terminal)
+        B -- Keystrokes --> C{Go WASM App}
+        C -- Output --> B
+    end
+
+    subgraph " "
+      D(WebSocket Proxy)
+      E(SSH Server)
+    end
+
+    C -- WebSocket (WSS) --> D
+    D -- TCP --> E
+
+    style C fill:#d4f0d4
+    style D fill:#f0e6d4
+```
+
 The data flow is as follows:
 1.  The user interacts with the xterm.js terminal in the browser.
 2.  Input is passed from the terminal to the Go WASM application.
-3.  The Go application processes the commands, establishes an SSH connection via a WebSocket, and interacts with the remote server.
-4.  Output from the SSH session is sent back to the xterm.js terminal to be displayed to the user.
+3.  The Go application processes the commands and establishes a secure WebSocket (WSS) connection to the proxy.
+4.  The WebSocket proxy terminates the WSS connection and establishes a standard TCP connection to the target SSH server.
+5.  Output from the SSH session flows back through the proxy to the Go application and is displayed in the xterm.js terminal.
 
 ## Security Considerations
 
@@ -41,7 +64,9 @@ Security is paramount for an SSH client. Running in a browser introduces a uniqu
 
 *   **Sandboxing:** The entire Go application runs within the browser's WebAssembly sandbox. This provides a strong layer of isolation from the user's operating system. The application has no direct access to the local filesystem or other system resources, except through explicit user actions (e.g., file uploads/downloads) or browser APIs (e.g., IndexedDB).
 
-*   **Private Keys:** SSH private keys are stored in the browser's IndexedDB. This data is protected by the browser's same-origin policy, which prevents other websites from accessing it. However, the data is not encrypted at rest by default within IndexedDB. To mitigate this, SSH Term encrypts private keys with a user-provided passphrase before storing them. The application also provides a backup/restore mechanism that encrypts the entire database with a passphrase using PBKDF2 and AES-GCM.
+*   **Private Keys:** SSH private keys are stored in the browser's IndexedDB. This data is protected by the browser's same-origin policy, which prevents other websites from accessing it. However, the data is not encrypted at rest by default within IndexedDB. To mitigate this, SSH Term employs strong encryption:
+    *   **Key Encryption:** Individual private keys are encrypted with a user-provided passphrase using the standard OpenSSH keystore format.
+    *   **Database Backup:** The full database backup feature encrypts the entire dataset using a key derived from a passphrase with **PBKDF2** and then symmetrically encrypted with **XSalsa20-Poly1305** (via `nacl/secretbox`). This ensures that sensitive data, including keys and configuration, is protected when exported.
 
 *   **Cross-Site Scripting (XSS):** The application is a single-page app and does not render any user-provided HTML. The terminal output is handled by xterm.js, which is designed to safely render terminal escape sequences and text. The Content Security Policy (CSP) is set to `default-src 'self'; style-src 'unsafe-inline' 'self'; script-src 'unsafe-eval' 'self';`, which helps to mitigate XSS risks. The `'unsafe-eval'` is required for the Go WASM runtime.
 
