@@ -8,7 +8,7 @@ SSH Term is a full-featured SSH and SFTP client that runs entirely in a web brow
 
 The core of the client is written in Go and compiled to WebAssembly (WASM). This allows the SSH client logic to run directly in the browser, providing a secure and sandboxed environment. The frontend is built with HTML, JavaScript, and the [xterm.js](https://xtermjs.org/) library for terminal emulation.
 
-A key component of the architecture is a WebSocket-to-TCP proxy, such as `tlsproxy`. Since browsers cannot make direct TCP connections, SSH Term connects to a WebSocket endpoint, which the proxy then forwards to the target SSH server.
+A key component of the architecture is a WebSocket-to-TCP proxy, such as `TLSPROXY`. Since browsers cannot make direct TCP connections, SSH Term connects to a WebSocket endpoint, which the proxy then forwards to the target SSH server.
 
 ### Key Features
 
@@ -27,7 +27,7 @@ The application is composed of three main parts:
 
 1.  **Go WebAssembly Module (`ssh.wasm`):** This is the heart of the application. It contains the entire SSH and SFTP client logic, key management, agent, and command-line interface for the terminal. It is written in Go and compiled to WebAssembly.
 2.  **JavaScript Frontend (`ssh.js`, `xterm.js`):** The frontend code is responsible for loading the WASM module, creating the xterm.js terminal, and handling user interaction. It acts as the glue between the Go application and the browser environment.
-3.  **WebSocket Proxy (`tlsproxy`):** A separate server component that bridges the WebSocket connection from the browser to the TCP connection required by the SSH server. This is a critical piece of infrastructure that makes the whole system work.
+3.  **WebSocket Proxy (`TLSPROXY`):** A separate server component that bridges the WebSocket connection from the browser to the TCP connection required by the SSH server. This is a critical piece of infrastructure that makes the whole system work.
 
 The data flow is as follows:
 1.  The user interacts with the xterm.js terminal in the browser.
@@ -45,9 +45,9 @@ Security is paramount for an SSH client. Running in a browser introduces a uniqu
 
 *   **Cross-Site Scripting (XSS):** The application is a single-page app and does not render any user-provided HTML. The terminal output is handled by xterm.js, which is designed to safely render terminal escape sequences and text. The Content Security Policy (CSP) is set to `default-src 'self'; style-src 'unsafe-inline' 'self'; script-src 'unsafe-eval' 'self';`, which helps to mitigate XSS risks. The `'unsafe-eval'` is required for the Go WASM runtime.
 
-*   **Cross-Site Request Forgery (CSRF):** The application doesn't rely on traditional session cookies for authentication with a backend. The connection to the WebSocket proxy is initiated from the client-side JavaScript. The `tlsproxy` can be configured to require a CSRF token (`__tlsproxySid` cookie and `x-csrf-token` header) for WebSocket connections, which is implemented in this application.
+*   **Cross-Site Request Forgery (CSRF):** `TLSPROXY` required a CSRF token (`__tlsproxySid` cookie and `x-csrf-token` header) for certificate requests, which is implemented in this application.
 
-*   **WebSocket Proxy (`tlsproxy`):** The security of the WebSocket proxy is critical. It should be configured to use TLS (WSS) to encrypt the traffic between the browser and the proxy. The proxy is also responsible for access control, determining which users can connect to which SSH servers.
+*   **WebSocket Proxy (`TLSPROXY`):** The security of the WebSocket proxy is critical. It is always configured to use TLS (WSS) to encrypt the traffic between the browser and the proxy. The proxy is also responsible for access control, determining which users can connect to which SSH servers.
 
 *   **WebAuthn:** The use of `ecdsa-sk` keys with WebAuthn provides a very high level of security for user authentication. The private key material never leaves the hardware security key or secure enclave.
 
@@ -55,7 +55,7 @@ Security is paramount for an SSH client. Running in a browser introduces a uniqu
 
 ## Choice of Language
 
-*   **Go:** Go is an excellent choice for the core client logic.
+*   **Go:** Go is a good choice for the core client logic.
     *   **Strong Networking and Cryptography Libraries:** Go's standard library has robust support for networking, cryptography, and SSH, which are all essential for this project.
     *   **WebAssembly Support:** Go has first-class support for compiling to WebAssembly, making it possible to run the client in the browser.
     *   **Performance:** Go is a compiled language that offers good performance, which is important for a responsive terminal application.
