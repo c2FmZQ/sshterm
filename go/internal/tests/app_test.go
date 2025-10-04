@@ -27,10 +27,8 @@ package tests
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"syscall/js"
 	"testing"
 	"time"
@@ -51,20 +49,22 @@ type line struct {
 }
 
 func script(t *testing.T, lines []line) {
-	for _, line := range lines {
+	t.Helper()
+	for n, line := range lines {
 		if line.Reset {
+			t.Logf("[%2d] Reset", n)
 			terminalIO.Reset()
 		}
 		if line.Wait != 0 {
-			fmt.Fprintf(os.Stderr, "Wait: %s\n", line.Wait)
+			t.Logf("[%2d] Wait: %s", n, line.Wait)
 			time.Sleep(line.Wait)
 		}
 		if line.Type != "" {
-			fmt.Fprintf(os.Stderr, "Type: %q\n", line.Type)
+			t.Logf("[%2d] Type: %q", n, line.Type)
 			terminalIO.Type(line.Type)
 		}
 		if line.Expect != "" {
-			fmt.Fprintf(os.Stderr, "Expect: %q\n", line.Expect)
+			t.Logf("[%2d] Expect: %q", n, line.Expect)
 			m := terminalIO.Expect(t, line.Expect)
 			if line.Do != nil {
 				line.Do(m)
@@ -293,6 +293,7 @@ func TestSSH(t *testing.T) {
 		{Type: "foobar\n", Expect: "Re-enter the same passphrase"},
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test\r\n", Do: func(m []string) {
+			t.Logf("Add key: %s", m[0])
 			pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(m[0]))
 			if err != nil {
 				t.Fatalf("ssh.ParseAuthorizedKey: %v", err)
