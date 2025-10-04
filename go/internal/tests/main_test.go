@@ -33,6 +33,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sync"
 	"syscall/js"
@@ -55,8 +56,10 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	os.Stdout = os.Stderr
 	flag.Parse()
 	flag.Set("test.failfast", "true")
+	flag.Set("test.v", "true")
 	loc, err := url.Parse(js.Global().Get("location").Get("href").String())
 	if err != nil {
 		panic("location.href:" + err.Error())
