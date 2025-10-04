@@ -45,7 +45,7 @@ Security is paramount for an SSH client. Running in a browser introduces a uniqu
 
 *   **Cross-Site Scripting (XSS):** The application is a single-page app and does not render any user-provided HTML. The terminal output is handled by xterm.js, which is designed to safely render terminal escape sequences and text. The Content Security Policy (CSP) is set to `default-src 'self'; style-src 'unsafe-inline' 'self'; script-src 'unsafe-eval' 'self';`, which helps to mitigate XSS risks. The `'unsafe-eval'` is required for the Go WASM runtime.
 
-*   **Cross-Site Request Forgery (CSRF):** `TLSPROXY` required a CSRF token (`__tlsproxySid` cookie and `x-csrf-token` header) for certificate requests, which is implemented in this application.
+*   **Cross-Site Request Forgery (CSRF):** `TLSPROXY` requires a CSRF token (`__tlsproxySid` cookie and `x-csrf-token` header) for certificate requests, which is implemented in this application.
 
 *   **WebSocket Proxy (`TLSPROXY`):** The security of the WebSocket proxy is critical. It is always configured to use TLS (WSS) to encrypt the traffic between the browser and the proxy. The proxy is also responsible for access control, determining which users can connect to which SSH servers.
 
