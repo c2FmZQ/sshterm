@@ -112,13 +112,29 @@ Here is an example with explanations of the fields:
 }
 ```
 
-*   `endpoints`: Pre-defines WebSocket endpoints. This is the same as using the `ep add` command.
-*   `hosts`: Pre-defines known host keys to trust.
-*   `certificateAuthorities`: Specifies trusted CAs for host certificates.
-*   `generateKeys`: Can be used to generate a new SSH key on first use.
-*   `autoConnect`: Automatically connect to a specified host on startup.
-*   `persist`: Controls whether settings are saved to the browser's local storage.
+*   `persist`: Controls whether settings are saved to the browser's local storage. When `false`, all data is cleared on reload.
 *   `theme`: Sets the visual theme (e.g., "dark", "light").
+*   `certificateAuthorities`: Specifies trusted Certificate Authorities for verifying host certificates.
+    *   `name`: A unique name for the CA.
+    *   `publicKey`: The public key of the CA in `authorized_keys` format.
+    *   `hostnames`: A list of hostnames or wildcard patterns for which this CA is trusted.
+*   `endpoints`: Pre-defines WebSocket endpoints, equivalent to using the `ep add` command.
+    *   `name`: A friendly name for the endpoint.
+    *   `url`: The WebSocket URL (e.g., `wss://ssh.example.com/proxy` or a relative path `./proxy`).
+*   `hosts`: Pre-defines known host keys to avoid interactive prompts.
+    *   `name`: The hostname of the server.
+    *   `key`: The public key of the host.
+*   `generateKeys`: Can be used to generate a new SSH key on first use if no keys exist.
+    *   `name`: The name to give the new key.
+    *   `type`: The key type (e.g., `ed25519`, `ecdsa-sk`).
+    *   `identityProvider`: If specified, the application will send a request to this URL to get the newly generated public key signed, creating a certificate.
+    *   `addToAgent`: If `true`, the new key will be automatically added to the in-memory agent.
+*   `autoConnect`: Automatically connect to a specified host on startup.
+    *   `username`: The user to connect as.
+    *   `hostname`: The host to connect to (must match an endpoint name).
+    *   `identity`: The name of the key to use for authentication.
+    *   `command`: An optional command to run on the remote server.
+    *   `forwardAgent`: If `true`, enables agent forwarding for the session.
 
 ## Usage
 
@@ -154,6 +170,28 @@ Follow these steps to get connected for the first time.
     ssh user@my-server
     ```
     SSH Term will use the endpoint you configured to establish the connection.
+
+### Connecting via a Jump Host
+
+SSH Term supports connecting through one or more jump hosts using the `-J` or `--jump-hosts` flag. The connection to the first jump host is made via a configured WebSocket endpoint, while subsequent hops are standard SSH connections made through the established tunnel.
+
+For this to work, you only need a configured endpoint for the *first* jump host.
+
+1.  **Configure Endpoint for the Jump Host:**
+    ```console
+    ep add jump-server wss://ssh.example.com/jump-proxy
+    ```
+    Here, `jump-server` is the name of the endpoint that points to your first jump host.
+
+2.  **Connect:**
+    ```console
+    ssh -J user@jump-server user@internal-host.example.com
+    ```
+    This command tells SSH Term to:
+    a. Connect to `jump-server` using the configured WebSocket endpoint.
+    b. From `jump-server`, establish a standard SSH connection to `internal-host.example.com`.
+
+    The hostname `internal-host.example.com` does not need its own endpoint; it is resolved from the jump host.
 
 ### Command Reference
 
@@ -276,12 +314,12 @@ The codebase is organized into the following main directories:
 2.  **Run the tests:**
     You can run the test suite to verify your changes.
 
-    *   **Headless Mode:** To run the tests in a headless browser, execute:
+    *   **Headless Mode (Requires Docker):** To run the tests in a headless browser, Docker is required. The test environment is containerized to ensure consistency.
         ```console
         ./tests/run-headless-tests.sh
         ```
 
-    *   **Interactive Mode:** To run the tests in your own browser for debugging, start the test server:
+    *   **Interactive Mode (Requires Docker):** To run the tests in your own browser for debugging, start the test server. The test server runs in a Docker container.
         ```console
         ./tests/run-test-server.sh
         ```
