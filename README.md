@@ -126,7 +126,7 @@ Here is an example with explanations of the fields:
     *   `key`: The public key of the host.
 *   `generateKeys`: Can be used to generate a new SSH key on first use if no keys exist.
     *   `name`: The name to give the new key.
-    *   `type`: The key type (e.g., `ed25519`, `ecdsa-sk`).
+    *   `type`: The key type (e.g., `ecdsa`, `ecdsa-sk`, `ed25519`, `rsa`).
     *   `identityProvider`: If specified, the application will send a request to this URL to get the newly generated public key signed, creating a certificate.
     *   `addToAgent`: If `true`, the new key will be automatically added to the in-memory agent.
 *   `autoConnect`: Automatically connect to a specified host on startup.
