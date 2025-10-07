@@ -8,6 +8,10 @@
   Note that the SSH server config needs to have `PubkeyAcceptedAlgorithms +webauthn-sk-ecdsa-sha2-nistp256@openssh.com`.
 * Add `keys change-pass` command to change the passphrase of keys.
 
+### :wrench: Misc
+
+* Update go 1.25.2
+
 ## v0.7.8
 
 ### :wrench: Bug fix
