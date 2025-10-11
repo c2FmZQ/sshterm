@@ -9,13 +9,13 @@ export CGO_ENABLED=0
 (cd go && go build -ldflags="-s -w" -o ../testserver ./internal/testserver/)
 
 docker build -f tests/Dockerfile -t sshterm-testserver .
-rm -f testserver
 
 docker compose -f tests/docker-compose-browser-tests.yaml up \
   --abort-on-container-exit \
   --exit-code-from=devtest
 RES=$?
 docker compose -f tests/docker-compose-browser-tests.yaml rm -f
+rm -f testserver
 
 if [[ $RES == 0 ]]; then
   echo PASS

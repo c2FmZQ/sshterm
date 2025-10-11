@@ -35,7 +35,12 @@ SOFTWARE.
 <link rel="icon" type="image/png" href="ssh.png" />
 <script src="xterm.js"></script>
 <script src="wasm_exec.js"></script>
-<script src="ssh.js"></script>
+<script type="module">
+  import { TabManager } from './ssh.js';
+  window.addEventListener('load', () => {
+    new TabManager(document.getElementById('terminal'));
+  });
+</script>
 <style>
 html, body {
   height: 100%;
