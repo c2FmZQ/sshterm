@@ -2,12 +2,8 @@
 
 cd $(dirname $0)
 
-npm install @xterm/xterm @xterm/addon-fit
+npm install
 
-if ! which browserify >& /dev/null; then
-  echo "browserify missing. See https://browserify.org/#install"
-  exit 1
-fi
-browserify browser.js > ../docroot/xterm.js
+npx browserify browser.js -o ../docroot/xterm.js
 cp node_modules/@xterm/xterm/css/xterm.css ../docroot/xterm.css
 cp node_modules/@xterm/xterm/LICENSE ../docroot/LICENSE.xterm.txt
