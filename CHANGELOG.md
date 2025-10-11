@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :wrench: Misc
+
+* Add browserify to the devDependencies in xterm/package.json.
+
 ## v0.8.0
 
 ### :star2: New features
