@@ -192,7 +192,6 @@ export class TabManager {
     this.selectScreen(b.id);
 
     const term = terminalManager.getTerm();
-    const term = terminalManager.getTerm();
     const cfg = await fetch('config.json')
       .then(r => {
         if (r.ok) return r.json();
