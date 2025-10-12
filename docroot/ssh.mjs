@@ -116,20 +116,15 @@ export class TabManager {
   }
 
   selectScreen(id) {
-    for (let s in this.screens) {
-      if (s !== id) {
-        this.screens[s].selected = false;
-        this.screens[s].e.style.zIndex = 0;
-        this.screens[s].b.style.backgroundColor = 'white';
-        this.screens[s].b.style.color = 'black';
-        this.screens[s].b.style.fontWeight = 'normal';
-      }
+    for (const screenId in this.screens) {
+      const screen = this.screens[screenId];
+      const isSelected = screenId === id;
+      screen.selected = isSelected;
+      screen.e.style.zIndex = isSelected ? 1 : 0;
+      screen.b.style.backgroundColor = isSelected ? 'black' : 'white';
+      screen.b.style.color = isSelected ? 'white' : 'black';
+      screen.b.style.fontWeight = isSelected ? 'bold' : 'normal';
     }
-    this.screens[id].selected = true;
-    this.screens[id].e.style.zIndex = 1;
-    this.screens[id].b.style.backgroundColor = 'black';
-    this.screens[id].b.style.color = 'white';
-    this.screens[id].b.style.fontWeight = 'bold';
     this.screens[id].terminalManager.getTerm().focus();
     document.querySelector('head title').textContent = this.screens[id].title;
   }
@@ -176,19 +171,11 @@ export class TabManager {
       this.screens[b.id].b.title = title;
       document.querySelector('head title').textContent = title;
       if (title !== 'sshterm') {
-        const msg = document.createElement('div');
-        msg.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
-        msg.textContent = title;
-        e.appendChild(msg);
-        setTimeout(() => e.removeChild(msg), 3000);
+        this._showMessage(e, title);
       }
     };
     const onBell = () => {
-      const msg = document.createElement('div');
-      msg.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
-      msg.textContent = '** BEEP **';
-      e.appendChild(msg);
-      setTimeout(() => e.removeChild(msg), 3000);
+      this._showMessage(e, '** BEEP **');
     };
 
     const terminalManager = new TerminalManager(e, setTitle, onBell);
@@ -229,6 +216,14 @@ export class TabManager {
         term.writeln(e.message);
         terminalManager.cleanup(e.message);
       });
+  }
+
+  _showMessage(element, text) {
+    const msg = document.createElement('div');
+    msg.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
+    msg.textContent = text;
+    element.appendChild(msg);
+    setTimeout(() => element.removeChild(msg), 3000);
   }
 }
 
