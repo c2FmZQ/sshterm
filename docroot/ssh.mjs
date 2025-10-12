@@ -23,7 +23,8 @@
  * SOFTWARE.
  */
 
-'use strict';
+import './wasm_exec.js';
+import { Terminal, FitAddon } from './xterm.mjs';
 
 function isTest() {
   return window.location.pathname.indexOf('tests.html') !== -1;

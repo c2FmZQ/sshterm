@@ -3,7 +3,13 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0"
   },
+  "type": "module",
   "devDependencies": {
-    "browserify": "^17.0.0"
+    "@babel/core": "^7.24.0",
+    "@babel/preset-env": "^7.24.0",
+    "rollup": "^4.13.0",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-babel": "^6.0.4"
   }
 }
