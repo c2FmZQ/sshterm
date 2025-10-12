@@ -302,7 +302,6 @@ func TestSSH(t *testing.T) {
 				t.Fatalf("http.Post: %v", err)
 			}
 		}},
-		{Wait: time.Second},
 		{Type: "ssh -i test testuser@test-server\n", Expect: "Enter the passphrase for test:"},
 		{Type: "foobar\n", Expect: "remote> "},
 		{Type: "exit\n", Expect: prompt},
