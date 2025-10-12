@@ -116,7 +116,7 @@ export class TabManager {
   }
 
   selectScreen(id) {
-    for (const screenId in this.screens) {
+    for (const screenId of Object.keys(this.screens)) {
       const screen = this.screens[screenId];
       const isSelected = screenId === id;
       screen.selected = isSelected;
