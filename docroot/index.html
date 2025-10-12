@@ -36,12 +36,7 @@ SOFTWARE.
 <link rel="manifest" href="ssh.webmanifest" />
 <script src="xterm.js"></script>
 <script src="wasm_exec.js"></script>
-<script type="module">
-  import { TabManager } from './ssh.js';
-  window.addEventListener('load', () => {
-    new TabManager(document.getElementById('terminal'));
-  });
-</script>
+<script type="module" src="main.js"></script>
 <style>
 html, body {
   height: 100%;
