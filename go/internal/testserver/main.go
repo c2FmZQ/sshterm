@@ -228,6 +228,8 @@ func main() {
 		return
 	}
 
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
 	defer cancel()
 
