@@ -25,6 +25,10 @@
 
 'use strict';
 
+function isTest() {
+  return window.location.pathname.indexOf('tests.html') !== -1;
+}
+
 class TerminalManager {
   constructor(elem, setTitle, onBell) {
     this.term = new Terminal({
@@ -65,7 +69,7 @@ class TerminalManager {
     this.term.element.addEventListener('mousedown', this.mousedownHandler);
     window.addEventListener('resize', this.resizeHandler);
 
-    if (window.location.pathname.indexOf('tests.html') !== -1) {
+    if (isTest()) {
       window.sshApp.term = this.term;
     }
   }
@@ -77,8 +81,7 @@ class TerminalManager {
     for (let i = 0; i < this.disposables.length; i++) {
       this.disposables[i].dispose();
     }
-    const isTest = window.location.pathname.indexOf('tests.html') !== -1;
-    if (isTest) {
+    if (isTest()) {
       window.sshApp.exited = result;
       const b = document.createElement('button');
       b.id = 'done';
@@ -211,8 +214,7 @@ export class TabManager {
     app.done
       .then(done => {
         terminalManager.cleanup(done);
-        const isTest = window.location.pathname.indexOf('tests.html') !== -1;
-        if (isTest) return;
+        if (isTest()) return;
         const wasSelected = this.screens[b.id].selected;
         delete this.screens[b.id];
         this.parent.removeChild(e);
@@ -242,7 +244,6 @@ window.sshApp.ready = new Promise(resolve => {
 });
 
 const go = new Go();
-const isTest = window.location.pathname.indexOf('tests.html') !== -1;
-const wasmFile = isTest ? 'tests.wasm' : 'ssh.wasm';
+const wasmFile = isTest() ? 'tests.wasm' : 'ssh.wasm';
 WebAssembly.instantiateStreaming(fetch(wasmFile), go.importObject)
   .then(r => go.run(r.instance));
