@@ -1,2 +1,4 @@
-window.Terminal = require('@xterm/xterm').Terminal;
-window.FitAddon = require('@xterm/addon-fit').FitAddon;
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+
+export { Terminal, FitAddon };

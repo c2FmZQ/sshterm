@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
 cd $(dirname $0)
-if [[ ! -f docroot/xterm.js ]]; then
+if [[ ! -f docroot/xterm.mjs ]]; then
   echo "Updating xtermjs..."
   ./xterm/update.sh
 fi

@@ -4,3 +4,4 @@ wasm_exec.js
 node_modules
 xterm.css
 xterm.js
+xterm.mjs
