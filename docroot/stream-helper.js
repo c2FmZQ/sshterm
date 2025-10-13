@@ -40,7 +40,7 @@ let appStreams = {};
 self.onmessage = e => {
   const id = e.data.streamId;
   if (id in appStreams) {
-    appStreams[id].then(f => f(e.data));
+    appStreams[id](e.data);
     delete appStreams[id];
   }
 };
@@ -51,16 +51,21 @@ self.onfetch = e => {
   const pos = e.request.url.lastIndexOf(streamWord);
   if (pos === -1) return;
   const id = e.request.url.substring(pos+streamWord.length);
-  appStreams[id] = new Promise(r1 => {
-    e.respondWith(new Promise(r2 => r1(data => r2(makeResponse(data)))));
-  });
-  self.clients.get(e.clientId)
-  .then(c => {
-    if (!c) {
-      appStreams[id].then(f => f(null));
-      delete appStreams[id];
-      return;
-    }
-    c.postMessage({streamId: id});
-  });
+  e.respondWith(new Promise(resolve => {
+    self.clients.get(e.clientId).then(c => {
+      if (!c) {
+        resolve(new Response('client not found', {status: 404, statusText: 'Not Found'}));
+        return;
+      }
+      const timeoutId = setTimeout(() => {
+        delete appStreams[id];
+        resolve(new Response('client did not respond in time', {status: 504, statusText: 'Gateway Timeout'}));
+      }, 5000);
+      appStreams[id] = data => {
+        clearTimeout(timeoutId);
+        resolve(makeResponse(data));
+      };
+      c.postMessage({streamId: id});
+    });
+  }));
 };
