@@ -159,6 +159,10 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	return session.Wait()
 }
 
+// parseUserHost splits a string in the form "user@host" at the last '@'.
+// This allows the user part to contain '@' characters.
+// If no '@' is present, it returns the original string as the first return
+// value, an empty string as the second, and false.
 func parseUserHost(target string) (string, string, bool) {
 	p := strings.LastIndex(target, "@")
 	if p == -1 {
