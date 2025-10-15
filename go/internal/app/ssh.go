@@ -159,8 +159,16 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	return session.Wait()
 }
 
+func parseUserHost(target string) (string, string, bool) {
+	p := strings.LastIndex(target, "@")
+	if p == -1 {
+		return target, "", false
+	}
+	return target[:p], target[p+1:], true
+}
+
 func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) (*ssh.Client, error) {
-	username, hostname, ok := strings.Cut(target, "@")
+	username, hostname, ok := parseUserHost(target)
 	if !ok {
 		return nil, fmt.Errorf("invalid target %q", target)
 	}
@@ -171,7 +179,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 	if jumpHosts != "" {
 		for _, jh := range strings.Split(jumpHosts, ",") {
 			jh = strings.TrimSpace(jh)
-			u, h, ok := strings.Cut(jh, "@")
+			u, h, ok := parseUserHost(jh)
 			if !ok {
 				u = username
 				h = jh
