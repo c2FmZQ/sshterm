@@ -4,6 +4,7 @@
 
 ### :wrench: Misc
 
+* Allow @ in usernames.
 * Add browserify to the devDependencies in xterm/package.json.
 
 ## v0.8.0
