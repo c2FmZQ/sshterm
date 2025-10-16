@@ -1,11 +1,17 @@
 # SSH Term Release Notes
 
-## next
+## v0.8.1
 
 ### :wrench: Misc
 
 * Allow @ in usernames.
-* Add browserify to the devDependencies in xterm/package.json.
+* Convert javascript to use ES Modules.
+* Update go 1.25.3
+* Update go dependencies:
+  * upgraded github.com/chromedp/chromedp v0.14.1 => v0.14.2
+  * upgraded golang.org/x/crypto v0.42.0 => v0.43.0
+  * upgraded golang.org/x/sys v0.36.0 => v0.37.0
+  * upgraded golang.org/x/term v0.35.0 => v0.36.0
 
 ## v0.8.0
 
