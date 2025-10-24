@@ -518,7 +518,8 @@ func (s *sshServer) handleDirectTCPIP(wg *sync.WaitGroup, newChannel ssh.NewChan
 	s.t.Logf("port-forward: %q", newChannel.ExtraData())
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
-		s.t.Fatalf("Could not accept channel: %v", err)
+		s.t.Errorf("Could not accept channel: %v", err)
+		return
 	}
 	wg.Add(1)
 	go func(in <-chan *ssh.Request) {
@@ -531,7 +532,8 @@ func (s *sshServer) handleDirectTCPIP(wg *sync.WaitGroup, newChannel ssh.NewChan
 func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel) {
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
-		s.t.Fatalf("Could not accept channel: %v", err)
+		s.t.Errorf("Could not accept channel: %v", err)
+		return
 	}
 	wg.Add(1)
 	go func(in <-chan *ssh.Request) {
@@ -577,11 +579,13 @@ func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel)
 					defer wg.Done()
 					server, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(s.dir))
 					if err != nil {
-						s.t.Fatal(err)
+						s.t.Error(err)
+						return
 					}
 					if err := server.Serve(); err != nil {
 						if err != io.EOF {
-							s.t.Fatal("sftp server completed with error:", err)
+							s.t.Error("sftp server completed with error:", err)
+							return
 						}
 					}
 					server.Close()
