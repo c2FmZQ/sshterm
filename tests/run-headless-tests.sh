@@ -6,7 +6,7 @@ cd $(dirname $0)/..
 export CGO_ENABLED=0
 
 ./build.sh
-(cd go && go build -ldflags="-s -w" -o ../testserver ./internal/testserver/)
+(cd go && go test -tags docker -c -o ../testserver ./internal/testserver/)
 
 docker build -f tests/Dockerfile -t sshterm-testserver .
 rm -f testserver

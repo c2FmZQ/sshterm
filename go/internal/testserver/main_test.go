@@ -21,6 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+//go:build docker
+
 package main
 
 import (
@@ -43,6 +45,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/chromedp/cdproto"
@@ -55,44 +58,47 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-func main() {
-	if _, err := os.Stat("/home"); err == nil {
-		fmt.Fprintf(os.Stderr, "This tool is intended to run in a container.\n")
-		os.Exit(1)
-	}
-	addr := flag.String("addr", ":8443", "The TCP address to listen to")
-	docRoot := flag.String("document-root", "", "The document root directory")
-	withChromeDP := flag.String("with-chromedp", "", "The url of the remote debugging port")
+var (
+	addr         = flag.String("addr", ":8443", "The TCP address to listen to")
+	docRoot      = flag.String("document-root", "", "The document root directory")
+	withChromeDP = flag.String("with-chromedp", "", "The url of the remote debugging port")
+)
 
-	tmpDir, err := os.MkdirTemp("", "sshterm-test")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
+func TestMain(m *testing.M) {
 	flag.Parse()
+	if _, err := os.Stat("/home"); err == nil {
+		log.Fatalf("This test is intended to run in a container.\n")
+	}
 	if *docRoot == "" {
 		log.Fatal("--document-root must be set")
 	}
+	os.Exit(m.Run())
+}
 
+func TestSSHTerm(t *testing.T) {
+	tmpDir := t.TempDir()
+	reset := func() {
+		os.RemoveAll(tmpDir)
+		os.Mkdir(tmpDir, 0o755)
+	}
 	upgrader := &websocket.Upgrader{
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}
-	sshServer, err := newSSHServer(tmpDir, false)
+	sshServer, err := newSSHServer(t, tmpDir, false)
 	if err != nil {
-		log.Fatalf("SSH Server: %v", err)
+		t.Fatalf("SSH Server: %v", err)
 	}
-	sshServerWithCert, err := newSSHServer(tmpDir, true)
+	sshServerWithCert, err := newSSHServer(t, tmpDir, true)
 	if err != nil {
-		log.Fatalf("SSH Server: %v", err)
+		t.Fatalf("SSH Server: %v", err)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/websocket", func(w http.ResponseWriter, req *http.Request) {
 		conn, err := upgrader.Upgrade(w, req, nil)
 		if err != nil {
-			log.Printf("ERR %v", err)
+			t.Logf("ERR %v", err)
 			return
 		}
 		defer conn.Close()
@@ -104,8 +110,7 @@ func main() {
 		sshServer.handle(&netConn{conn: conn})
 	})
 	mux.HandleFunc("/reset", func(w http.ResponseWriter, req *http.Request) {
-		os.RemoveAll(tmpDir)
-		os.Mkdir(tmpDir, 0o755)
+		reset()
 		fmt.Fprintln(w, "OK")
 	})
 	mux.HandleFunc("/addkey", func(w http.ResponseWriter, req *http.Request) {
@@ -114,7 +119,7 @@ func main() {
 			return
 		}
 		b, _ := io.ReadAll(req.Body)
-		log.Printf("/addkey %q", b)
+		t.Logf("/addkey %q", b)
 
 		sshServer.mu.Lock()
 		defer sshServer.mu.Unlock()
@@ -128,11 +133,11 @@ func main() {
 	})
 	mux.HandleFunc("/cakey", func(w http.ResponseWriter, req *http.Request) {
 		k := ssh.MarshalAuthorizedKey(sshServerWithCert.pubKey)
-		log.Printf("/cakey: %s", k)
+		t.Logf("/cakey: %s", k)
 		fmt.Fprintf(w, "%s\n", k)
 	})
 	mux.HandleFunc("/cert", func(w http.ResponseWriter, req *http.Request) {
-		log.Print("/cert")
+		t.Logf("/cert")
 		if req.Method != "POST" {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
 			return
@@ -140,13 +145,13 @@ func main() {
 		defer req.Body.Close()
 		body, err := io.ReadAll(req.Body)
 		if err != nil {
-			log.Printf("/cert: ReadAll: %v", err)
+			t.Logf("/cert: ReadAll: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		pub, _, _, _, err := ssh.ParseAuthorizedKey(body)
 		if err != nil {
-			log.Printf("/cert: ParseAuthorizedKey: %v", err)
+			t.Logf("/cert: ParseAuthorizedKey: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -159,7 +164,7 @@ func main() {
 			ValidBefore: uint64(now.Add(10 * time.Minute).Unix()),
 		}
 		if err := cert.SignCert(rand.Reader, sshServerWithCert.authority); err != nil {
-			log.Printf("/cert: SignCert: %v", err)
+			t.Logf("/cert: SignCert: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -178,13 +183,13 @@ func main() {
 		Handler: mux,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
+	var cancel context.CancelFunc
 
 	// Generate self-signed certificate
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
@@ -197,29 +202,31 @@ func main() {
 	}
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
 	if err != nil {
-		log.Fatalf("x509.CreateCertificate: %v", err)
+		t.Fatalf("x509.CreateCertificate: %v", err)
 	}
 	certFile := filepath.Join(tmpDir, "cert.pem")
 	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), 0o600); err != nil {
-		log.Fatalf("cert: %s", err)
+		t.Fatalf("cert: %s", err)
 	}
 	b, err := x509.MarshalECPrivateKey(priv)
 	if err != nil {
-		log.Fatalf("x509.MarshalECPrivateKey: %v", err)
+		t.Fatalf("x509.MarshalECPrivateKey: %v", err)
 	}
 	keyFile := filepath.Join(tmpDir, "key.pem")
 	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: b}), 0o600); err != nil {
-		log.Fatalf("key: %s", err)
+		t.Fatalf("key: %s", err)
 	}
 
 	go func() {
 		l, err := net.Listen("tcp", *addr)
 		if err != nil {
-			log.Fatalf("listen: %v", err)
+			t.Errorf("listen: %v", err)
+			return
 		}
-		log.Printf("HTTPS Server listening on %s. Document root is %s\n", l.Addr(), *docRoot)
+		t.Logf("HTTPS Server listening on %s. Document root is %s\n", l.Addr(), *docRoot)
 		if err := httpServer.ServeTLS(l, certFile, keyFile); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http server: %v", err)
+			t.Errorf("http server: %v", err)
+			return
 		}
 	}()
 	if *withChromeDP == "" {
@@ -228,85 +235,87 @@ func main() {
 		return
 	}
 
-	ctx, cancel = context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
-	defer cancel()
+	t.Run("WASM App Tests", func(t *testing.T) {
+		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancel()
+		ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
+		defer cancel()
 
-	ctx, cancel = chromedp.NewContext(ctx,
-		//chromedp.WithDebugf(log.Printf),
-		chromedp.WithErrorf(log.Printf),
-		chromedp.WithLogf(log.Printf),
-	)
-	defer cancel()
+		ctx, cancel = chromedp.NewContext(ctx,
+			//chromedp.WithDebugf(t.Logf),
+			chromedp.WithErrorf(t.Logf),
+			chromedp.WithLogf(t.Logf),
+		)
+		defer cancel()
 
-	chromedp.ListenTarget(ctx, func(ev any) {
-		switch ev := ev.(type) {
-		case *cdproto.Message:
-		case *runtime.EventConsoleAPICalled:
-			//log.Printf("* console.%s call:", ev.Type)
-			//for _, arg := range ev.Args {
-			//	log.Printf("   %s - %s", arg.Type, arg.Value)
-			//}
-		case *runtime.EventExceptionThrown:
-			log.Printf("Exception: * %s", ev.ExceptionDetails.Error())
-		case *webauthn.EventCredentialAdded, *webauthn.EventCredentialAsserted, *webauthn.EventCredentialDeleted, *webauthn.EventCredentialUpdated:
-			log.Printf("WebAuthn event: %#v", ev)
-		default:
-			//log.Printf("Target event: %#v", ev)
+		chromedp.ListenTarget(ctx, func(ev any) {
+			switch ev := ev.(type) {
+			case *cdproto.Message:
+			case *runtime.EventConsoleAPICalled:
+				//t.Logf("* console.%s call:", ev.Type)
+				//for _, arg := range ev.Args {
+				//	t.Logf("   %s - %s", arg.Type, arg.Value)
+				//}
+			case *runtime.EventExceptionThrown:
+				t.Logf("Exception: * %s", ev.ExceptionDetails.Error())
+			case *webauthn.EventCredentialAdded, *webauthn.EventCredentialAsserted, *webauthn.EventCredentialDeleted, *webauthn.EventCredentialUpdated:
+				t.Logf("WebAuthn event: %#v", ev)
+			default:
+				//t.Logf("Target event: %#v", ev)
+			}
+		})
+
+		if err := chromedp.Run(ctx, webauthn.Enable().WithEnableUI(false)); err != nil {
+			t.Fatalf("webauthn.Enable(): %v", err)
+		}
+
+		var authenticatorID webauthn.AuthenticatorID
+		if err := chromedp.Run(ctx,
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				authID, err := webauthn.AddVirtualAuthenticator(&webauthn.VirtualAuthenticatorOptions{
+					Protocol:                    webauthn.AuthenticatorProtocolCtap2,
+					Ctap2version:                webauthn.Ctap2versionCtap21,
+					Transport:                   webauthn.AuthenticatorTransportInternal,
+					HasResidentKey:              true,
+					HasUserVerification:         true,
+					AutomaticPresenceSimulation: true,
+					IsUserVerified:              true,
+				}).Do(ctx)
+				authenticatorID = authID
+				return err
+			}),
+		); err != nil {
+			t.Fatalf("webauthn.AddVirtualAuthenticator(): %v", err)
+		}
+		t.Logf("AddVirtualAuthenticator: %q", authenticatorID)
+
+		if err := chromedp.Run(ctx,
+			webauthn.ClearCredentials(authenticatorID),
+			webauthn.SetAutomaticPresenceSimulation(authenticatorID, true),
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				creds, err := webauthn.GetCredentials(authenticatorID).Do(ctx)
+				t.Logf("Credentials: %v", creds)
+				return err
+			}),
+		); err != nil {
+			t.Fatalf("webauthn.SetAutomaticPresenceSimulation(): %v", err)
+		}
+
+		var res, output string
+		if err := chromedp.Run(ctx,
+			chromedp.Navigate("https://devtest.local:8443/tests.html"),
+			chromedp.WaitVisible("#done"),
+			chromedp.Evaluate(`window.sshApp.exited`, &res),
+			chromedp.Evaluate(`window.sshApp.term.selectAll(), window.sshApp.term.getSelection()`, &output),
+		); err != nil {
+			t.Logf("chromedp.Run: %v", err)
+		}
+		t.Log(output)
+		t.Log(res)
+		if res != "PASS" {
+			t.FailNow()
 		}
 	})
-
-	if err := chromedp.Run(ctx, webauthn.Enable().WithEnableUI(false)); err != nil {
-		log.Fatalf("webauthn.Enable(): %v", err)
-	}
-
-	var authenticatorID webauthn.AuthenticatorID
-	if err := chromedp.Run(ctx,
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			authID, err := webauthn.AddVirtualAuthenticator(&webauthn.VirtualAuthenticatorOptions{
-				Protocol:                    webauthn.AuthenticatorProtocolCtap2,
-				Ctap2version:                webauthn.Ctap2versionCtap21,
-				Transport:                   webauthn.AuthenticatorTransportInternal,
-				HasResidentKey:              true,
-				HasUserVerification:         true,
-				AutomaticPresenceSimulation: true,
-				IsUserVerified:              true,
-			}).Do(ctx)
-			authenticatorID = authID
-			return err
-		}),
-	); err != nil {
-		log.Fatalf("webauthn.AddVirtualAuthenticator(): %v", err)
-	}
-	log.Printf("AddVirtualAuthenticator: %q", authenticatorID)
-
-	if err := chromedp.Run(ctx,
-		webauthn.ClearCredentials(authenticatorID),
-		webauthn.SetAutomaticPresenceSimulation(authenticatorID, true),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			creds, err := webauthn.GetCredentials(authenticatorID).Do(ctx)
-			log.Printf("Credentials: %v", creds)
-			return err
-		}),
-	); err != nil {
-		log.Fatalf("webauthn.SetAutomaticPresenceSimulation(): %v", err)
-	}
-
-	var res, output string
-	if err := chromedp.Run(ctx,
-		chromedp.Navigate("https://devtest.local:8443/tests.html"),
-		chromedp.WaitVisible("#done"),
-		chromedp.Evaluate(`window.sshApp.exited`, &res),
-		chromedp.Evaluate(`window.sshApp.term.selectAll(), window.sshApp.term.getSelection()`, &output),
-	); err != nil {
-		log.Printf("chromedp.Run: %v", err)
-	}
-	fmt.Println(output)
-	fmt.Println(res)
-	if res != "PASS" {
-		os.Exit(1)
-	}
 }
 
 var _ net.Conn = (*netConn)(nil)
@@ -359,6 +368,7 @@ func (c *netConn) RemoteAddr() net.Addr {
 }
 
 type sshServer struct {
+	t              *testing.T
 	mu             sync.Mutex
 	authorizedKeys map[string]bool
 	config         *ssh.ServerConfig
@@ -369,7 +379,7 @@ type sshServer struct {
 	pubKey    ssh.PublicKey
 }
 
-func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
+func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("ed25519.GenerateKey: %w", err)
@@ -394,7 +404,7 @@ func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
 			},
 		}
 		if err := cert.SignCert(rand.Reader, authority); err != nil {
-			log.Fatalf("unable to create signer cert: %v", err)
+			t.Fatalf("unable to create signer cert: %v", err)
 		}
 		certSigner, err := ssh.NewCertSigner(cert, authority)
 		if err != nil {
@@ -404,6 +414,7 @@ func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
 	}
 
 	server := &sshServer{
+		t:              t,
 		authorizedKeys: make(map[string]bool),
 		dir:            dir,
 		authority:      authority,
@@ -418,7 +429,7 @@ func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
 		UserKeyFallback: func(c ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
 			server.mu.Lock()
 			defer server.mu.Unlock()
-			log.Printf("PublicKeyCallback: %q", pubKey.Marshal())
+			t.Logf("PublicKeyCallback: %q", pubKey.Marshal())
 			if server.authorizedKeys[string(pubKey.Marshal())] {
 				return &ssh.Permissions{
 					Extensions: map[string]string{
@@ -432,7 +443,7 @@ func newSSHServer(dir string, hostCert bool) (*sshServer, error) {
 
 	config := &ssh.ServerConfig{
 		KeyboardInteractiveCallback: func(c ssh.ConnMetadata, client ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
-			log.Print("KeyboardInteractiveCallback")
+			t.Logf("KeyboardInteractiveCallback")
 			answers, err := client("", "", []string{"Password: "}, []bool{false})
 			if err != nil {
 				return nil, err
@@ -466,7 +477,7 @@ func (s *sshServer) handle(nConn net.Conn) error {
 	}()
 
 	for newChannel := range chans {
-		log.Printf("newChannel type: %s", newChannel.ChannelType())
+		s.t.Logf("newChannel type: %s", newChannel.ChannelType())
 		switch newChannel.ChannelType() {
 		case "direct-tcpip":
 			s.handleDirectTCPIP(&wg, newChannel)
@@ -504,10 +515,11 @@ func (fakeConn) RemoteAddr() net.Addr {
 }
 
 func (s *sshServer) handleDirectTCPIP(wg *sync.WaitGroup, newChannel ssh.NewChannel) {
-	log.Printf("port-forward: %q", newChannel.ExtraData())
+	s.t.Logf("port-forward: %q", newChannel.ExtraData())
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
-		log.Fatalf("Could not accept channel: %v", err)
+		s.t.Errorf("Could not accept channel: %v", err)
+		return
 	}
 	wg.Add(1)
 	go func(in <-chan *ssh.Request) {
@@ -520,13 +532,14 @@ func (s *sshServer) handleDirectTCPIP(wg *sync.WaitGroup, newChannel ssh.NewChan
 func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel) {
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
-		log.Fatalf("Could not accept channel: %v", err)
+		s.t.Errorf("Could not accept channel: %v", err)
+		return
 	}
 	wg.Add(1)
 	go func(in <-chan *ssh.Request) {
 		defer wg.Done()
 		for req := range in {
-			log.Printf("request type: %s", req.Type)
+			s.t.Logf("request type: %s", req.Type)
 			switch req.Type {
 			case "shell":
 				req.Reply(true, nil)
@@ -566,15 +579,17 @@ func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel)
 					defer wg.Done()
 					server, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(s.dir))
 					if err != nil {
-						log.Fatal(err)
+						s.t.Error(err)
+						return
 					}
 					if err := server.Serve(); err != nil {
 						if err != io.EOF {
-							log.Fatal("sftp server completed with error:", err)
+							s.t.Error("sftp server completed with error:", err)
+							return
 						}
 					}
 					server.Close()
-					log.Print("sftp client exited session.")
+					s.t.Log("sftp client exited session.")
 				}()
 
 			default:

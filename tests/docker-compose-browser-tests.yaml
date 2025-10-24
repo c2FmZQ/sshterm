@@ -26,7 +26,11 @@ services:
     hostname: "devtest.local"
     image: "sshterm-testserver"
     user: "65534:65534"
-    command: "--with-chromedp=ws://chrome:9222"
+    command: [
+      "--with-chromedp=ws://chrome:9222",
+      "--test.v",
+      "--test.failfast",
+    ]
     working_dir: "/"
     volumes:
       - type: tmpfs
