@@ -220,12 +220,12 @@ func TestSSHTerm(t *testing.T) {
 	go func() {
 		l, err := net.Listen("tcp", *addr)
 		if err != nil {
-			t.Logf("listen: %v", err)
+			t.Errorf("listen: %v", err)
 			return
 		}
 		t.Logf("HTTPS Server listening on %s. Document root is %s\n", l.Addr(), *docRoot)
 		if err := httpServer.ServeTLS(l, certFile, keyFile); err != nil && err != http.ErrServerClosed {
-			t.Logf("http server: %v", err)
+			t.Errorf("http server: %v", err)
 			return
 		}
 	}()
