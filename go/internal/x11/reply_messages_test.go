@@ -6,5 +6,5 @@ import (
 	"testing"
 )
 
-func TestRequests(t *testing.T) {
+func TestReplyMessages(t *testing.T) {
 }

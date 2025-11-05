@@ -3,7 +3,6 @@
 package x11
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -109,797 +108,6 @@ type XError interface {
 	MajorOp() byte
 }
 
-// getWindowAttributesReply implements messageEncoder for GetWindowAttributes reply.
-type getWindowAttributesReply struct {
-	sequence           uint16
-	backingStore       byte
-	visualID           uint32
-	class              uint16
-	bitGravity         byte
-	winGravity         byte
-	backingPlanes      uint32
-	backingPixel       uint32
-	saveUnder          bool
-	mapped             bool
-	mapState           byte
-	overrideRedirect   bool
-	colormap           uint32
-	allEventMasks      uint32
-	yourEventMask      uint32
-	doNotPropagateMask uint16
-}
-
-func (r *getWindowAttributesReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 44)
-	reply[0] = 1 // Reply type
-	reply[1] = r.backingStore
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 3) // Reply length (3 * 4 bytes = 12 bytes, plus 32 bytes header = 44 bytes total)
-	order.PutUint32(reply[8:12], r.visualID)
-	order.PutUint16(reply[12:14], r.class)
-	reply[14] = r.bitGravity
-	reply[15] = r.winGravity
-	order.PutUint32(reply[16:20], r.backingPlanes)
-	order.PutUint32(reply[20:24], r.backingPixel)
-	reply[24] = boolToByte(r.saveUnder)
-	reply[25] = boolToByte(r.mapped)
-	reply[26] = r.mapState
-	reply[27] = boolToByte(r.overrideRedirect)
-	order.PutUint32(reply[28:32], r.colormap)
-	order.PutUint32(reply[32:36], r.allEventMasks)
-	order.PutUint32(reply[36:40], r.yourEventMask)
-	order.PutUint16(reply[40:42], r.doNotPropagateMask)
-	// reply[42:44] is padding
-	return reply
-}
-
-// getGeometryReply implements messageEncoder for GetGeometry reply.
-type getGeometryReply struct {
-	sequence      uint16
-	depth         byte
-	root          uint32
-	x, y          int16
-	width, height uint16
-	borderWidth   uint16
-}
-
-func (r *getGeometryReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	reply[1] = r.depth
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	order.PutUint32(reply[8:12], r.root)
-	order.PutUint16(reply[12:14], uint16(r.x))
-	order.PutUint16(reply[14:16], uint16(r.y))
-	order.PutUint16(reply[16:18], r.width)
-	order.PutUint16(reply[18:20], r.height)
-	order.PutUint16(reply[20:22], r.borderWidth)
-	// reply[22:32] is padding
-	return reply
-}
-
-// internAtomReply implements messageEncoder for InternAtom reply.
-type internAtomReply struct {
-	sequence uint16
-	atom     uint32
-}
-
-func (r *internAtomReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	// byte 1 is unused
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	order.PutUint32(reply[8:12], r.atom)
-	// reply[12:32] is padding
-	return reply
-}
-
-// getAtomNameReply implements messageEncoder for GetAtomName reply.
-type getAtomNameReply struct {
-	sequence   uint16
-	nameLength uint16
-	name       string
-}
-
-func (r *getAtomNameReply) encodeMessage(order binary.ByteOrder) []byte {
-	nameLen := len(r.name)
-	p := (4 - (nameLen % 4)) % 4
-	reply := make([]byte, 32+nameLen+p)
-	reply[0] = 1 // Reply type
-	// byte 1 is unused
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], uint32((nameLen+p)/4)) // Reply length
-	order.PutUint16(reply[8:10], uint16(nameLen))
-	// reply[10:32] is padding
-	copy(reply[32:], r.name)
-	return reply
-}
-
-// queryPointerReply implements messageEncoder for QueryPointer reply.
-type queryPointerReply struct {
-	sequence     uint16
-	sameScreen   bool
-	root         uint32
-	child        uint32
-	rootX, rootY int16
-	winX, winY   int16
-	mask         uint16
-}
-
-func (r *queryPointerReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	reply[1] = boolToByte(r.sameScreen)
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	order.PutUint32(reply[8:12], r.root)
-	order.PutUint32(reply[12:16], r.child)
-	order.PutUint16(reply[16:18], uint16(r.rootX))
-	order.PutUint16(reply[18:20], uint16(r.rootY))
-	order.PutUint16(reply[20:22], uint16(r.winX))
-	order.PutUint16(reply[22:24], uint16(r.winY))
-	order.PutUint16(reply[24:26], r.mask)
-	// reply[26:32] is padding
-	return reply
-}
-
-// listPropertiesReply implements messageEncoder for ListProperties reply.
-type listPropertiesReply struct {
-	sequence      uint16
-	numProperties uint16
-	atoms         []uint32
-}
-
-func (r *listPropertiesReply) encodeMessage(order binary.ByteOrder) []byte {
-	numAtoms := len(r.atoms)
-	reply := make([]byte, 32+numAtoms*4)
-	reply[0] = 1 // Reply type
-	// byte 1 is unused
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], uint32(numAtoms)) // Reply length
-	order.PutUint16(reply[8:10], uint16(numAtoms))
-	// reply[10:32] is padding
-	for i, atom := range r.atoms {
-		order.PutUint32(reply[32+i*4:], atom)
-	}
-	return reply
-}
-
-// getImageReply implements messageEncoder for GetImage reply.
-type getImageReply struct {
-	sequence  uint16
-	depth     byte
-	visualID  uint32
-	imageData []byte
-}
-
-func (r *getImageReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32+len(r.imageData))
-	reply[0] = 1 // Reply type
-	reply[1] = r.depth
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], uint32(len(r.imageData)/4)) // Reply length
-	order.PutUint32(reply[8:12], r.visualID)
-	// reply[12:32] is padding
-	copy(reply[32:], r.imageData)
-	return reply
-}
-
-// getPropertyReply implements messageEncoder for GetProperty reply.
-type getPropertyReply struct {
-	sequence              uint16
-	format                byte
-	propertyType          uint32
-	bytesAfter            uint32
-	valueLenInFormatUnits uint32
-	value                 []byte
-}
-
-func (r *getPropertyReply) encodeMessage(order binary.ByteOrder) []byte {
-	n := len(r.value)
-	p := (4 - (n % 4)) % 4
-	replyLen := (n + p) / 4
-
-	reply := make([]byte, 32+n+p)
-	reply[0] = 1 // Reply type
-	reply[1] = r.format
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], uint32(replyLen)) // Reply length
-	order.PutUint32(reply[8:12], r.propertyType)
-	order.PutUint32(reply[12:16], r.bytesAfter)
-	order.PutUint32(reply[16:20], r.valueLenInFormatUnits)
-	// reply[20:32] is padding
-	copy(reply[32:], r.value)
-	return reply
-}
-
-// queryBestSizeReply implements messageEncoder for QueryBestSize reply.
-type queryBestSizeReply struct {
-	sequence uint16
-	width    uint16
-	height   uint16
-}
-
-func (r *queryBestSizeReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	// byte 1 is unused
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	order.PutUint16(reply[8:10], r.width)
-	order.PutUint16(reply[10:12], r.height)
-	// reply[12:32] is padding
-	return reply
-}
-
-// queryExtensionReply implements messageEncoder for QueryExtension reply.
-type queryExtensionReply struct {
-	sequence    uint16
-	present     bool
-	majorOpcode byte
-	firstEvent  byte
-	firstError  byte
-}
-
-func (r *queryExtensionReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	reply[1] = boolToByte(r.present)
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	reply[8] = r.majorOpcode
-	reply[9] = r.firstEvent
-	reply[10] = r.firstError
-	// reply[11:32] is padding
-	return reply
-}
-
-// queryColorsReply implements messageEncoder for QueryColors reply.
-type queryColorsReply struct {
-	sequence uint16
-	colors   []color
-}
-
-func (r *queryColorsReply) encodeMessage(order binary.ByteOrder) []byte {
-	numColors := len(r.colors)
-	replies := make([]byte, numColors*8)
-	for i, color := range r.colors {
-		order.PutUint16(replies[i*8:], color.Red)
-		order.PutUint16(replies[i*8+2:], color.Green)
-		order.PutUint16(replies[i*8+4:], color.Blue)
-		// replies[i*8+6:i*8+8] unused
-	}
-
-	reply := make([]byte, 32+len(replies))
-	reply[0] = 1 // Reply
-	// byte 1 is unused
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], uint32(len(replies)/4)) // Reply length
-	order.PutUint16(reply[8:10], uint16(numColors))
-	// reply[10:32] is padding
-	copy(reply[32:], replies)
-	return reply
-}
-
-// lookupColorReply implements messageEncoder for LookupColor reply.
-type lookupColorReply struct {
-	sequence   uint16
-	red        uint16
-	green      uint16
-	blue       uint16
-	exactRed   uint16
-	exactGreen uint16
-	exactBlue  uint16
-}
-
-func (r *lookupColorReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	// byte 1 is unused
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	order.PutUint16(reply[8:10], r.red)
-	order.PutUint16(reply[10:12], r.green)
-	order.PutUint16(reply[12:14], r.blue)
-	order.PutUint16(reply[14:16], r.exactRed)
-	order.PutUint16(reply[16:18], r.exactGreen)
-	order.PutUint16(reply[18:20], r.exactBlue)
-	// reply[20:32] is padding
-	return reply
-}
-
-// allocColorReply implements messageEncoder for AllocColor reply.
-type allocColorReply struct {
-	sequence uint16
-	red      uint16
-	green    uint16
-	blue     uint16
-	pixel    uint32
-}
-
-func (r *allocColorReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	// byte 1 is unused
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	order.PutUint16(reply[8:10], r.red)
-	order.PutUint16(reply[10:12], r.green)
-	order.PutUint16(reply[12:14], r.blue)
-	// reply[14:16] is padding
-	order.PutUint32(reply[8:12], r.pixel)
-	// reply[20:32] is padding
-	return reply
-}
-
-// listFontsReply implements messageEncoder for ListFonts reply.
-type listFontsReply struct {
-	sequence  uint16
-	numFonts  uint16
-	fontNames []string
-}
-
-func (r *listFontsReply) encodeMessage(order binary.ByteOrder) []byte {
-	var namesData []byte
-	for _, name := range r.fontNames {
-		namesData = append(namesData, byte(len(name)))
-		namesData = append(namesData, []byte(name)...)
-	}
-
-	namesSize := len(namesData)
-	padSize := (4 - (namesSize % 4)) % 4
-
-	reply := make([]byte, 32+namesSize+padSize)
-	reply[0] = 1 // Reply
-	// byte 1 is unused
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], uint32((namesSize+padSize)/4)) // Reply length
-	order.PutUint16(reply[8:10], uint16(len(r.fontNames)))
-	// reply[10:32] is padding
-	copy(reply[32:], namesData)
-	return reply
-}
-
-// queryFontReply implements messageEncoder for QueryFont reply.
-type queryFontReply struct {
-	sequence       uint16
-	minBounds      xCharInfo
-	maxBounds      xCharInfo
-	minCharOrByte2 uint16
-	maxCharOrByte2 uint16
-	defaultChar    uint16
-	numFontProps   uint16
-	drawDirection  uint8
-	minByte1       uint8
-	maxByte1       uint8
-	allCharsExist  bool
-	fontAscent     int16
-	fontDescent    int16
-	numCharInfos   uint32
-	charInfos      []xCharInfo
-}
-
-func (r *queryFontReply) encodeMessage(order binary.ByteOrder) []byte {
-	numFontProps := 0 // Not implemented yet
-	numCharInfos := len(r.charInfos)
-
-	reply := make([]byte, 60+8*numFontProps+12*numCharInfos)
-	reply[0] = 1 // Reply
-	reply[1] = 1 // font-info-present (True)
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], uint32(7+2*numFontProps+3*numCharInfos)) // Reply length
-
-	// min-bounds
-	order.PutUint16(reply[8:10], uint16(r.minBounds.LeftSideBearing))
-	order.PutUint16(reply[10:12], uint16(r.minBounds.RightSideBearing))
-	order.PutUint16(reply[12:14], uint16(r.minBounds.CharacterWidth))
-	order.PutUint16(reply[14:16], uint16(r.minBounds.Ascent))
-	order.PutUint16(reply[16:18], uint16(r.minBounds.Descent))
-	order.PutUint16(reply[18:20], r.minBounds.Attributes)
-
-	// max-bounds
-	order.PutUint16(reply[24:26], uint16(r.maxBounds.LeftSideBearing))
-	order.PutUint16(reply[26:28], uint16(r.maxBounds.RightSideBearing))
-	order.PutUint16(reply[28:30], uint16(r.maxBounds.CharacterWidth))
-	order.PutUint16(reply[30:32], uint16(r.maxBounds.Ascent))
-	order.PutUint16(reply[32:34], uint16(r.maxBounds.Descent))
-	order.PutUint16(reply[34:36], r.maxBounds.Attributes)
-
-	order.PutUint16(reply[40:42], r.minCharOrByte2)
-	order.PutUint16(reply[42:44], r.maxCharOrByte2)
-	order.PutUint16(reply[44:46], r.defaultChar)
-	order.PutUint16(reply[46:48], uint16(numFontProps))
-
-	reply[48] = r.drawDirection & 0x1
-	reply[49] = r.minByte1
-	reply[50] = r.maxByte1
-	reply[51] = boolToByte(r.allCharsExist)
-
-	order.PutUint16(reply[52:54], uint16(r.fontAscent))
-	order.PutUint16(reply[54:56], uint16(r.fontDescent))
-
-	order.PutUint32(reply[56:60], uint32(numCharInfos))
-
-	offset := 60 + 8*numFontProps
-	for _, ci := range r.charInfos {
-		order.PutUint16(reply[offset:offset+2], uint16(ci.LeftSideBearing))
-		order.PutUint16(reply[offset+2:offset+4], uint16(ci.RightSideBearing))
-		order.PutUint16(reply[offset+4:offset+6], uint16(ci.CharacterWidth))
-		order.PutUint16(reply[offset+6:offset+8], uint16(ci.Ascent))
-		order.PutUint16(reply[offset+8:offset+10], uint16(ci.Descent))
-		order.PutUint16(reply[offset+10:offset+12], ci.Attributes)
-		offset += 12
-	}
-	return reply
-}
-
-// listInstalledColormapsReply implements messageEncoder for ListInstalledColormaps reply.
-type listInstalledColormapsReply struct {
-	sequence     uint16
-	numColormaps uint16
-	colormaps    []uint32
-}
-
-func (r *listInstalledColormapsReply) encodeMessage(order binary.ByteOrder) []byte {
-	nColormaps := len(r.colormaps)
-	reply := make([]byte, 32+nColormaps*4)
-	reply[0] = 1 // Reply
-	// byte 1 is unused
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], uint32(nColormaps)) // length
-	order.PutUint16(reply[8:10], uint16(nColormaps))
-	// reply[10:32] is padding
-	for i, cmap := range r.colormaps {
-		order.PutUint32(reply[32+i*4:], cmap)
-	}
-	return reply
-}
-
-// translateCoordsReply implements messageEncoder for TranslateCoords reply.
-type translateCoordsReply struct {
-	sequence   uint16
-	sameScreen bool
-	child      uint32
-	dstX, dstY int16
-}
-
-func (r *translateCoordsReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	reply[1] = boolToByte(r.sameScreen)
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	order.PutUint32(reply[8:12], r.child)
-	order.PutUint16(reply[12:14], uint16(r.dstX))
-	order.PutUint16(reply[14:16], uint16(r.dstY))
-	// reply[16:32] is padding
-	return reply
-}
-
-// getInputFocusReply implements messageEncoder for GetInputFocus reply.
-type getInputFocusReply struct {
-	sequence uint16
-	revertTo byte
-	focus    uint32
-}
-
-func (r *getInputFocusReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	reply[1] = r.revertTo
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	order.PutUint32(reply[8:12], r.focus)
-	// reply[12:32] is padding
-	return reply
-}
-
-// getSelectionOwnerReply implements messageEncoder for GetSelectionOwner reply.
-type getSelectionOwnerReply struct {
-	sequence uint16
-	owner    uint32
-}
-
-func (r *getSelectionOwnerReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	// byte 1 is unused
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	order.PutUint32(reply[8:12], r.owner)
-	// reply[12:32] is padding
-	return reply
-}
-
-// grabPointerReply implements messageEncoder for GrabPointer reply.
-type grabPointerReply struct {
-	sequence uint16
-	status   byte
-}
-
-func (r *grabPointerReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	reply[1] = r.status
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	// reply[8:32] is padding
-	return reply
-}
-
-// grabKeyboardReply implements messageEncoder for GrabKeyboard reply.
-type grabKeyboardReply struct {
-	sequence uint16
-	status   byte
-}
-
-func (r *grabKeyboardReply) encodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32)
-	reply[0] = 1 // Reply type
-	reply[1] = r.status
-	order.PutUint16(reply[2:4], r.sequence)
-	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	// reply[8:32] is padding
-	return reply
-}
-
-// setupResponse implements messageEncoder for the X11 setup response.
-type setupResponse struct {
-	success                  byte
-	protocolVersion          uint16
-	releaseNumber            uint32
-	resourceIDBase           uint32
-	resourceIDMask           uint32
-	motionBufferSize         uint32
-	vendorLength             uint16
-	maxRequestLength         uint16
-	numScreens               uint8
-	numPixmapFormats         uint8
-	imageByteOrder           uint8
-	bitmapFormatBitOrder     byte
-	bitmapFormatScanlineUnit byte
-	bitmapFormatScanlinePad  byte
-	minKeycode               uint8
-	maxKeycode               uint8
-	vendorString             string
-	pixmapFormats            []format
-	screens                  []screen
-}
-
-func (r *setupResponse) encodeMessage(order binary.ByteOrder) []byte {
-	setup := newDefaultSetup() // This should probably be passed in or generated once
-	setupData := setup.marshal(order)
-
-	response := make([]byte, 8+len(setupData))
-	response[0] = r.success
-	// byte 1 is unused
-	order.PutUint16(response[2:4], r.protocolVersion)
-	order.PutUint16(response[4:6], 0) // length of additional data in 4-byte units
-	order.PutUint16(response[6:8], uint16(len(setupData)/4))
-	copy(response[8:], setupData)
-	return response
-}
-
-// motionNotifyEvent implements messageEncoder for MotionNotify event.
-type motionNotifyEvent struct {
-	sequence       uint16
-	detail         byte
-	time           uint32
-	root           uint32
-	event          uint32
-	child          uint32
-	rootX, rootY   int16
-	eventX, eventY int16
-	state          uint16
-	sameScreen     bool
-}
-
-func (e *motionNotifyEvent) encodeMessage(order binary.ByteOrder) []byte {
-	event := make([]byte, 32)
-	event[0] = 6 // MotionNotify event code
-	event[1] = e.detail
-	order.PutUint16(event[2:4], e.sequence)
-	order.PutUint32(event[4:8], e.time)
-	order.PutUint32(event[8:12], e.root)
-	order.PutUint32(event[12:16], e.event)
-	order.PutUint32(event[16:20], e.child)
-	order.PutUint16(event[20:22], uint16(e.rootX))
-	order.PutUint16(event[22:24], uint16(e.rootY))
-	order.PutUint16(event[24:26], uint16(e.eventX))
-	order.PutUint16(event[26:28], uint16(e.eventY))
-	order.PutUint16(event[28:30], e.state)
-	event[30] = boolToByte(e.sameScreen)
-	// event[31] is unused
-	return event
-}
-
-// configureNotifyEvent implements messageEncoder for ConfigureNotify event.
-type configureNotifyEvent struct {
-	sequence         uint16
-	event            uint32
-	window           uint32
-	aboveSibling     uint32
-	x, y             int16
-	width, height    uint16
-	borderWidth      uint16
-	overrideRedirect bool
-}
-
-func (e *configureNotifyEvent) encodeMessage(order binary.ByteOrder) []byte {
-	event := make([]byte, 32)
-	event[0] = 22 // ConfigureNotify event code
-	// byte 1 is unused
-	order.PutUint16(event[2:4], e.sequence)
-	order.PutUint32(event[4:8], e.event)
-	order.PutUint32(event[8:12], e.window)
-	order.PutUint32(event[12:16], e.aboveSibling)
-	order.PutUint16(event[16:18], uint16(e.x))
-	order.PutUint16(event[18:20], uint16(e.y))
-	order.PutUint16(event[20:22], e.width)
-	order.PutUint16(event[22:24], e.height)
-	order.PutUint16(event[24:26], e.borderWidth)
-	event[26] = boolToByte(e.overrideRedirect)
-	// byte 27 is unused
-	return event
-}
-
-// exposeEvent implements messageEncoder for Expose event.
-type exposeEvent struct {
-	sequence      uint16
-	window        uint32
-	x, y          uint16
-	width, height uint16
-	count         uint16
-}
-
-func (e *exposeEvent) encodeMessage(order binary.ByteOrder) []byte {
-	event := make([]byte, 32)
-	event[0] = 12 // Expose event code
-	// byte 1 is unused
-	order.PutUint16(event[2:4], e.sequence)
-	order.PutUint32(event[4:8], e.window)
-	order.PutUint16(event[8:10], e.x)
-	order.PutUint16(event[10:12], e.y)
-	order.PutUint16(event[12:14], e.width)
-	order.PutUint16(event[14:16], e.height)
-	order.PutUint16(event[16:18], e.count)
-	// event[18:32] is unused
-	return event
-}
-
-// clientMessageEvent implements messageEncoder for ClientMessage event.
-type clientMessageEvent struct {
-	sequence    uint16
-	format      byte
-	window      uint32
-	messageType uint32
-	data        [20]byte
-}
-
-func (e *clientMessageEvent) encodeMessage(order binary.ByteOrder) []byte {
-	event := make([]byte, 32)
-	event[0] = 33 // ClientMessage event code
-	event[1] = e.format
-	order.PutUint16(event[2:4], e.sequence)
-	order.PutUint32(event[4:8], e.window)
-	order.PutUint32(event[8:12], e.messageType)
-	copy(event[12:32], e.data[:])
-	return event
-}
-
-// selectionNotifyEvent implements messageEncoder for SelectionNotify event.
-type selectionNotifyEvent struct {
-	sequence  uint16
-	requestor uint32
-	selection uint32
-	target    uint32
-	property  uint32
-	time      uint32
-}
-
-func (e *selectionNotifyEvent) encodeMessage(order binary.ByteOrder) []byte {
-	event := make([]byte, 32)
-	event[0] = 31 // SelectionNotify event code
-	// byte 1 is unused
-	order.PutUint16(event[2:4], e.sequence)
-	order.PutUint32(event[4:8], e.requestor)
-	order.PutUint32(event[8:12], e.selection)
-	order.PutUint32(event[12:16], e.target)
-	order.PutUint32(event[16:20], e.property)
-	order.PutUint32(event[20:24], e.time)
-	// event[24:32] is unused
-	return event
-}
-
-// colormapNotifyEvent implements messageEncoder for ColormapNotify event.
-type colormapNotifyEvent struct {
-	sequence uint16
-	window   uint32
-	colormap uint32
-	new      bool
-	state    byte
-}
-
-func (e *colormapNotifyEvent) encodeMessage(order binary.ByteOrder) []byte {
-	event := make([]byte, 32)
-	event[0] = ColormapNotify // ColormapNotify event code
-	// byte 1 is unused
-	order.PutUint16(event[2:4], e.sequence)
-	order.PutUint32(event[4:8], e.window)
-	order.PutUint32(event[8:12], e.colormap)
-	event[12] = boolToByte(e.new)
-	event[13] = e.state
-	// event[14:32] is unused
-	return event
-}
-
-// keyEvent implements messageEncoder for KeyPress and KeyRelease events.
-type keyEvent struct {
-	sequence       uint16
-	detail         byte // keycode
-	time           uint32
-	root           uint32
-	event          uint32
-	child          uint32
-	rootX, rootY   int16
-	eventX, eventY int16
-	state          uint16 // keyboard state
-	sameScreen     bool
-}
-
-func (e *keyEvent) encodeMessage(order binary.ByteOrder) []byte {
-	event := make([]byte, 32)
-	// event[0] will be set to KeyPress (2) or KeyRelease (3) by the caller
-	event[1] = e.detail
-	order.PutUint16(event[2:4], e.sequence)
-	order.PutUint32(event[4:8], e.time)
-	order.PutUint32(event[8:12], e.root)
-	order.PutUint32(event[12:16], e.event)
-	order.PutUint32(event[16:20], e.child)
-	order.PutUint16(event[20:22], uint16(e.rootX))
-	order.PutUint16(event[22:24], uint16(e.rootY))
-	order.PutUint16(event[24:26], uint16(e.eventX))
-	order.PutUint16(event[26:28], uint16(e.eventY))
-	order.PutUint16(event[28:30], e.state)
-	event[30] = boolToByte(e.sameScreen)
-	// event[31] is unused
-	return event
-}
-
-// x11RawEvent implements messageEncoder for raw X11 event data.
-type x11RawEvent struct {
-	data []byte
-}
-
-func (e *x11RawEvent) encodeMessage(order binary.ByteOrder) []byte {
-	return e.data
-}
-
-// QueryColorsRequest represents the request for QueryColors.
-type QueryColorsRequest struct {
-	Cmap   xID
-	Pixels []uint32
-	// MinorOp and MajorOp are part of XError, but also useful for context
-	MinorOp  byte
-	MajorOp  reqCode
-	Sequence uint16
-}
-
-func parseQueryColorsRequest(order binary.ByteOrder, body []byte) QueryColorsRequest {
-	cmapID := order.Uint32(body[0:4])
-	numPixels := (len(body) - 4) / 4
-	pixels := make([]uint32, numPixels)
-	for i := 0; i < numPixels; i++ {
-		pixels[i] = order.Uint32(body[4+i*4 : 4+i*4+4])
-	}
-	return QueryColorsRequest{
-		Cmap:   xID{local: cmapID},
-		Pixels: pixels,
-	}
-}
-
 // CanvasOperation represents a single canvas drawing operation captured from the frontend.
 type CanvasOperation struct {
 	Type        string `json:"type"`
@@ -936,51 +144,9 @@ func (w *window) mapState() byte {
 	return 2 // Viewable
 }
 
-type xCharInfo struct {
-	LeftSideBearing  int16
-	RightSideBearing int16
-	CharacterWidth   uint16
-	Ascent           int16
-	Descent          int16
-	Attributes       uint16
-}
-
-type color struct {
-	Red   uint16
-	Green uint16
-	Blue  uint16
-}
-
 type colormap struct {
 	pixels map[uint32]color
 }
-
-type BadColor struct {
-	seq      uint16
-	badValue uint32
-	minorOp  byte
-	majorOp  reqCode
-}
-
-func (e BadColor) Code() byte       { return ColormapError }
-func (e BadColor) Sequence() uint16 { return e.seq }
-func (e BadColor) BadValue() uint32 { return e.badValue }
-func (e BadColor) MinorOp() byte    { return e.minorOp }
-func (e BadColor) MajorOp() byte    { return byte(e.majorOp) }
-
-type GenericError struct {
-	seq      uint16
-	badValue uint32
-	minorOp  byte
-	majorOp  reqCode
-	code     byte
-}
-
-func (e GenericError) Code() byte       { return e.code }
-func (e GenericError) Sequence() uint16 { return e.seq }
-func (e GenericError) BadValue() uint32 { return e.badValue }
-func (e GenericError) MinorOp() byte    { return e.minorOp }
-func (e GenericError) MajorOp() byte    { return byte(e.majorOp) }
 
 type x11Server struct {
 	logger             Logger
@@ -1001,69 +167,6 @@ type x11Server struct {
 	pointerX, pointerY int16
 	clients            map[uint32]*x11Client
 	nextClientID       uint32
-}
-
-// Start of setup struct
-type setup struct {
-	releaseNumber            uint32
-	resourceIDBase           uint32
-	resourceIDMask           uint32
-	motionBufferSize         uint32
-	vendorLength             uint16
-	maxRequestLength         uint16
-	numScreens               uint8
-	numPixmapFormats         uint8
-	imageByteOrder           uint8
-	bitmapFormatBitOrder     uint8
-	bitmapFormatScanlineUnit uint8
-	bitmapFormatScanlinePad  uint8
-	minKeycode               uint8
-	maxKeycode               uint8
-	vendorString             string
-	pixmapFormats            []format
-	screens                  []screen
-}
-
-type format struct {
-	depth        uint8
-	bitsPerPixel uint8
-	scanlinePad  uint8
-}
-
-type screen struct {
-	root                uint32
-	defaultColormap     uint32
-	whitePixel          uint32
-	blackPixel          uint32
-	currentInputMasks   uint32
-	widthInPixels       uint16
-	heightInPixels      uint16
-	widthInMillimeters  uint16
-	heightInMillimeters uint16
-	minInstalledMaps    uint16
-	maxInstalledMaps    uint16
-	rootVisual          uint32
-	backingStores       uint8
-	saveUnders          bool
-	rootDepth           uint8
-	numDepths           uint8
-	depths              []depth
-}
-
-type depth struct {
-	depth      uint8
-	numVisuals uint16
-	visuals    []visualType
-}
-
-type visualType struct {
-	visualID        uint32 // visual-id
-	class           uint8
-	bitsPerRGBValue uint8
-	colormapEntries uint16
-	redMask         uint32
-	greenMask       uint32
-	blueMask        uint32
 }
 
 func (s *x11Server) UpdatePointerPosition(x, y int16) {
@@ -1344,13 +447,14 @@ func (s *x11Server) serve(client *x11Client) {
 		}
 	}
 }
+
 func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messageEncoder) {
 	log.Printf("X11: Received opcode: %d", req.opcode)
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Errorf("X11 Request Handler Panic: %v\n%s", r, debug.Stack())
 			// Construct a generic X11 error reply (Request error)
-			reply = client.sendError(GenericError{
+			reply = client.sendError(&GenericError{
 				seq:      req.sequence,
 				badValue: uint32(req.opcode),
 				minorOp:  0,
@@ -1362,28 +466,28 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 
 	switch req.opcode {
 	case CreateWindow:
-		drawable, parent, x, y, width, height, _, _, _, valueMask, values := parseCreateWindowRequest(s.byteOrder, req.body)
-		xid := client.xID(drawable)
-		parentXID := client.xID(parent)
+		p := parseCreateWindowRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Drawable)
+		parentXID := client.xID(p.Parent)
 		// Check if the window ID is already in use
 		if _, exists := s.windows[xid]; exists {
 			s.logger.Errorf("X11: CreateWindow: ID %d already in use", xid)
-			return client.sendError(GenericError{seq: req.sequence, badValue: drawable, majorOp: CreateWindow, code: IDChoiceError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: p.Drawable, majorOp: CreateWindow, code: IDChoiceError})
 		}
 
 		newWindow := &window{
 			xid:        xid,
-			parent:     parent,
-			x:          int16(x),
-			y:          int16(y),
-			width:      uint16(width),
-			height:     uint16(height),
+			parent:     p.Parent,
+			x:          p.X,
+			y:          p.Y,
+			width:      p.Width,
+			height:     p.Height,
 			depth:      byte(req.data),
 			children:   []uint32{},
-			attributes: values,
+			attributes: p.Values,
 		}
-		if values.Colormap > 0 {
-			newWindow.colormap = client.xID(values.Colormap)
+		if p.Values.Colormap > 0 {
+			newWindow.colormap = client.xID(p.Values.Colormap)
 		} else {
 			newWindow.colormap = xID{local: s.defaultColormap}
 		}
@@ -1391,13 +495,13 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 
 		// Add to parent's children list
 		if parentWindow, ok := s.windows[parentXID]; ok {
-			parentWindow.children = append(parentWindow.children, drawable)
+			parentWindow.children = append(parentWindow.children, p.Drawable)
 		}
-		s.frontend.CreateWindow(xid, parent, x, y, width, height, uint32(req.data), valueMask, values)
+		s.frontend.CreateWindow(xid, p.Parent, uint32(p.X), uint32(p.Y), uint32(p.Width), uint32(p.Height), uint32(req.data), p.ValueMask, p.Values)
 
 	case GetWindowAttributes:
-		drawable := parseGetWindowAttributesRequest(s.byteOrder, req.body)
-		xid := client.xID(drawable)
+		p := parseGetWindowAttributesRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Drawable)
 		w, ok := s.windows[xid]
 		if !ok {
 			return nil
@@ -1421,22 +525,22 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 			doNotPropagateMask: 0,                      // Not explicitly stored in window attributes
 		}
 	case DestroyWindow:
-		drawable := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(drawable)
+		p := parseMapWindowRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Window)
 		delete(s.windows, xid)
 		s.frontend.DestroyWindow(xid)
 
 	case UnmapWindow:
-		drawable := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(drawable)
+		p := parseUnmapWindowRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Window)
 		if w, ok := s.windows[xid]; ok {
 			w.mapped = false
 		}
 		s.frontend.UnmapWindow(xid)
 
 	case MapWindow:
-		drawable := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(drawable)
+		p := parseMapWindowRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Window)
 		if w, ok := s.windows[xid]; ok {
 			w.mapped = true
 			s.frontend.MapWindow(xid)
@@ -1444,8 +548,8 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case MapSubwindows:
-		drawable := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(drawable)
+		p := parseMapWindowRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Window)
 		if parentWindow, ok := s.windows[xid]; ok {
 			for _, childID := range parentWindow.children {
 				childXID := xID{client: xid.client, local: childID}
@@ -1458,13 +562,13 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case ConfigureWindow:
-		drawable, valueMask, values := parseConfigureWindowRequest(s.byteOrder, req.body)
-		xid := client.xID(drawable)
-		s.frontend.ConfigureWindow(xid, valueMask, values)
+		p := parseConfigureWindowRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Window)
+		s.frontend.ConfigureWindow(xid, p.ValueMask, p.Values)
 
 	case GetGeometry:
-		drawable := parseGetGeometryRequest(s.byteOrder, req.body)
-		xid := client.xID(drawable)
+		p := parseGetGeometryRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Drawable)
 		w, ok := s.windows[xid]
 		if !ok {
 			return nil
@@ -1483,9 +587,8 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		// Not implemented yet
 
 	case InternAtom:
-		nameLen := s.byteOrder.Uint16(req.body[0:2])
-		name := string(req.body[4 : 4+nameLen])
-		atomID := s.frontend.GetAtom(client.id, name)
+		p := parseInternAtomRequest(s.byteOrder, req.body)
+		atomID := s.frontend.GetAtom(client.id, p.Name)
 
 		return &internAtomReply{
 			sequence: req.sequence,
@@ -1493,8 +596,8 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case GetAtomName:
-		atom := parseGetAtomNameRequest(s.byteOrder, req.body)
-		name := s.frontend.GetAtomName(atom)
+		p := parseGetAtomNameRequest(s.byteOrder, req.body)
+		name := s.frontend.GetAtomName(p.Atom)
 		return &getAtomNameReply{
 			sequence:   req.sequence,
 			nameLength: uint16(len(name)),
@@ -1502,30 +605,26 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case ChangeProperty:
-		drawable := s.byteOrder.Uint32(req.body[0:4])
-		property := s.byteOrder.Uint32(req.body[4:8])
-		typeAtom := s.byteOrder.Uint32(req.body[8:12])
-		format := req.body[12]
-		dataLen := s.byteOrder.Uint32(req.body[16:20])
-		propData := req.body[20 : 20+dataLen]
-		xid := client.xID(drawable)
-		s.frontend.ChangeProperty(xid, property, typeAtom, uint32(format), propData)
+		p := parseChangePropertyRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Window)
+		s.frontend.ChangeProperty(xid, p.Property, p.Type, uint32(p.Format), p.Data)
 
 	case SendEvent:
+		p := parseSendEventRequest(s.byteOrder, req.body)
 		// The X11 client sends an event to another client.
 		// We need to forward this event to the appropriate frontend.
 		// For now, we'll just log it and pass it to the frontend.
-		s.frontend.SendEvent(&x11RawEvent{data: req.body})
+		s.frontend.SendEvent(&x11RawEvent{data: p.EventData})
 
 	case QueryPointer:
-		drawable := parseQueryPointerRequest(s.byteOrder, req.body)
-		xid := client.xID(drawable)
+		p := parseQueryPointerRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Drawable)
 		log.Printf("X11: QueryPointer drawable=%d", xid)
 		return &queryPointerReply{
 			sequence:   req.sequence,
 			sameScreen: true,
 			root:       s.rootWindowID(),
-			child:      drawable,
+			child:      p.Drawable,
 			rootX:      s.pointerX,
 			rootY:      s.pointerY,
 			winX:       s.pointerX, // Assuming pointer is always in the window for now
@@ -1533,8 +632,8 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 			mask:       0,          // No buttons pressed
 		}
 	case ListProperties:
-		window := parseListPropertiesRequest(s.byteOrder, req.body)
-		xid := client.xID(window)
+		p := parseListPropertiesRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Window)
 		atoms := s.frontend.ListProperties(xid)
 		return &listPropertiesReply{
 			sequence:      req.sequence,
@@ -1543,184 +642,184 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case CreateGC:
-		xid := client.xID(s.byteOrder.Uint32(req.body[0:4]))
-		valueMask := s.byteOrder.Uint32(req.body[8:12])
-		gc, _ := parseGCValues(s.byteOrder, valueMask, req.body[12:])
+		p := parseCreateGCRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Cid)
 
 		// Check if the GC ID is already in use
 		if _, exists := s.gcs[xid]; exists {
 			s.logger.Errorf("X11: CreateGC: ID %s already in use", xid)
-			return client.sendError(GenericError{seq: req.sequence, badValue: xid.local, majorOp: CreateGC, code: IDChoiceError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: xid.local, majorOp: CreateGC, code: IDChoiceError})
 		}
 
-		s.gcs[xid] = gc
-		s.frontend.CreateGC(xid, gc)
+		s.gcs[xid] = p.Values
+		s.frontend.CreateGC(xid, p.Values)
 
 	case ChangeGC:
-		xid := client.xID(s.byteOrder.Uint32(req.body[0:4]))
-		valueMask := s.byteOrder.Uint32(req.body[4:8])
-		gc, _ := parseGCValues(s.byteOrder, valueMask, req.body[8:])
+		p := parseChangeGCRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Gc)
 		if existingGC, ok := s.gcs[xid]; ok {
-			if valueMask&GCFunction != 0 {
-				existingGC.Function = gc.Function
+			if p.ValueMask&GCFunction != 0 {
+				existingGC.Function = p.Values.Function
 			}
-			if valueMask&GCPlaneMask != 0 {
-				existingGC.PlaneMask = gc.PlaneMask
+			if p.ValueMask&GCPlaneMask != 0 {
+				existingGC.PlaneMask = p.Values.PlaneMask
 			}
-			if valueMask&GCForeground != 0 {
-				existingGC.Foreground = gc.Foreground
+			if p.ValueMask&GCForeground != 0 {
+				existingGC.Foreground = p.Values.Foreground
 			}
-			if valueMask&GCBackground != 0 {
-				existingGC.Background = gc.Background
+			if p.ValueMask&GCBackground != 0 {
+				existingGC.Background = p.Values.Background
 			}
-			if valueMask&GCLineWidth != 0 {
-				existingGC.LineWidth = gc.LineWidth
+			if p.ValueMask&GCLineWidth != 0 {
+				existingGC.LineWidth = p.Values.LineWidth
 			}
-			if valueMask&GCLineStyle != 0 {
-				existingGC.LineStyle = gc.LineStyle
+			if p.ValueMask&GCLineStyle != 0 {
+				existingGC.LineStyle = p.Values.LineStyle
 			}
-			if valueMask&GCCapStyle != 0 {
-				existingGC.CapStyle = gc.CapStyle
+			if p.ValueMask&GCCapStyle != 0 {
+				existingGC.CapStyle = p.Values.CapStyle
 			}
-			if valueMask&GCJoinStyle != 0 {
-				existingGC.JoinStyle = gc.JoinStyle
+			if p.ValueMask&GCJoinStyle != 0 {
+				existingGC.JoinStyle = p.Values.JoinStyle
 			}
-			if valueMask&GCFillStyle != 0 {
-				existingGC.FillStyle = gc.FillStyle
+			if p.ValueMask&GCFillStyle != 0 {
+				existingGC.FillStyle = p.Values.FillStyle
 			}
-			if valueMask&GCFillRule != 0 {
-				existingGC.FillRule = gc.FillRule
+			if p.ValueMask&GCFillRule != 0 {
+				existingGC.FillRule = p.Values.FillRule
 			}
-			if valueMask&GCTile != 0 {
-				existingGC.Tile = gc.Tile
+			if p.ValueMask&GCTile != 0 {
+				existingGC.Tile = p.Values.Tile
 			}
-			if valueMask&GCStipple != 0 {
-				existingGC.Stipple = gc.Stipple
+			if p.ValueMask&GCStipple != 0 {
+				existingGC.Stipple = p.Values.Stipple
 			}
-			if valueMask&GCTileStipXOrigin != 0 {
-				existingGC.TileStipXOrigin = gc.TileStipXOrigin
+			if p.ValueMask&GCTileStipXOrigin != 0 {
+				existingGC.TileStipXOrigin = p.Values.TileStipXOrigin
 			}
-			if valueMask&GCTileStipYOrigin != 0 {
-				existingGC.TileStipYOrigin = gc.TileStipYOrigin
+			if p.ValueMask&GCTileStipYOrigin != 0 {
+				existingGC.TileStipYOrigin = p.Values.TileStipYOrigin
 			}
-			if valueMask&GCFont != 0 {
-				existingGC.Font = gc.Font
+			if p.ValueMask&GCFont != 0 {
+				existingGC.Font = p.Values.Font
 			}
-			if valueMask&GCSubwindowMode != 0 {
-				existingGC.SubwindowMode = gc.SubwindowMode
+			if p.ValueMask&GCSubwindowMode != 0 {
+				existingGC.SubwindowMode = p.Values.SubwindowMode
 			}
-			if valueMask&GCGraphicsExposures != 0 {
-				existingGC.GraphicsExposures = gc.GraphicsExposures
+			if p.ValueMask&GCGraphicsExposures != 0 {
+				existingGC.GraphicsExposures = p.Values.GraphicsExposures
 			}
-			if valueMask&GCClipXOrigin != 0 {
-				existingGC.ClipXOrigin = gc.ClipXOrigin
+			if p.ValueMask&GCClipXOrigin != 0 {
+				existingGC.ClipXOrigin = p.Values.ClipXOrigin
 			}
-			if valueMask&GCClipYOrigin != 0 {
-				existingGC.ClipYOrigin = gc.ClipYOrigin
+			if p.ValueMask&GCClipYOrigin != 0 {
+				existingGC.ClipYOrigin = p.Values.ClipYOrigin
 			}
-			if valueMask&GCClipMask != 0 {
-				existingGC.ClipMask = gc.ClipMask
+			if p.ValueMask&GCClipMask != 0 {
+				existingGC.ClipMask = p.Values.ClipMask
 			}
-			if valueMask&GCDashOffset != 0 {
-				existingGC.DashOffset = gc.DashOffset
+			if p.ValueMask&GCDashOffset != 0 {
+				existingGC.DashOffset = p.Values.DashOffset
 			}
-			if valueMask&GCDashList != 0 {
-				existingGC.Dashes = gc.Dashes
+			if p.ValueMask&GCDashList != 0 {
+				existingGC.Dashes = p.Values.Dashes
 			}
-			if valueMask&GCArcMode != 0 {
-				existingGC.ArcMode = gc.ArcMode
+			if p.ValueMask&GCArcMode != 0 {
+				existingGC.ArcMode = p.Values.ArcMode
 			}
 		}
-		s.frontend.ChangeGC(xid, valueMask, gc)
+		s.frontend.ChangeGC(xid, p.ValueMask, p.Values)
 
 	case ClearArea:
-		drawable, x, y, width, height := parseClearAreaRequest(s.byteOrder, req.body)
-		s.frontend.ClearArea(client.xID(drawable), int32(x), int32(y), int32(width), int32(height))
+		p := parseClearAreaRequest(s.byteOrder, req.body)
+		s.frontend.ClearArea(client.xID(p.Window), int32(p.X), int32(p.Y), int32(p.Width), int32(p.Height))
 
 	case CopyArea:
-		srcDrawable, dstDrawable, gcID, srcX, srcY, dstX, dstY, width, height := parseCopyAreaRequest(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parseCopyAreaRequest(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.CopyArea(client.xID(srcDrawable), client.xID(dstDrawable), gc, int32(srcX), int32(srcY), int32(dstX), int32(dstY), int32(width), int32(height))
+		s.frontend.CopyArea(client.xID(p.SrcDrawable), client.xID(p.DstDrawable), gc, int32(p.SrcX), int32(p.SrcY), int32(p.DstX), int32(p.DstY), int32(p.Width), int32(p.Height))
 
 	case PolyPoint:
-		drawable, gcID, points := parsePolyPointRequest(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parsePolyPointRequest(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.PolyPoint(client.xID(drawable), gc, points)
+		s.frontend.PolyPoint(client.xID(p.Drawable), gc, p.Coordinates)
 
 	case PolyLine:
-		drawable, gcID, points := parsePolyLineRequest(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parsePolyLineRequest(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.PolyLine(client.xID(drawable), gc, points)
+		s.frontend.PolyLine(client.xID(p.Drawable), gc, p.Coordinates)
 
 	case PolySegment:
-		drawable, gcID, segments := parsePolySegmentRequest(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parsePolySegmentRequest(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.PolySegment(client.xID(drawable), gc, segments)
+		s.frontend.PolySegment(client.xID(p.Drawable), gc, p.Segments)
 
 	case PolyArc:
-		drawable, gcID, arcs := parsePolyArcRequest(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parsePolyArcRequest(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.PolyArc(client.xID(drawable), gc, arcs)
+		s.frontend.PolyArc(client.xID(p.Drawable), gc, p.Arcs)
 
 	case PolyRectangle:
-		drawable, gcID, rects := parsePolyRectangleRequest(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parsePolyRectangleRequest(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.PolyRectangle(client.xID(drawable), gc, rects)
+		s.frontend.PolyRectangle(client.xID(p.Drawable), gc, p.Rectangles)
 
 	case FillPoly:
-		drawable, gcID, points := parseFillPolyRequest(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parseFillPolyRequest(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.FillPoly(client.xID(drawable), gc, points)
+		s.frontend.FillPoly(client.xID(p.Drawable), gc, p.Coordinates)
 
 	case PolyFillRectangle:
-		drawable, gcID, rects := parsePolyFillRectangleRequest(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parsePolyFillRectangleRequest(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.PolyFillRectangle(client.xID(drawable), gc, rects)
+		s.frontend.PolyFillRectangle(client.xID(p.Drawable), gc, p.Rectangles)
 
 	case PolyFillArc:
-		drawable, gcID, arcs := parsePolyFillArcRequest(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parsePolyFillArcRequest(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.PolyFillArc(client.xID(drawable), gc, arcs)
+		s.frontend.PolyFillArc(client.xID(p.Drawable), gc, p.Arcs)
 
 	case PutImage:
 		log.Printf("X11: Server received PutImage request")
-		drawable, gcID, width, height, dstX, dstY, leftPad, depth, imgData := parsePutImageRequest(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parsePutImageRequest(s.byteOrder, req.body)
+		p.Format = req.data
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.PutImage(client.xID(drawable), gc, req.data, width, height, dstX, dstY, leftPad, depth, imgData)
+		s.frontend.PutImage(client.xID(p.Drawable), gc, p.Format, p.Width, p.Height, p.DstX, p.DstY, p.LeftPad, p.Depth, p.Data)
 
 	case GetImage:
-		drawable, x, y, width, height, _ := parseGetImageRequest(s.byteOrder, req.body)
-		imgData, err := s.frontend.GetImage(client.xID(drawable), int32(x), int32(y), int32(width), int32(height), uint32(req.data))
+		p := parseGetImageRequest(s.byteOrder, req.body)
+		p.Format = req.data
+		imgData, err := s.frontend.GetImage(client.xID(p.Drawable), int32(p.X), int32(p.Y), int32(p.Width), int32(p.Height), p.PlaneMask)
 		if err != nil {
 			s.logger.Errorf("Failed to get image: %v", err)
 			return nil
@@ -1732,19 +831,16 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 			imageData: imgData,
 		}
 	case GetProperty:
-		window := s.byteOrder.Uint32(req.body[0:4])
-		property := s.byteOrder.Uint32(req.body[4:8])
-		longOffset := s.byteOrder.Uint32(req.body[12:16])
-		longLength := s.byteOrder.Uint32(req.body[16:20])
+		p := parseGetPropertyRequest(s.byteOrder, req.body)
 
-		data, typ, format := s.frontend.GetProperty(client.xID(window), property)
+		data, typ, format := s.frontend.GetProperty(client.xID(p.Window), p.Property)
 
 		// Handle offset and length
 		var propData []byte
 		bytesAfter := 0
-		if longOffset*4 < uint32(len(data)) {
-			start := longOffset * 4
-			end := start + longLength*4
+		if p.Offset*4 < uint32(len(data)) {
+			start := p.Offset * 4
+			end := start + p.Length*4
 			if end > uint32(len(data)) {
 				end = uint32(len(data))
 			}
@@ -1774,148 +870,145 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case ImageText8:
-		drawable, gcID, x, y, text := parseImageText8Request(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parseImageText8Request(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.ImageText8(client.xID(drawable), gc, x, y, text)
+		s.frontend.ImageText8(client.xID(p.Drawable), gc, int32(p.X), int32(p.Y), p.Text)
 
 	case ImageText16:
-		drawable, gcID, x, y, text := parseImageText16Request(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parseImageText16Request(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.ImageText16(client.xID(drawable), gc, x, y, text)
+		s.frontend.ImageText16(client.xID(p.Drawable), gc, int32(p.X), int32(p.Y), p.Text)
 
 	case PolyText8:
-		drawable, gcID, x, y, items := parsePolyText8Request(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parsePolyText8Request(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.PolyText8(client.xID(drawable), gc, x, y, items)
+		s.frontend.PolyText8(client.xID(p.Drawable), gc, int32(p.X), int32(p.Y), p.Items)
 
 	case PolyText16:
-		drawable, gcID, x, y, items := parsePolyText16Request(s.byteOrder, req.body)
-		gc, ok := s.gcs[client.xID(gcID)]
+		p := parsePolyText16Request(s.byteOrder, req.body)
+		gc, ok := s.gcs[client.xID(p.Gc)]
 		if !ok {
 			return
 		}
-		s.frontend.PolyText16(client.xID(drawable), gc, x, y, items)
+		s.frontend.PolyText16(client.xID(p.Drawable), gc, int32(p.X), int32(p.Y), p.Items)
 
 	case Bell:
-		s.frontend.Bell(int8(req.data))
+		p := parseBellRequest(req.data)
+		s.frontend.Bell(p.Percent)
 
 	case CreatePixmap:
-		pid, drawable, width, height := parseCreatePixmapRequest(s.byteOrder, req.body)
-		xid := client.xID(pid)
-		depth := uint32(req.data)
+		p := parseCreatePixmapRequest(s.byteOrder, req.body)
+		p.Depth = req.data
+		xid := client.xID(p.Pid)
 
 		// Check if the pixmap ID is already in use
 		if _, exists := s.pixmaps[xid]; exists {
 			s.logger.Errorf("X11: CreatePixmap: ID %s already in use", xid)
-			return client.sendError(GenericError{seq: req.sequence, badValue: pid, majorOp: CreatePixmap, code: IDChoiceError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: p.Pid, majorOp: CreatePixmap, code: IDChoiceError})
 		}
 
 		s.pixmaps[xid] = true // Mark pixmap ID as used
-		s.frontend.CreatePixmap(xid, client.xID(drawable), width, height, depth)
+		s.frontend.CreatePixmap(xid, client.xID(p.Drawable), uint32(p.Width), uint32(p.Height), uint32(p.Depth))
 
 	case FreePixmap:
-		pid := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(pid)
+		p := parseFreePixmapRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Pid)
 		delete(s.pixmaps, xid)
 		s.frontend.FreePixmap(xid)
 
 	case CreateGlyphCursor:
-		cid := s.byteOrder.Uint32(req.body[0:4])
-		sourceChar := s.byteOrder.Uint16(req.body[8:10])
+		p := parseCreateGlyphCursorRequest(s.byteOrder, req.body)
 
 		// Check if the cursor ID is already in use
-		if _, exists := s.cursors[client.xID(cid)]; exists {
-			s.logger.Errorf("X11: CreateGlyphCursor: ID %d already in use", cid)
-			return client.sendError(GenericError{seq: req.sequence, badValue: cid, majorOp: CreateGlyphCursor, code: IDChoiceError})
+		if _, exists := s.cursors[client.xID(p.Cid)]; exists {
+			s.logger.Errorf("X11: CreateGlyphCursor: ID %d already in use", p.Cid)
+			return client.sendError(&GenericError{seq: req.sequence, badValue: p.Cid, majorOp: CreateGlyphCursor, code: IDChoiceError})
 		}
 
-		s.cursors[client.xID(cid)] = true
-		s.frontend.CreateCursorFromGlyph(cid, sourceChar)
+		s.cursors[client.xID(p.Cid)] = true
+		s.frontend.CreateCursorFromGlyph(p.Cid, p.SourceChar)
 
 	case ChangeWindowAttributes:
-		windowID := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(windowID)
-		valueMask := s.byteOrder.Uint32(req.body[4:8])
-		values, _ := parseWindowAttributes(s.byteOrder, valueMask, req.body[8:])
+		p := parseChangeWindowAttributesRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Window)
 		if w, ok := s.windows[xid]; ok {
-			if valueMask&CWBackPixmap != 0 {
-				w.attributes.BackgroundPixmap = values.BackgroundPixmap
+			if p.ValueMask&CWBackPixmap != 0 {
+				w.attributes.BackgroundPixmap = p.Values.BackgroundPixmap
 			}
-			if valueMask&CWBackPixel != 0 {
-				w.attributes.BackgroundPixel = values.BackgroundPixel
+			if p.ValueMask&CWBackPixel != 0 {
+				w.attributes.BackgroundPixel = p.Values.BackgroundPixel
 			}
-			if valueMask&CWBorderPixmap != 0 {
-				w.attributes.BorderPixmap = values.BorderPixmap
+			if p.ValueMask&CWBorderPixmap != 0 {
+				w.attributes.BorderPixmap = p.Values.BorderPixmap
 			}
-			if valueMask&CWBorderPixel != 0 {
-				w.attributes.BorderPixel = values.BorderPixel
+			if p.ValueMask&CWBorderPixel != 0 {
+				w.attributes.BorderPixel = p.Values.BorderPixel
 			}
-			if valueMask&CWBitGravity != 0 {
-				w.attributes.BitGravity = values.BitGravity
+			if p.ValueMask&CWBitGravity != 0 {
+				w.attributes.BitGravity = p.Values.BitGravity
 			}
-			if valueMask&CWWinGravity != 0 {
-				w.attributes.WinGravity = values.WinGravity
+			if p.ValueMask&CWWinGravity != 0 {
+				w.attributes.WinGravity = p.Values.WinGravity
 			}
-			if valueMask&CWBackingStore != 0 {
-				w.attributes.BackingStore = values.BackingStore
+			if p.ValueMask&CWBackingStore != 0 {
+				w.attributes.BackingStore = p.Values.BackingStore
 			}
-			if valueMask&CWBackingPlanes != 0 {
-				w.attributes.BackingPlanes = values.BackingPlanes
+			if p.ValueMask&CWBackingPlanes != 0 {
+				w.attributes.BackingPlanes = p.Values.BackingPlanes
 			}
-			if valueMask&CWBackingPixel != 0 {
-				w.attributes.BackingPixel = values.BackingPixel
+			if p.ValueMask&CWBackingPixel != 0 {
+				w.attributes.BackingPixel = p.Values.BackingPixel
 			}
-			if valueMask&CWOverrideRedirect != 0 {
-				w.attributes.OverrideRedirect = values.OverrideRedirect
+			if p.ValueMask&CWOverrideRedirect != 0 {
+				w.attributes.OverrideRedirect = p.Values.OverrideRedirect
 			}
-			if valueMask&CWSaveUnder != 0 {
-				w.attributes.SaveUnder = values.SaveUnder
+			if p.ValueMask&CWSaveUnder != 0 {
+				w.attributes.SaveUnder = p.Values.SaveUnder
 			}
-			if valueMask&CWEventMask != 0 {
-				w.attributes.EventMask = values.EventMask
+			if p.ValueMask&CWEventMask != 0 {
+				w.attributes.EventMask = p.Values.EventMask
 			}
-			if valueMask&CWDontPropagate != 0 {
-				w.attributes.DontPropagateMask = values.DontPropagateMask
+			if p.ValueMask&CWDontPropagate != 0 {
+				w.attributes.DontPropagateMask = p.Values.DontPropagateMask
 			}
-			if valueMask&CWColormap != 0 {
-				w.attributes.Colormap = values.Colormap
+			if p.ValueMask&CWColormap != 0 {
+				w.attributes.Colormap = p.Values.Colormap
 			}
-			if valueMask&CWCursor != 0 {
-				w.attributes.Cursor = values.Cursor
-				s.frontend.SetWindowCursor(xid, client.xID(values.Cursor))
+			if p.ValueMask&CWCursor != 0 {
+				w.attributes.Cursor = p.Values.Cursor
+				s.frontend.SetWindowCursor(xid, client.xID(p.Values.Cursor))
 			}
 		}
-		s.frontend.ChangeWindowAttributes(xid, valueMask, values)
+		s.frontend.ChangeWindowAttributes(xid, p.ValueMask, p.Values)
 
 	case CopyGC:
-		srcGC := s.byteOrder.Uint32(req.body[0:4])
-		dstGC := s.byteOrder.Uint32(req.body[4:8])
-		s.frontend.CopyGC(client.xID(srcGC), client.xID(dstGC))
+		srcGC := client.xID(s.byteOrder.Uint32(req.body[0:4]))
+		dstGC := client.xID(s.byteOrder.Uint32(req.body[4:8]))
+		s.frontend.CopyGC(srcGC, dstGC)
 
 	case FreeGC:
-		gcID := s.byteOrder.Uint32(req.body[0:4])
-		s.frontend.FreeGC(client.xID(gcID))
+		gcID := client.xID(s.byteOrder.Uint32(req.body[0:4]))
+		s.frontend.FreeGC(gcID)
 
 	case FreeCursor:
-		cursorID := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(cursorID)
+		p := parseFreeCursorRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Cursor)
 		delete(s.cursors, xid)
 		s.frontend.FreeCursor(xid)
 
 	case TranslateCoords:
-		srcWindow := client.xID(s.byteOrder.Uint32(req.body[0:4]))
-		dstWindow := client.xID(s.byteOrder.Uint32(req.body[4:8]))
-		srcX := int16(s.byteOrder.Uint16(req.body[8:10]))
-		srcY := int16(s.byteOrder.Uint16(req.body[10:12]))
+		p := parseTranslateCoordsRequest(s.byteOrder, req.body)
+		srcWindow := client.xID(p.SrcWindow)
+		dstWindow := client.xID(p.DstWindow)
 
 		// Simplified implementation: assume windows are direct children of the root
 		src, srcOk := s.windows[srcWindow]
@@ -1925,8 +1018,8 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 			return nil
 		}
 
-		dstX := src.x + srcX - dst.x
-		dstY := src.y + srcY - dst.y
+		dstX := src.x + p.SrcX - dst.x
+		dstY := src.y + p.SrcY - dst.y
 
 		return &translateCoordsReply{
 			sequence:   req.sequence,
@@ -1944,94 +1037,75 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case SetSelectionOwner:
-		owner := s.byteOrder.Uint32(req.body[0:4])
-		selection := s.byteOrder.Uint32(req.body[4:8])
-		s.selections[client.xID(selection)] = owner
+		p := parseSetSelectionOwnerRequest(s.byteOrder, req.body)
+		s.selections[client.xID(p.Selection)] = p.Owner
 
 	case GetSelectionOwner:
-		selection := s.byteOrder.Uint32(req.body[0:4])
-		owner := s.selections[client.xID(selection)]
+		p := parseGetSelectionOwnerRequest(s.byteOrder, req.body)
+		owner := s.selections[client.xID(p.Selection)]
 		return &getSelectionOwnerReply{
 			sequence: req.sequence,
 			owner:    owner,
 		}
 
 	case ConvertSelection:
-		selection := s.byteOrder.Uint32(req.body[4:8])
-		target := s.byteOrder.Uint32(req.body[8:12])
-		property := s.byteOrder.Uint32(req.body[12:16])
-		requestor := s.byteOrder.Uint32(req.body[0:4])
-		s.frontend.ConvertSelection(selection, target, property, client.xID(requestor))
+		p := parseConvertSelectionRequest(s.byteOrder, req.body)
+		s.frontend.ConvertSelection(p.Selection, p.Target, p.Property, client.xID(p.Requestor))
 
 	case GrabPointer:
-		grabWindow := client.xID(s.byteOrder.Uint32(req.body[0:4]))
-		ownerEvents := req.data != 0 // ownerEvents is in req.data
-		eventMask := s.byteOrder.Uint16(req.body[4:6])
-		pointerMode := req.body[6]
-		keyboardMode := req.body[7]
-		confineTo := s.byteOrder.Uint32(req.body[8:12])
-		cursor := s.byteOrder.Uint32(req.body[12:16])
-		time := s.byteOrder.Uint32(req.body[16:20])
-		status := s.frontend.GrabPointer(grabWindow, ownerEvents, eventMask, pointerMode, keyboardMode, confineTo, cursor, time)
+		p := parseGrabPointerRequest(s.byteOrder, req.body)
+		grabWindow := client.xID(p.GrabWindow)
+		status := s.frontend.GrabPointer(grabWindow, p.OwnerEvents, p.EventMask, p.PointerMode, p.KeyboardMode, p.ConfineTo, p.Cursor, p.Time)
 		return &grabPointerReply{
 			sequence: req.sequence,
 			status:   status,
 		}
 
 	case UngrabPointer:
-		time := s.byteOrder.Uint32(req.body[0:4])
-		s.frontend.UngrabPointer(time)
+		p := parseUngrabPointerRequest(s.byteOrder, req.body)
+		s.frontend.UngrabPointer(p.Time)
 
 	case GrabKeyboard:
-		grabWindow := client.xID(s.byteOrder.Uint32(req.body[0:4]))
-		ownerEvents := req.body[4] != 0
-		time := s.byteOrder.Uint32(req.body[5:9])
-		pointerMode := req.body[9]
-		keyboardMode := req.body[10]
-		status := s.frontend.GrabKeyboard(grabWindow, ownerEvents, time, pointerMode, keyboardMode)
+		p := parseGrabKeyboardRequest(s.byteOrder, req.body)
+		grabWindow := client.xID(p.GrabWindow)
+		status := s.frontend.GrabKeyboard(grabWindow, p.OwnerEvents, p.Time, p.PointerMode, p.KeyboardMode)
 		return &grabKeyboardReply{
 			sequence: req.sequence,
 			status:   status,
 		}
 
 	case UngrabKeyboard:
-		time := s.byteOrder.Uint32(req.body[0:4])
-		s.frontend.UngrabKeyboard(time)
+		p := parseUngrabKeyboardRequest(s.byteOrder, req.body)
+		s.frontend.UngrabKeyboard(p.Time)
 
 	case AllowEvents:
-		mode := req.data
-		time := s.byteOrder.Uint32(req.body[0:4])
-		s.frontend.AllowEvents(client.id, mode, time)
+		p := parseAllowEventsRequest(s.byteOrder, req.body)
+		p.Mode = req.data
+		s.frontend.AllowEvents(client.id, p.Mode, p.Time)
 
 	case QueryBestSize:
-		// TODO: Implement proper QueryBestSize logic
-		// For now, just return the requested size
-		class := req.data
-		drawable := s.byteOrder.Uint32(req.body[0:4])
-		width := s.byteOrder.Uint16(req.body[4:6])
-		height := s.byteOrder.Uint16(req.body[6:8])
-
-		log.Printf("X11: QueryBestSize class=%d drawable=%d width=%d height=%d", class, drawable, width, height)
+		p := parseQueryBestSizeRequest(s.byteOrder, req.body)
+		log.Printf("X11: QueryBestSize class=%d drawable=%d width=%d height=%d", p.Class, p.Drawable, p.Width, p.Height)
 
 		return &queryBestSizeReply{
 			sequence: req.sequence,
-			width:    width,
-			height:   height,
+			width:    p.Width,
+			height:   p.Height,
 		}
 
 	case CreateColormap:
-		alloc, mid, _, _ := parseCreateColormapRequest(s.byteOrder, req.body)
-		xid := client.xID(mid)
+		p := parseCreateColormapRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Mid)
 
 		if _, exists := s.colormaps[xid]; exists {
-			return client.sendError(GenericError{seq: req.sequence, badValue: mid, majorOp: CreateColormap, code: ColormapError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: p.Mid, majorOp: CreateColormap, code: ColormapError})
 		}
 
 		newColormap := &colormap{
 			pixels: make(map[uint32]color),
 		}
 
-		if alloc == 1 { // All
+		if p.Alloc == 1 { // All
 			// For TrueColor, pre-allocating doesn't make much sense as pixels are calculated.
 			// For other visual types, this would be important.
 			// For now, we'll just create an empty map.
@@ -2040,17 +1114,16 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		s.colormaps[xid] = newColormap
 
 	case FreeColormap:
-		mid := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(mid)
+		p := parseFreeColormapRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Cmap)
 		if _, ok := s.colormaps[xid]; !ok {
-			return client.sendError(GenericError{seq: req.sequence, badValue: mid, majorOp: FreeColormap, code: ColormapError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: p.Cmap, majorOp: FreeColormap, code: ColormapError})
 		}
 		delete(s.colormaps, xid)
 
 	case QueryExtension:
-		nameLen := s.byteOrder.Uint16(req.body[0:2])
-		name := string(req.body[4 : 4+nameLen])
-		log.Printf("X11: QueryExtension name=%s", name)
+		p := parseQueryExtensionRequest(s.byteOrder, req.body)
+		log.Printf("X11: QueryExtension name=%s", p.Name)
 
 		return &queryExtensionReply{
 			sequence:    req.sequence,
@@ -2064,42 +1137,34 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		log.Print("StoreNamedColor: not implemented")
 
 	case StoreColors:
-		cmapID := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(cmapID)
+		p := parseStoreColorsRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Cmap)
 		cm, ok := s.colormaps[xid]
 		if !ok {
-			return client.sendError(GenericError{seq: req.sequence, badValue: cmapID, majorOp: StoreColors, code: ColormapError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: p.Cmap, majorOp: StoreColors, code: ColormapError})
 		}
 
-		numItems := (len(req.body) - 4) / 12
-		for i := 0; i < numItems; i++ {
-			offset := 4 + i*12
-			pixel := s.byteOrder.Uint32(req.body[offset : offset+4])
-			red := s.byteOrder.Uint16(req.body[offset+4 : offset+6])
-			green := s.byteOrder.Uint16(req.body[offset+6 : offset+8])
-			blue := s.byteOrder.Uint16(req.body[offset+8 : offset+10])
-			flags := req.body[offset+10]
-
-			c, exists := cm.pixels[pixel]
+		for _, item := range p.Items {
+			c, exists := cm.pixels[item.Pixel]
 			if !exists {
 				c = color{}
 			}
 
-			if flags&DoRed != 0 {
-				c.Red = red
+			if item.Flags&DoRed != 0 {
+				c.Red = item.Red
 			}
-			if flags&DoGreen != 0 {
-				c.Green = green
+			if item.Flags&DoGreen != 0 {
+				c.Green = item.Green
 			}
-			if flags&DoBlue != 0 {
-				c.Blue = blue
+			if item.Flags&DoBlue != 0 {
+				c.Blue = item.Blue
 			}
-			cm.pixels[pixel] = c
+			cm.pixels[item.Pixel] = c
 		}
 
 	case AllocNamedColor:
-		p := parseAllocNamedColorRequest(s.byteOrder, req.body, req.sequence, req.data, req.opcode)
-		return s.handleAllocNamedColor(client, p)
+		p := parseAllocNamedColorRequest(s.byteOrder, req.body)
+		return s.handleAllocNamedColor(client, *p)
 
 	case QueryColors:
 		p := parseQueryColorsRequest(s.byteOrder, req.body)
@@ -2110,7 +1175,7 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		for _, pixel := range pixels {
 			color, ok := s.colormaps[cmapID].pixels[pixel]
 			if !ok {
-				return client.sendError(GenericError{seq: req.sequence, badValue: pixel, majorOp: QueryColors, code: ValueError})
+				return client.sendError(&GenericError{seq: req.sequence, badValue: pixel, majorOp: QueryColors, code: ValueError})
 			}
 			colors = append(colors, color)
 		}
@@ -2121,14 +1186,13 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case LookupColor:
-		cmapIDVal, nameStr := parseLookupColorRequest(s.byteOrder, req.body)
-		cmapID := xID{local: cmapIDVal}
-		name := nameStr
+		p := parseLookupColorRequest(s.byteOrder, req.body)
+		cmapID := xID{local: p.Cmap}
 
-		color, ok := lookupColor(name)
+		color, ok := lookupColor(p.Name)
 		if !ok {
 			// TODO: This should be BadName, not BadColor
-			return client.sendError(GenericError{seq: req.sequence, badValue: cmapID.local, majorOp: LookupColor, code: ColormapError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: cmapID.local, majorOp: LookupColor, code: ColormapError})
 		}
 
 		return &lookupColorReply{
@@ -2142,36 +1206,34 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case AllocColor:
-		cmapID, red, green, blue := parseAllocColorRequest(s.byteOrder, req.body)
+		p := parseAllocColorRequest(s.byteOrder, req.body)
 
-		xid := client.xID(cmapID)
+		xid := client.xID(p.Cmap)
 		cm, ok := s.colormaps[xid]
 		if !ok {
-			return client.sendError(GenericError{seq: req.sequence, badValue: cmapID, majorOp: AllocColor, code: ColormapError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: p.Cmap, majorOp: AllocColor, code: ColormapError})
 		}
 
 		// Simple allocation for TrueColor: construct pixel value from RGB
-		r8 := byte(red >> 8)
-		g8 := byte(green >> 8)
-		b8 := byte(blue >> 8)
+		r8 := byte(p.Red >> 8)
+		g8 := byte(p.Green >> 8)
+		b8 := byte(p.Blue >> 8)
 		pixel := (uint32(r8) << 16) | (uint32(g8) << 8) | uint32(b8)
 
-		cm.pixels[pixel] = color{Red: red, Green: green, Blue: blue}
+		cm.pixels[pixel] = color{Red: p.Red, Green: p.Green, Blue: p.Blue}
 
 		return &allocColorReply{
 			sequence: req.sequence,
-			red:      red,
-			green:    green,
-			blue:     blue,
+			red:      p.Red,
+			green:    p.Green,
+			blue:     p.Blue,
 			pixel:    pixel,
 		}
 
 	case ListFonts:
-		maxNames := s.byteOrder.Uint16(req.body[0:2])
-		nameLen := s.byteOrder.Uint16(req.body[2:4])
-		pattern := string(req.body[4 : 4+nameLen])
+		p := parseListFontsRequest(s.byteOrder, req.body)
 
-		fontNames := s.frontend.ListFonts(maxNames, pattern)
+		fontNames := s.frontend.ListFonts(p.MaxNames, p.Pattern)
 
 		return &listFontsReply{
 			sequence:  req.sequence,
@@ -2180,16 +1242,16 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case OpenFont:
-		fid, name := parseOpenFontRequest(s.byteOrder, req.body)
-		s.frontend.OpenFont(client.xID(fid), name)
+		p := parseOpenFontRequest(s.byteOrder, req.body)
+		s.frontend.OpenFont(client.xID(p.Fid), p.Name)
 
 	case CloseFont:
-		fid := s.byteOrder.Uint32(req.body[0:4])
-		s.frontend.CloseFont(client.xID(fid))
+		p := parseCloseFontRequest(s.byteOrder, req.body)
+		s.frontend.CloseFont(client.xID(p.Fid))
 
 	case QueryFont:
-		fid := s.byteOrder.Uint32(req.body[0:4])
-		minBounds, maxBounds, minCharOrByte2, maxCharOrByte2, defaultChar, drawDirection, minByte1, maxByte1, allCharsExist, fontAscent, fontDescent, charInfos := s.frontend.QueryFont(client.xID(fid))
+		p := parseQueryFontRequest(s.byteOrder, req.body)
+		minBounds, maxBounds, minCharOrByte2, maxCharOrByte2, defaultChar, drawDirection, minByte1, maxByte1, allCharsExist, fontAscent, fontDescent, charInfos := s.frontend.QueryFont(client.xID(p.Fid))
 
 		return &queryFontReply{
 			sequence:       req.sequence,
@@ -2210,27 +1272,23 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		}
 
 	case FreeColors:
-		cmapID := s.byteOrder.Uint32(req.body[0:4])
-		// planeMask := s.byteOrder.Uint32(req.body[4:8]) // Not used for now
-		xid := client.xID(cmapID)
+		p := parseFreeColorsRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Cmap)
 		cm, ok := s.colormaps[xid]
 		if !ok {
-			return client.sendError(GenericError{seq: req.sequence, badValue: cmapID, majorOp: FreeColors, code: ColormapError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: p.Cmap, majorOp: FreeColors, code: ColormapError})
 		}
 
-		numPixels := (len(req.body) - 8) / 4
-		for i := 0; i < numPixels; i++ {
-			offset := 8 + i*4
-			pixel := s.byteOrder.Uint32(req.body[offset : offset+4])
+		for _, pixel := range p.Pixels {
 			delete(cm.pixels, pixel)
 		}
 
 	case InstallColormap:
-		cmapID := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(cmapID)
+		p := parseInstallColormapRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Cmap)
 		_, ok := s.colormaps[xid]
 		if !ok {
-			return client.sendError(GenericError{seq: req.sequence, badValue: cmapID, majorOp: InstallColormap, code: ColormapError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: p.Cmap, majorOp: InstallColormap, code: ColormapError})
 		}
 
 		s.installedColormap = xid
@@ -2245,7 +1303,7 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 				event := &colormapNotifyEvent{
 					sequence: client.sequence,
 					window:   winID.local,
-					colormap: cmapID,
+					colormap: p.Cmap,
 					new:      true,
 					state:    0, // Installed
 				}
@@ -2255,11 +1313,11 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		return nil
 
 	case UninstallColormap:
-		cmapID := s.byteOrder.Uint32(req.body[0:4])
-		xid := client.xID(cmapID)
+		p := parseUninstallColormapRequest(s.byteOrder, req.body)
+		xid := client.xID(p.Cmap)
 		_, ok := s.colormaps[xid]
 		if !ok {
-			return client.sendError(GenericError{seq: req.sequence, badValue: cmapID, majorOp: UninstallColormap, code: ColormapError})
+			return client.sendError(&GenericError{seq: req.sequence, badValue: p.Cmap, majorOp: UninstallColormap, code: ColormapError})
 		}
 
 		if s.installedColormap == xid {
@@ -2276,7 +1334,7 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 				event := &colormapNotifyEvent{
 					sequence: client.sequence,
 					window:   winID.local,
-					colormap: cmapID,
+					colormap: p.Cmap,
 					new:      false,
 					state:    1, // Uninstalled
 				}
@@ -2286,7 +1344,7 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 		return nil
 
 	case ListInstalledColormaps:
-		// windowID := s.byteOrder.Uint32(req.body[0:4]) // Not used for now
+		// windowID := p.Window // Not used for now
 
 		var colormaps []uint32
 		if s.installedColormap.local != 0 {
@@ -2305,9 +1363,10 @@ func (s *x11Server) handleRequest(client *x11Client, req *request) (reply messag
 	return nil
 }
 
+
 func (s *x11Server) handleAllocNamedColor(client *x11Client, p AllocNamedColorRequest) messageEncoder {
 	if _, ok := s.colormaps[p.Cmap]; !ok {
-		return client.sendError(BadColor{
+		return client.sendError(&BadColor{
 			seq:      p.Sequence,
 			badValue: p.Cmap.local,
 			minorOp:  p.MinorOp,
@@ -2319,7 +1378,7 @@ func (s *x11Server) handleAllocNamedColor(client *x11Client, p AllocNamedColorRe
 	rgb, ok := lookupColor(name)
 	if !ok {
 		// TODO: This should be BadName, not BadColor
-		return client.sendError(BadColor{
+		return client.sendError(&BadColor{
 			seq:      p.Sequence,
 			badValue: p.Cmap.local, // TODO: This should be the atom for the name, not the colormap
 			minorOp:  p.MinorOp,
@@ -2342,13 +1401,6 @@ func (s *x11Server) handleAllocNamedColor(client *x11Client, p AllocNamedColorRe
 		blue:     exactBlue,
 		pixel:    pixel,
 	}
-}
-
-func boolToByte(b bool) byte {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 func (s *x11Server) handshake(client *x11Client) {
@@ -2410,155 +1462,6 @@ func (s *x11Server) handshake(client *x11Client) {
 	s.rootVisual = setup.screens[0].depths[0].visuals[0]
 	s.blackPixel = setup.screens[0].blackPixel
 	s.whitePixel = setup.screens[0].whitePixel
-}
-func newDefaultSetup() *setup {
-	vendorString := "sshterm"
-	s := &setup{
-		releaseNumber:            1,
-		resourceIDBase:           0,
-		resourceIDMask:           0x1FFFFF,
-		motionBufferSize:         256,
-		vendorLength:             uint16(len(vendorString)),
-		maxRequestLength:         0xFFFF,
-		numScreens:               1,
-		numPixmapFormats:         1,
-		imageByteOrder:           0, // LSBFirst
-		bitmapFormatBitOrder:     0, // LeastSignificant
-		bitmapFormatScanlineUnit: 8,
-		bitmapFormatScanlinePad:  8,
-		minKeycode:               8,
-		maxKeycode:               255,
-		vendorString:             vendorString,
-		pixmapFormats: []format{
-			{
-				depth:        24,
-				bitsPerPixel: 32,
-				scanlinePad:  32,
-			},
-		},
-		screens: []screen{
-			{
-				root:                0,
-				defaultColormap:     1,
-				whitePixel:          0xffffff,
-				blackPixel:          0x000000,
-				currentInputMasks:   0,
-				widthInPixels:       1024,
-				heightInPixels:      768,
-				widthInMillimeters:  270,
-				heightInMillimeters: 203,
-				minInstalledMaps:    1,
-				maxInstalledMaps:    1,
-				rootVisual:          0x1,
-				backingStores:       2, // Always
-				saveUnders:          false,
-				rootDepth:           24,
-				numDepths:           1,
-				depths: []depth{
-					{
-						depth:      24,
-						numVisuals: 1,
-						visuals: []visualType{
-							{
-								visualID:        0x1,
-								class:           4, // TrueColor
-								bitsPerRGBValue: 8,
-								colormapEntries: 256,
-								redMask:         0xff0000,
-								greenMask:       0x00ff00,
-								blueMask:        0x0000ff,
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-	return s
-}
-
-func (s *setup) marshal(order binary.ByteOrder) []byte {
-	buf := new(bytes.Buffer)
-	binary.Write(buf, order, s.releaseNumber)
-	binary.Write(buf, order, s.resourceIDBase)
-	binary.Write(buf, order, s.resourceIDMask)
-	binary.Write(buf, order, s.motionBufferSize)
-	binary.Write(buf, order, s.vendorLength)
-	binary.Write(buf, order, s.maxRequestLength)
-	buf.WriteByte(s.numScreens)
-	buf.WriteByte(s.numPixmapFormats)
-	buf.WriteByte(s.imageByteOrder)
-	buf.WriteByte(s.bitmapFormatBitOrder)
-	buf.WriteByte(s.bitmapFormatScanlineUnit)
-	buf.WriteByte(s.bitmapFormatScanlinePad)
-	buf.WriteByte(s.minKeycode)
-	buf.WriteByte(s.maxKeycode)
-	buf.Write([]byte{0, 0, 0, 0}) // 4 bytes of padding
-	buf.WriteString(s.vendorString)
-	if pad := (4 - (len(s.vendorString) % 4)) % 4; pad > 0 {
-		buf.Write(make([]byte, pad))
-	}
-	for _, f := range s.pixmapFormats {
-		f.marshal(buf, order)
-	}
-	for _, scr := range s.screens {
-		scr.marshal(buf, order)
-	}
-	return buf.Bytes()
-}
-
-func (f *format) marshal(buf *bytes.Buffer, order binary.ByteOrder) {
-	buf.WriteByte(f.depth)
-	buf.WriteByte(f.bitsPerPixel)
-	buf.WriteByte(f.scanlinePad)
-	buf.Write([]byte{0, 0, 0, 0, 0}) // 5 bytes of padding
-}
-
-func (s *screen) marshal(buf *bytes.Buffer, order binary.ByteOrder) {
-	binary.Write(buf, order, s.root)
-	binary.Write(buf, order, s.defaultColormap)
-	binary.Write(buf, order, s.whitePixel)
-	binary.Write(buf, order, s.blackPixel)
-	binary.Write(buf, order, s.currentInputMasks)
-	binary.Write(buf, order, s.widthInPixels)
-	binary.Write(buf, order, s.heightInPixels)
-	binary.Write(buf, order, s.widthInMillimeters)
-	binary.Write(buf, order, s.heightInMillimeters)
-	binary.Write(buf, order, s.minInstalledMaps)
-	binary.Write(buf, order, s.maxInstalledMaps)
-	binary.Write(buf, order, s.rootVisual)
-	buf.WriteByte(s.backingStores)
-	if s.saveUnders {
-		buf.WriteByte(1)
-	} else {
-		buf.WriteByte(0)
-	}
-	buf.WriteByte(s.rootDepth)
-	buf.WriteByte(s.numDepths)
-	for _, d := range s.depths {
-		d.marshal(buf, order)
-	}
-}
-
-func (d *depth) marshal(buf *bytes.Buffer, order binary.ByteOrder) {
-	buf.WriteByte(d.depth)
-	buf.WriteByte(0) // padding
-	binary.Write(buf, order, d.numVisuals)
-	buf.Write([]byte{0, 0, 0, 0}) // 4 bytes of padding
-	for _, v := range d.visuals {
-		v.marshal(buf, order)
-	}
-}
-
-func (v *visualType) marshal(buf *bytes.Buffer, order binary.ByteOrder) {
-	binary.Write(buf, order, v.visualID)
-	buf.WriteByte(v.class)
-	buf.WriteByte(v.bitsPerRGBValue)
-	binary.Write(buf, order, v.colormapEntries)
-	binary.Write(buf, order, v.redMask)
-	binary.Write(buf, order, v.greenMask)
-	binary.Write(buf, order, v.blueMask)
-	buf.Write([]byte{0, 0, 0, 0}) // 4 bytes of padding
 }
 
 func HandleX11Forwarding(logger Logger, client *ssh.Client) {
