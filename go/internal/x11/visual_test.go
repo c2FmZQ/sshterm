@@ -422,52 +422,65 @@ func TestGCLogicalOperations(t *testing.T) {
 		winHeight = 1
 	)
 
-	// Define colors
-	red := uint32(0xff0000)
-	blue := uint32(0x0000ff)
-	magenta := uint32(0xff00ff)
+	// Define source and destination colors with distinct RGB components
+	srcR, srcG, srcB := uint32(0xAA), uint32(0x55), uint32(0xF0)
+	dstR, dstG, dstB := uint32(0xCC), uint32(0x33), uint32(0x0F)
 
-	// NOTE: This test is limited to a small subset of the logical operations
-	// because the full test suite is too slow for the test environment.
+	src := (srcR << 16) | (srcG << 8) | srcB
+	dst := (dstR << 16) | (dstG << 8) | dstB
+
 	tests := []struct {
-		name       string
-		function   uint32
-		wantPixels [3]uint8
+		name     string
+		function uint32
+		wantR    uint8
+		wantG    uint8
+		wantB    uint8
 	}{
-		{"Copy", FunctionCopy, [3]uint8{255, 0, 0}},
-		{"Xor", FunctionXor, [3]uint8{255, 0, 255}},
+		{"Clear", FunctionClear, 0, 0, 0},
+		{"And", FunctionAnd, uint8(srcR & dstR), uint8(srcG & dstG), uint8(srcB & dstB)},
+		{"AndReverse", FunctionAndReverse, uint8(srcR & (^dstR)), uint8(srcG & (^dstG)), uint8(srcB & (^dstB))},
+		{"Copy", FunctionCopy, uint8(srcR), uint8(srcG), uint8(srcB)},
+		{"AndInverted", FunctionAndInverted, uint8((^srcR) & dstR), uint8((^srcG) & dstG), uint8((^srcB) & dstB)},
+		{"NoOp", FunctionNoOp, uint8(dstR), uint8(dstG), uint8(dstB)},
+		{"Xor", FunctionXor, uint8(srcR ^ dstR), uint8(srcG ^ dstG), uint8(srcB ^ dstB)},
+		{"Or", FunctionOr, uint8(srcR | dstR), uint8(srcG | dstG), uint8(srcB | dstB)},
+		{"Nor", FunctionNor, uint8(^(srcR | dstR)), uint8(^(srcG | dstG)), uint8(^(srcB | dstB))},
+		{"Equiv", FunctionEquiv, uint8(^(srcR ^ dstR)), uint8(^(srcG ^ dstG)), uint8(^(srcB ^ dstB))},
+		{"Invert", FunctionInvert, uint8(^dstR), uint8(^dstG), uint8(^dstB)},
+		{"OrReverse", FunctionOrReverse, uint8(srcR | (^dstR)), uint8(srcG | (^dstG)), uint8(srcB | (^dstB))},
+		{"CopyInverted", FunctionCopyInverted, uint8(^srcR), uint8(^srcG), uint8(^srcB)},
+		{"OrInverted", FunctionOrInverted, uint8((^srcR) | dstR), uint8((^srcG) | dstG), uint8((^srcB) | dstB)},
+		{"Nand", FunctionNand, uint8(^(srcR & dstR)), uint8(^(srcG & dstG)), uint8(^(srcB & dstB))},
+		{"Set", FunctionSet, 0xFF, 0xFF, 0xFF},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Logf("Starting test case: %s", tc.name)
 			t.Cleanup(func() { cleanupDOMElements(t) })
 			fe.CreateWindow(winID, s.rootWindowID(), 10, 10, winWidth, winHeight, 24, 0, WindowAttributes{})
 			fe.MapWindow(winID)
 
-			// 1. Fill window with blue background
+			// 1. Fill window with destination color
 			bgGCID := xID{client: 1, local: 100}
-			fe.CreateGC(bgGCID, GCForeground|GCFunction, GC{Foreground: blue, Function: FunctionCopy, PlaneMask: 0xffffff})
+			fe.CreateGC(bgGCID, GCForeground|GCFunction, GC{Foreground: dst, Function: FunctionCopy, PlaneMask: 0xffffff})
 			fe.PolyFillRectangle(winID, bgGCID, []uint32{0, 0, winWidth, winHeight})
 			poll(t, func() error {
 				img := getCanvasData(t, s, winID, 0, 0, winWidth, winHeight)
-				return checkRectangle(img, image.Rect(0, 0, winWidth, winHeight), 0, 0, 255)
+				return checkRectangle(img, image.Rect(0, 0, winWidth, winHeight), uint8(dstR), uint8(dstG), uint8(dstB))
 			})
 
-			// 2. Create GC with logical operation and draw red rectangle
+			// 2. Create GC with logical operation and draw with source color
 			fgGCID := xID{client: 1, local: 200}
-			fe.CreateGC(fgGCID, GCForeground|GCFunction|GCPlaneMask, GC{Foreground: red, Function: tc.function, PlaneMask: 0xffffff})
+			fe.CreateGC(fgGCID, GCForeground|GCFunction|GCPlaneMask, GC{Foreground: src, Function: tc.function, PlaneMask: 0xffffff})
 			fe.PolyFillRectangle(winID, fgGCID, []uint32{0, 0, 1, 1})
 
 			// 3. Verify the result
 			poll(t, func() error {
 				img := getCanvasData(t, s, winID, 0, 0, winWidth, winHeight)
-				// Check the area where the rectangle was drawn
-				err := checkRectangle(img, image.Rect(0, 0, 1, 1), tc.wantPixels[0], tc.wantPixels[1], tc.wantPixels[2])
-				if err != nil {
-					return fmt.Errorf("drawn rectangle: %w", err)
-				}
-				return nil
+				return checkRectangle(img, image.Rect(0, 0, 1, 1), tc.wantR, tc.wantG, tc.wantB)
 			})
+			t.Logf("Finished test case: %s", tc.name)
 		})
 	}
 }

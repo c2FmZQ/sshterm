@@ -5,6 +5,7 @@ package x11
 import (
 	"encoding/binary"
 	"fmt"
+	"image"
 	"math"
 	"strconv"
 	"strings"
@@ -1192,7 +1193,7 @@ func (w *wasmX11Frontend) applyGCState(ctx js.Value, colormap xID, gc GC) {
 	}
 }
 
-func (w *wasmX11Frontend) applyGC(destCtx js.Value, colormap xID, gcID xID, draw func(js.Value)) {
+func (w *wasmX11Frontend) applyGC(destCtx js.Value, colormap xID, gcID xID, draw func(js.Value), opBounds image.Rectangle) {
 	debugf("applyGC: start gcID=%s", gcID)
 	gc, ok := w.gcs[gcID]
 	if !ok {
@@ -1211,8 +1212,6 @@ func (w *wasmX11Frontend) applyGC(destCtx js.Value, colormap xID, gcID xID, draw
 	case FunctionNoOp:
 		debugf("applyGC: NoOp, returning")
 		return
-	case FunctionXor:
-		nativeOp = "xor"
 	default:
 		useSoftwareEmulation = true
 	}
@@ -1229,17 +1228,17 @@ func (w *wasmX11Frontend) applyGC(destCtx js.Value, colormap xID, gcID xID, draw
 		return
 	}
 
-	debugf("applyGC: using software emulation path")
-	width := destCtx.Get("canvas").Get("width").Int()
-	height := destCtx.Get("canvas").Get("height").Int()
-	if width == 0 || height == 0 {
-		debugf("applyGC: canvas size is zero, returning")
+	x, y := opBounds.Min.X, opBounds.Min.Y
+	width, height := opBounds.Dx(), opBounds.Dy()
+
+	if width <= 0 || height <= 0 {
+		debugf("applyGC: empty bounds, returning")
 		return
 	}
-	debugf("applyGC: canvas size: %dx%d", width, height)
+	debugf("applyGC: using software emulation path with bounds %+v", opBounds)
 
 	debugf("applyGC: getting destination image data")
-	destImageData := destCtx.Call("getImageData", 0, 0, width, height)
+	destImageData := destCtx.Call("getImageData", x, y, width, height)
 	destPixels := jsutil.GetImageDataBytes(destImageData)
 	debugf("applyGC: got %d destination pixels", len(destPixels)/4)
 
@@ -1248,6 +1247,8 @@ func (w *wasmX11Frontend) applyGC(destCtx js.Value, colormap xID, gcID xID, draw
 	tempCanvas.Set("width", width)
 	tempCanvas.Set("height", height)
 	tempCtx := tempCanvas.Call("getContext", "2d")
+
+	tempCtx.Call("translate", -x, -y)
 
 	debugf("applyGC: drawing to temporary canvas")
 	tempCtx.Call("save")
@@ -1276,28 +1277,30 @@ func (w *wasmX11Frontend) applyGC(destCtx js.Value, colormap xID, gcID xID, draw
 
 		var result uint32
 		switch gc.Function {
+		case FunctionXor:
+			result = src ^ dest
 		case FunctionAnd:
 			result = src & dest
 		case FunctionAndReverse:
-			result = src & (^dest)
+			result = src & (^dest & 0xffffff)
 		case FunctionAndInverted:
-			result = (^src) & dest
+			result = (^src & 0xffffff) & dest
 		case FunctionOr:
 			result = src | dest
 		case FunctionNor:
-			result = ^(src | dest)
+			result = ^(src | dest) & 0xffffff
 		case FunctionEquiv:
-			result = ^(src ^ dest)
+			result = ^(src ^ dest) & 0xffffff
 		case FunctionInvert:
-			result = ^dest
+			result = ^dest & 0xffffff
 		case FunctionOrReverse:
-			result = src | (^dest)
+			result = src | (^dest & 0xffffff)
 		case FunctionCopyInverted:
-			result = ^src
+			result = ^src & 0xffffff
 		case FunctionOrInverted:
-			result = (^src) | dest
+			result = (^src & 0xffffff) | dest
 		case FunctionNand:
-			result = ^(src & dest)
+			result = ^(src & dest) & 0xffffff
 		case FunctionSet:
 			result = 0xffffff & gc.PlaneMask
 		}
@@ -1311,8 +1314,8 @@ func (w *wasmX11Frontend) applyGC(destCtx js.Value, colormap xID, gcID xID, draw
 
 	debugf("applyGC: creating new image data")
 	newImageData := js.Global().Get("ImageData").New(jsutil.Uint8ClampedArrayFromBytes(destPixels), width, height)
-	debugf("applyGC: putting new image data")
-	destCtx.Call("putImageData", newImageData, 0, 0)
+	debugf("applyGC: putting new image data at (%d, %d)", x, y)
+	destCtx.Call("putImageData", newImageData, x, y)
 	debugf("applyGC: software emulation path done")
 }
 
@@ -1338,6 +1341,15 @@ func (w *wasmX11Frontend) PolyLine(drawable xID, gcID xID, points []uint32) {
 		return
 	}
 
+	var opBounds image.Rectangle
+	if len(points) >= 2 {
+		opBounds = image.Rect(int(points[0]), int(points[1]), int(points[0])+1, int(points[1])+1)
+		for i := 2; i < len(points); i += 2 {
+			opBounds = opBounds.Union(image.Rect(int(points[i]), int(points[i+1]), int(points[i])+1, int(points[i+1])+1))
+		}
+		opBounds = opBounds.Inset(-int(gc.LineWidth))
+	}
+
 	color := w.getForegroundColor(colormap, gc)
 
 	w.applyGC(ctx, colormap, gcID, func(targetCtx js.Value) {
@@ -1349,7 +1361,7 @@ func (w *wasmX11Frontend) PolyLine(drawable xID, gcID xID, points []uint32) {
 			}
 		}
 		targetCtx.Call("stroke")
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:        "polyLine",
@@ -1380,13 +1392,23 @@ func (w *wasmX11Frontend) PolyFillRectangle(drawable xID, gcID xID, rects []uint
 		return
 	}
 
+	var opBounds image.Rectangle
+	for i := 0; i < len(rects); i += 4 {
+		r := image.Rect(int(rects[i]), int(rects[i+1]), int(rects[i])+int(rects[i+2]), int(rects[i+1])+int(rects[i+3]))
+		if i == 0 {
+			opBounds = r
+		} else {
+			opBounds = opBounds.Union(r)
+		}
+	}
+
 	color := w.getForegroundColor(colormap, gc)
 
 	w.applyGC(ctx, colormap, gcID, func(targetCtx js.Value) {
 		for i := 0; i < len(rects); i += 4 {
 			targetCtx.Call("fillRect", rects[i], rects[i+1], rects[i+2], rects[i+3])
 		}
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:      "polyFillRectangle",
@@ -1417,6 +1439,14 @@ func (w *wasmX11Frontend) FillPoly(drawable xID, gcID xID, points []uint32) {
 		return
 	}
 
+	var opBounds image.Rectangle
+	if len(points) >= 2 {
+		opBounds = image.Rect(int(points[0]), int(points[1]), int(points[0])+1, int(points[1])+1)
+		for i := 2; i < len(points); i += 2 {
+			opBounds = opBounds.Union(image.Rect(int(points[i]), int(points[i+1]), int(points[i])+1, int(points[i+1])+1))
+		}
+	}
+
 	color := w.getForegroundColor(colormap, gc)
 	fillRule := "nonzero"
 	if gc.FillRule == 0 {
@@ -1433,7 +1463,7 @@ func (w *wasmX11Frontend) FillPoly(drawable xID, gcID xID, points []uint32) {
 		}
 		targetCtx.Call("closePath")
 		targetCtx.Call("fill", fillRule)
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:      "fillPoly",
@@ -1464,6 +1494,17 @@ func (w *wasmX11Frontend) PolySegment(drawable xID, gcID xID, segments []uint32)
 		return
 	}
 
+	var opBounds image.Rectangle
+	for i := 0; i < len(segments); i += 4 {
+		r := image.Rect(int(segments[i]), int(segments[i+1]), int(segments[i+2])+1, int(segments[i+3])+1).Canon()
+		if i == 0 {
+			opBounds = r
+		} else {
+			opBounds = opBounds.Union(r)
+		}
+	}
+	opBounds = opBounds.Inset(-int(gc.LineWidth))
+
 	color := w.getForegroundColor(colormap, gc)
 
 	w.applyGC(ctx, colormap, gcID, func(targetCtx js.Value) {
@@ -1473,7 +1514,7 @@ func (w *wasmX11Frontend) PolySegment(drawable xID, gcID xID, segments []uint32)
 			targetCtx.Call("lineTo", segments[i+2], segments[i+3])
 			targetCtx.Call("stroke")
 		}
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:        "polySegment",
@@ -1504,13 +1545,23 @@ func (w *wasmX11Frontend) PolyPoint(drawable xID, gcID xID, points []uint32) {
 		return
 	}
 
+	var opBounds image.Rectangle
+	for i := 0; i < len(points); i += 2 {
+		r := image.Rect(int(points[i]), int(points[i+1]), int(points[i])+1, int(points[i+1])+1)
+		if i == 0 {
+			opBounds = r
+		} else {
+			opBounds = opBounds.Union(r)
+		}
+	}
+
 	color := w.getForegroundColor(colormap, gc)
 
 	w.applyGC(ctx, colormap, gcID, func(targetCtx js.Value) {
 		for i := 0; i < len(points); i += 2 {
 			targetCtx.Call("fillRect", points[i], points[i+1], 1, 1)
 		}
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:      "polyPoint",
@@ -1541,13 +1592,24 @@ func (w *wasmX11Frontend) PolyRectangle(drawable xID, gcID xID, rects []uint32) 
 		return
 	}
 
+	var opBounds image.Rectangle
+	for i := 0; i < len(rects); i += 4 {
+		r := image.Rect(int(rects[i]), int(rects[i+1]), int(rects[i])+int(rects[i+2]), int(rects[i+1])+int(rects[i+3]))
+		if i == 0 {
+			opBounds = r
+		} else {
+			opBounds = opBounds.Union(r)
+		}
+	}
+	opBounds = opBounds.Inset(-int(gc.LineWidth))
+
 	color := w.getForegroundColor(colormap, gc)
 
 	w.applyGC(ctx, colormap, gcID, func(targetCtx js.Value) {
 		for i := 0; i < len(rects); i += 4 {
 			targetCtx.Call("strokeRect", rects[i], rects[i+1], rects[i+2], rects[i+3])
 		}
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:        "polyRectangle",
@@ -1578,6 +1640,17 @@ func (w *wasmX11Frontend) PolyArc(drawable xID, gcID xID, arcs []uint32) {
 		return
 	}
 
+	var opBounds image.Rectangle
+	for i := 0; i < len(arcs); i += 6 {
+		r := image.Rect(int(arcs[i]), int(arcs[i+1]), int(arcs[i])+int(arcs[i+2]), int(arcs[i+1])+int(arcs[i+3]))
+		if i == 0 {
+			opBounds = r
+		} else {
+			opBounds = opBounds.Union(r)
+		}
+	}
+	opBounds = opBounds.Inset(-int(gc.LineWidth))
+
 	color := w.getForegroundColor(colormap, gc)
 
 	w.applyGC(ctx, colormap, gcID, func(targetCtx js.Value) {
@@ -1595,7 +1668,7 @@ func (w *wasmX11Frontend) PolyArc(drawable xID, gcID xID, arcs []uint32) {
 			targetCtx.Call("ellipse", x, y, rx, ry, 0, startAngle, endAngle)
 			targetCtx.Call("stroke")
 		}
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:        "polyArc",
@@ -1626,6 +1699,16 @@ func (w *wasmX11Frontend) PolyFillArc(drawable xID, gcID xID, arcs []uint32) {
 		return
 	}
 
+	var opBounds image.Rectangle
+	for i := 0; i < len(arcs); i += 6 {
+		r := image.Rect(int(arcs[i]), int(arcs[i+1]), int(arcs[i])+int(arcs[i+2]), int(arcs[i+1])+int(arcs[i+3]))
+		if i == 0 {
+			opBounds = r
+		} else {
+			opBounds = opBounds.Union(r)
+		}
+	}
+
 	color := w.getForegroundColor(colormap, gc)
 	fillRule := "nonzero"
 	if gc.FillRule == 0 {
@@ -1648,7 +1731,7 @@ func (w *wasmX11Frontend) PolyFillArc(drawable xID, gcID xID, arcs []uint32) {
 			}
 			targetCtx.Call("fill", fillRule)
 		}
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:      "polyFillArc",
@@ -1797,9 +1880,10 @@ func (w *wasmX11Frontend) CopyPlane(srcDrawable, dstDrawable xID, gcID xID, srcX
 		tempCtx.Call("putImageData", newImageData, 0, 0)
 
 		// 5. Apply the GC to the destination context and draw the image.
+		opBounds := image.Rect(int(dstX), int(dstY), int(dstX)+int(width), int(dstY)+int(height))
 		w.applyGC(dstCtx, currentColormap, gcID, func(targetCtx js.Value) {
 			targetCtx.Call("drawImage", tempCanvas, dstX, dstY)
-		})
+		}, opBounds)
 	}
 	w.recordOperation(CanvasOperation{
 		Type: "copyPlane",
@@ -1842,13 +1926,24 @@ func (w *wasmX11Frontend) ImageText8(drawable xID, gcID xID, x, y int32, text []
 		return
 	}
 
+	decodedText := js.Global().Get("TextDecoder").New().Call("decode", jsutil.Uint8ArrayFromBytes(text)).String()
+	decodedText = strings.ReplaceAll(decodedText, "\x00", "") // Trim null terminators
+
+	ctx.Call("save")
+	w.applyGCState(ctx, colormap, gc)
+	metrics := ctx.Call("measureText", decodedText)
+	ctx.Call("restore")
+
+	width := int(math.Ceil(metrics.Get("width").Float()))
+	ascent := int(math.Ceil(metrics.Get("actualBoundingBoxAscent").Float()))
+	descent := int(math.Ceil(metrics.Get("actualBoundingBoxDescent").Float()))
+	opBounds := image.Rect(int(x), int(y)-ascent, int(x)+width, int(y)+descent)
+
 	color := w.getForegroundColor(colormap, gc)
 
 	w.applyGC(ctx, colormap, gcID, func(targetCtx js.Value) {
-		decodedText := js.Global().Get("TextDecoder").New().Call("decode", jsutil.Uint8ArrayFromBytes(text)).String()
-		decodedText = strings.ReplaceAll(decodedText, "\x00", "") // Trim null terminators
 		targetCtx.Call("fillText", decodedText, x, y)
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:      "imageText8",
@@ -1885,13 +1980,24 @@ func (w *wasmX11Frontend) ImageText16(drawable xID, gcID xID, x, y int32, text [
 		return
 	}
 
+	decodedText := js.Global().Get("TextDecoder").New().Call("decode", jsutil.Uint8ArrayFromBytes(textBytes)).String()
+	decodedText = strings.ReplaceAll(decodedText, "\x00", "") // Trim null terminators
+
+	ctx.Call("save")
+	w.applyGCState(ctx, colormap, gc)
+	metrics := ctx.Call("measureText", decodedText)
+	ctx.Call("restore")
+
+	width := int(math.Ceil(metrics.Get("width").Float()))
+	ascent := int(math.Ceil(metrics.Get("actualBoundingBoxAscent").Float()))
+	descent := int(math.Ceil(metrics.Get("actualBoundingBoxDescent").Float()))
+	opBounds := image.Rect(int(x), int(y)-ascent, int(x)+width, int(y)+descent)
+
 	color := w.getForegroundColor(colormap, gc)
 
 	w.applyGC(ctx, colormap, gcID, func(targetCtx js.Value) {
-		decodedText := js.Global().Get("TextDecoder").New().Call("decode", jsutil.Uint8ArrayFromBytes(textBytes)).String()
-		decodedText = strings.ReplaceAll(decodedText, "\x00", "") // Trim null terminators
 		targetCtx.Call("fillText", decodedText, x, y)
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:      "imageText16",
@@ -1921,6 +2027,36 @@ func (w *wasmX11Frontend) PolyText8(drawable xID, gcID xID, x, y int32, items []
 		return
 	}
 
+	var opBounds image.Rectangle
+	currentX := x
+	ctx.Call("save")
+	w.applyGCState(ctx, colormap, gc)
+
+	for _, item := range items {
+		switch it := item.(type) {
+		case PolyText8String:
+			currentX += int32(it.Delta)
+			decodedText := js.Global().Get("TextDecoder").New().Call("decode", jsutil.Uint8ArrayFromBytes(it.Str)).String()
+			decodedText = strings.ReplaceAll(decodedText, "\x00", "") // Trim null terminators
+			metrics := ctx.Call("measureText", decodedText)
+
+			width := int(math.Ceil(metrics.Get("width").Float()))
+			ascent := int(math.Ceil(metrics.Get("actualBoundingBoxAscent").Float()))
+			descent := int(math.Ceil(metrics.Get("actualBoundingBoxDescent").Float()))
+			itemBounds := image.Rect(int(currentX), int(y)-ascent, int(currentX)+width, int(y)+descent)
+			if opBounds.Empty() {
+				opBounds = itemBounds
+			} else {
+				opBounds = opBounds.Union(itemBounds)
+			}
+		case PolyTextFont:
+			if font, ok := w.fonts[xID{drawable.client, uint32(it.Font)}]; ok {
+				ctx.Set("font", font.cssFont)
+			}
+		}
+	}
+	ctx.Call("restore")
+
 	color := w.getForegroundColor(colormap, gc)
 	var recordedItems []any
 
@@ -1942,7 +2078,7 @@ func (w *wasmX11Frontend) PolyText8(drawable xID, gcID xID, x, y int32, items []
 				}
 			}
 		}
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:      "polyText8",
@@ -2158,6 +2294,40 @@ func (w *wasmX11Frontend) PolyText16(drawable xID, gcID xID, x, y int32, items [
 		return
 	}
 
+	var opBounds image.Rectangle
+	currentX := x
+	ctx.Call("save")
+	w.applyGCState(ctx, colormap, gc)
+
+	for _, item := range items {
+		switch it := item.(type) {
+		case PolyText16String:
+			currentX += int32(it.Delta)
+			textBytes := make([]byte, len(it.Str)*2)
+			for i, r := range it.Str {
+				binary.LittleEndian.PutUint16(textBytes[i*2:], r)
+			}
+			decodedText := js.Global().Get("TextDecoder").New().Call("decode", jsutil.Uint8ArrayFromBytes(textBytes)).String()
+			decodedText = strings.ReplaceAll(decodedText, "\x00", "") // Trim null terminators
+			metrics := ctx.Call("measureText", decodedText)
+
+			width := int(math.Ceil(metrics.Get("width").Float()))
+			ascent := int(math.Ceil(metrics.Get("actualBoundingBoxAscent").Float()))
+			descent := int(math.Ceil(metrics.Get("actualBoundingBoxDescent").Float()))
+			itemBounds := image.Rect(int(currentX), int(y)-ascent, int(currentX)+width, int(y)+descent)
+			if opBounds.Empty() {
+				opBounds = itemBounds
+			} else {
+				opBounds = opBounds.Union(itemBounds)
+			}
+		case PolyTextFont:
+			if font, ok := w.fonts[xID{drawable.client, uint32(it.Font)}]; ok {
+				ctx.Set("font", font.cssFont)
+			}
+		}
+	}
+	ctx.Call("restore")
+
 	color := w.getForegroundColor(colormap, gc)
 	var recordedItems []any
 
@@ -2183,7 +2353,7 @@ func (w *wasmX11Frontend) PolyText16(drawable xID, gcID xID, x, y int32, items [
 				}
 			}
 		}
-	})
+	}, opBounds)
 
 	w.recordOperation(CanvasOperation{
 		Type:      "polyText16",
