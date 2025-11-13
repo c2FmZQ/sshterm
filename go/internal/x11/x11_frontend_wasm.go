@@ -1204,6 +1204,10 @@ func (w *wasmX11Frontend) applyGC(destCtx js.Value, colormap xID, gcID xID, draw
 	var nativeOp string
 	useSoftwareEmulation := false
 
+	if gc.LineWidth > 0 {
+		useSoftwareEmulation = true
+	}
+
 	switch gc.Function {
 	case FunctionClear:
 		nativeOp = "destination-out"
