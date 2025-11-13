@@ -558,6 +558,12 @@ func parseChangeWindowAttributesRequest(order binary.ByteOrder, requestBody []by
 	return req, nil
 }
 
+type GetWindowAttributesRequest struct {
+	Window Window
+}
+
+func (GetWindowAttributesRequest) OpCode() reqCode { return GetWindowAttributes }
+
 /*
 GetWindowAttributes
 
@@ -566,12 +572,6 @@ GetWindowAttributes
 2     2                               request length
 4     WINDOW                          window
 */
-type GetWindowAttributesRequest struct {
-	Window Window
-}
-
-func (GetWindowAttributesRequest) OpCode() reqCode { return GetWindowAttributes }
-
 func parseGetWindowAttributesRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetWindowAttributesRequest, error) {
 	if len(requestBody) != 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, GetWindowAttributes)
@@ -581,6 +581,12 @@ func parseGetWindowAttributesRequest(order binary.ByteOrder, requestBody []byte,
 	return req, nil
 }
 
+type DestroyWindowRequest struct {
+	Window Window
+}
+
+func (DestroyWindowRequest) OpCode() reqCode { return DestroyWindow }
+
 /*
 DestroyWindow
 
@@ -589,12 +595,6 @@ DestroyWindow
 2     2                               request length
 4     WINDOW                          window
 */
-type DestroyWindowRequest struct {
-	Window Window
-}
-
-func (DestroyWindowRequest) OpCode() reqCode { return DestroyWindow }
-
 func parseDestroyWindowRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*DestroyWindowRequest, error) {
 	if len(requestBody) != 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, DestroyWindow)
@@ -604,6 +604,12 @@ func parseDestroyWindowRequest(order binary.ByteOrder, requestBody []byte, seq u
 	return req, nil
 }
 
+type DestroySubwindowsRequest struct {
+	Window Window
+}
+
+func (DestroySubwindowsRequest) OpCode() reqCode { return DestroySubwindows }
+
 /*
 DestroySubwindows
 
@@ -612,12 +618,6 @@ DestroySubwindows
 2     2                               request length
 4     WINDOW                          window
 */
-type DestroySubwindowsRequest struct {
-	Window Window
-}
-
-func (DestroySubwindowsRequest) OpCode() reqCode { return DestroySubwindows }
-
 func parseDestroySubwindowsRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*DestroySubwindowsRequest, error) {
 	if len(requestBody) != 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, DestroySubwindows)
@@ -627,6 +627,13 @@ func parseDestroySubwindowsRequest(order binary.ByteOrder, requestBody []byte, s
 	return req, nil
 }
 
+type ChangeSaveSetRequest struct {
+	Window Window
+	Mode   byte
+}
+
+func (ChangeSaveSetRequest) OpCode() reqCode { return ChangeSaveSet }
+
 /*
 ChangeSaveSet
 
@@ -635,13 +642,6 @@ ChangeSaveSet
 2     2                               request length
 4     WINDOW                          window
 */
-type ChangeSaveSetRequest struct {
-	Window Window
-	Mode   byte
-}
-
-func (ChangeSaveSetRequest) OpCode() reqCode { return ChangeSaveSet }
-
 func parseChangeSaveSetRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*ChangeSaveSetRequest, error) {
 	if len(requestBody) != 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, ChangeSaveSet)
@@ -651,6 +651,15 @@ func parseChangeSaveSetRequest(order binary.ByteOrder, data byte, requestBody []
 	req.Mode = data
 	return req, nil
 }
+
+type ReparentWindowRequest struct {
+	Window Window
+	Parent Window
+	X      int16
+	Y      int16
+}
+
+func (ReparentWindowRequest) OpCode() reqCode { return ReparentWindow }
 
 /*
 ReparentWindow
@@ -663,15 +672,6 @@ ReparentWindow
 2     INT16                           x
 2     INT16                           y
 */
-type ReparentWindowRequest struct {
-	Window Window
-	Parent Window
-	X      int16
-	Y      int16
-}
-
-func (ReparentWindowRequest) OpCode() reqCode { return ReparentWindow }
-
 func parseReparentWindowRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*ReparentWindowRequest, error) {
 	if len(requestBody) != 12 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, ReparentWindow)
@@ -684,6 +684,12 @@ func parseReparentWindowRequest(order binary.ByteOrder, requestBody []byte, seq 
 	return req, nil
 }
 
+type MapWindowRequest struct {
+	Window Window
+}
+
+func (MapWindowRequest) OpCode() reqCode { return MapWindow }
+
 /*
 MapWindow
 
@@ -692,12 +698,6 @@ MapWindow
 2     2                               request length
 4     WINDOW                          window
 */
-type MapWindowRequest struct {
-	Window Window
-}
-
-func (MapWindowRequest) OpCode() reqCode { return MapWindow }
-
 func parseMapWindowRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*MapWindowRequest, error) {
 	if len(requestBody) != 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, MapWindow)
@@ -707,6 +707,12 @@ func parseMapWindowRequest(order binary.ByteOrder, requestBody []byte, seq uint1
 	return req, nil
 }
 
+type MapSubwindowsRequest struct {
+	Window Window
+}
+
+func (MapSubwindowsRequest) OpCode() reqCode { return MapSubwindows }
+
 /*
 MapSubwindows
 
@@ -715,12 +721,6 @@ MapSubwindows
 2     2                               request length
 4     WINDOW                          window
 */
-type MapSubwindowsRequest struct {
-	Window Window
-}
-
-func (MapSubwindowsRequest) OpCode() reqCode { return MapSubwindows }
-
 func parseMapSubwindowsRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*MapSubwindowsRequest, error) {
 	if len(requestBody) != 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, MapSubwindows)
@@ -730,6 +730,12 @@ func parseMapSubwindowsRequest(order binary.ByteOrder, requestBody []byte, seq u
 	return req, nil
 }
 
+type UnmapWindowRequest struct {
+	Window Window
+}
+
+func (UnmapWindowRequest) OpCode() reqCode { return UnmapWindow }
+
 /*
 UnmapWindow
 
@@ -738,12 +744,6 @@ UnmapWindow
 2     2                               request length
 4     WINDOW                          window
 */
-type UnmapWindowRequest struct {
-	Window Window
-}
-
-func (UnmapWindowRequest) OpCode() reqCode { return UnmapWindow }
-
 func parseUnmapWindowRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*UnmapWindowRequest, error) {
 	if len(requestBody) != 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, UnmapWindow)
@@ -753,6 +753,12 @@ func parseUnmapWindowRequest(order binary.ByteOrder, requestBody []byte, seq uin
 	return req, nil
 }
 
+type UnmapSubwindowsRequest struct {
+	Window Window
+}
+
+func (UnmapSubwindowsRequest) OpCode() reqCode { return UnmapSubwindows }
+
 /*
 UnmapSubwindows
 
@@ -761,12 +767,6 @@ UnmapSubwindows
 2     2                               request length
 4     WINDOW                          window
 */
-type UnmapSubwindowsRequest struct {
-	Window Window
-}
-
-func (UnmapSubwindowsRequest) OpCode() reqCode { return UnmapSubwindows }
-
 func parseUnmapSubwindowsRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*UnmapSubwindowsRequest, error) {
 	if len(requestBody) != 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, UnmapSubwindows)
@@ -775,6 +775,14 @@ func parseUnmapSubwindowsRequest(order binary.ByteOrder, requestBody []byte, seq
 	req.Window = Window(order.Uint32(requestBody[0:4]))
 	return req, nil
 }
+
+type ConfigureWindowRequest struct {
+	Window    Window
+	ValueMask uint16
+	Values    []uint32
+}
+
+func (ConfigureWindowRequest) OpCode() reqCode { return ConfigureWindow }
 
 /*
 ConfigureWindow
@@ -787,14 +795,6 @@ ConfigureWindow
 2                                     unused
 4n    LISTofVALUE                     value-list
 */
-type ConfigureWindowRequest struct {
-	Window    Window
-	ValueMask uint16
-	Values    []uint32
-}
-
-func (ConfigureWindowRequest) OpCode() reqCode { return ConfigureWindow }
-
 func parseConfigureWindowRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*ConfigureWindowRequest, error) {
 	if len(requestBody) < 8 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, ConfigureWindow)
@@ -3499,6 +3499,12 @@ type BellRequest struct {
 
 func (BellRequest) OpCode() reqCode { return Bell }
 
+/*
+Bell
+  1     102                             opcode
+  1     INT8                            percent
+  2     1                               request length
+*/
 func parseBellRequest(requestBody byte, seq uint16) (*BellRequest, error) {
 	req := &BellRequest{}
 	req.Percent = int8(requestBody)
@@ -3511,6 +3517,14 @@ type SetPointerMappingRequest struct {
 
 func (SetPointerMappingRequest) OpCode() reqCode { return SetPointerMapping }
 
+/*
+SetPointerMapping
+
+1     116                             opcode
+1     n                               length of map
+2     1+n/4                           request length
+n     LISTofBYTE                      map
+*/
 func parseSetPointerMappingRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*SetPointerMappingRequest, error) {
 	req := &SetPointerMappingRequest{}
 	req.Map = requestBody
@@ -3521,6 +3535,13 @@ type GetPointerMappingRequest struct{}
 
 func (GetPointerMappingRequest) OpCode() reqCode { return GetPointerMapping }
 
+/*
+GetPointerMapping
+
+1     117                             opcode
+1                                     unused
+2     1                               request length
+*/
 func parseGetPointerMappingRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetPointerMappingRequest, error) {
 	return &GetPointerMappingRequest{}, nil
 }
@@ -3532,6 +3553,16 @@ type GetKeyboardMappingRequest struct {
 
 func (GetKeyboardMappingRequest) OpCode() reqCode { return GetKeyboardMapping }
 
+/*
+GetKeyboardMapping
+
+1     101                             opcode
+1                                     unused
+2     2                               request length
+1     KEYCODE                         first-keycode
+1     CARD8                           count
+2                                     unused
+*/
 func parseGetKeyboardMappingRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetKeyboardMappingRequest, error) {
 	if len(requestBody) != 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, GetKeyboardMapping)
@@ -3551,6 +3582,17 @@ type ChangeKeyboardMappingRequest struct {
 
 func (ChangeKeyboardMappingRequest) OpCode() reqCode { return ChangeKeyboardMapping }
 
+/*
+ChangeKeyboardMapping
+
+1     100                             opcode
+1     CARD8                           keycode-count
+2     2+n*m                           request length
+1     KEYCODE                         first-keycode
+1     CARD8                           keysyms-per-keycode
+2                                     unused
+4nm   LISTofKEYSYM                    keysyms
+*/
 func parseChangeKeyboardMappingRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*ChangeKeyboardMappingRequest, error) {
 	if len(requestBody) < 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, ChangeKeyboardMapping)
@@ -3577,6 +3619,15 @@ type ChangeKeyboardControlRequest struct {
 
 func (ChangeKeyboardControlRequest) OpCode() reqCode { return ChangeKeyboardControl }
 
+/*
+ChangeKeyboardControl
+
+1     103                             opcode
+1                                     unused
+2     2+n                             request length
+4     BITMASK                         value-mask
+4n    LISTofVALUE                     value-list
+*/
 func parseChangeKeyboardControlRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*ChangeKeyboardControlRequest, error) {
 	if len(requestBody) < 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, ChangeKeyboardControl)
@@ -3595,6 +3646,13 @@ type GetKeyboardControlRequest struct{}
 
 func (GetKeyboardControlRequest) OpCode() reqCode { return GetKeyboardControl }
 
+/*
+GetKeyboardControl
+
+1     104                             opcode
+1                                     unused
+2     1                               request length
+*/
 func parseGetKeyboardControlRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetKeyboardControlRequest, error) {
 	return &GetKeyboardControlRequest{}, nil
 }
@@ -3608,6 +3666,18 @@ type SetScreenSaverRequest struct {
 
 func (SetScreenSaverRequest) OpCode() reqCode { return SetScreenSaver }
 
+/*
+SetScreenSaver
+
+1     107                             opcode
+1                                     unused
+2     3                               request length
+2     INT16                           timeout
+2     INT16                           interval
+1     { No, Yes, Default }            prefer-blanking
+1     { No, Yes, Default }            allow-exposures
+2                                     unused
+*/
 func parseSetScreenSaverRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*SetScreenSaverRequest, error) {
 	if len(requestBody) != 8 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, SetScreenSaver)
@@ -3624,6 +3694,13 @@ type GetScreenSaverRequest struct{}
 
 func (GetScreenSaverRequest) OpCode() reqCode { return GetScreenSaver }
 
+/*
+GetScreenSaver
+
+1     108                             opcode
+1                                     unused
+2     1                               request length
+*/
 func parseGetScreenSaverRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetScreenSaverRequest, error) {
 	return &GetScreenSaverRequest{}, nil
 }
@@ -3635,6 +3712,22 @@ type ChangeHostsRequest struct {
 
 func (ChangeHostsRequest) OpCode() reqCode { return ChangeHosts }
 
+/*
+ChangeHosts
+
+1     109                             opcode
+1     { Insert, Delete }              mode
+2     2+(n+p)/4                       request length
+1     { Internet, DECnet, Chaos,      family
+
+	ServerInterpreted,
+	InternetV6 }
+
+1                                     unused
+2     CARD16                          n, length of address
+n     LISTofBYTE                      address
+p                                     padding
+*/
 func parseChangeHostsRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*ChangeHostsRequest, error) {
 	if len(requestBody) < 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, ChangeHosts)
@@ -3657,6 +3750,13 @@ type ListHostsRequest struct{}
 
 func (ListHostsRequest) OpCode() reqCode { return ListHosts }
 
+/*
+ListHosts
+
+1     110                             opcode
+1                                     unused
+2     1                               request length
+*/
 func parseListHostsRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*ListHostsRequest, error) {
 	return &ListHostsRequest{}, nil
 }
@@ -3667,6 +3767,13 @@ type SetAccessControlRequest struct {
 
 func (SetAccessControlRequest) OpCode() reqCode { return SetAccessControl }
 
+/*
+SetAccessControl
+
+1     111                             opcode
+1     { Enable, Disable }             mode
+2     1                               request length
+*/
 func parseSetAccessControlRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*SetAccessControlRequest, error) {
 	req := &SetAccessControlRequest{}
 	req.Mode = data
@@ -3679,6 +3786,16 @@ type SetCloseDownModeRequest struct {
 
 func (SetCloseDownModeRequest) OpCode() reqCode { return SetCloseDownMode }
 
+/*
+SetCloseDownMode
+
+1     112                             opcode
+1     { Destroy, RetainPermanent,     mode
+
+	RetainTemporary }
+
+2     1                               request length
+*/
 func parseSetCloseDownModeRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*SetCloseDownModeRequest, error) {
 	req := &SetCloseDownModeRequest{}
 	req.Mode = data
@@ -3691,6 +3808,14 @@ type KillClientRequest struct {
 
 func (KillClientRequest) OpCode() reqCode { return KillClient }
 
+/*
+KillClient
+
+1     113                             opcode
+1                                     unused
+2     2                               request length
+4     CARD32                          resource
+*/
 func parseKillClientRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*KillClientRequest, error) {
 	if len(requestBody) != 4 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, KillClient)
@@ -3708,6 +3833,17 @@ type RotatePropertiesRequest struct {
 
 func (RotatePropertiesRequest) OpCode() reqCode { return RotateProperties }
 
+/*
+RotateProperties
+
+1     114                             opcode
+1                                     unused
+2     3+n                             request length
+4     WINDOW                          window
+2     CARD16                          n
+2     INT16                           delta
+4n    LISTofATOM                      properties
+*/
 func parseRotatePropertiesRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*RotatePropertiesRequest, error) {
 	if len(requestBody) < 8 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, RotateProperties)
@@ -3732,6 +3868,13 @@ type ForceScreenSaverRequest struct {
 
 func (ForceScreenSaverRequest) OpCode() reqCode { return ForceScreenSaver }
 
+/*
+ForceScreenSaver
+
+1     115                             opcode
+1     { Activate, Reset }             mode
+2     1                               request length
+*/
 func parseForceScreenSaverRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*ForceScreenSaverRequest, error) {
 	req := &ForceScreenSaverRequest{}
 	req.Mode = data
@@ -3745,6 +3888,14 @@ type SetModifierMappingRequest struct {
 
 func (SetModifierMappingRequest) OpCode() reqCode { return SetModifierMapping }
 
+/*
+SetModifierMapping
+
+1     118                             opcode
+1     CARD8                           keycodes-per-modifier
+2     1+2n                            request length
+8n    LISTofKEYCODE                   keycodes
+*/
 func parseSetModifierMappingRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*SetModifierMappingRequest, error) {
 	req := &SetModifierMappingRequest{}
 	req.KeyCodesPerModifier = data
@@ -3762,6 +3913,13 @@ type GetModifierMappingRequest struct{}
 
 func (GetModifierMappingRequest) OpCode() reqCode { return GetModifierMapping }
 
+/*
+GetModifierMapping
+
+1     119                             opcode
+1                                     unused
+2     1                               request length
+*/
 func parseGetModifierMappingRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetModifierMappingRequest, error) {
 	return &GetModifierMappingRequest{}, nil
 }
@@ -3832,6 +3990,13 @@ type NoOperationRequest struct{}
 
 func (NoOperationRequest) OpCode() reqCode { return NoOperation }
 
+/*
+NoOperation
+
+1     127                             opcode
+1                                     unused
+2     1                               request length
+*/
 func parseNoOperationRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*NoOperationRequest, error) {
 	return &NoOperationRequest{}, nil
 }
@@ -4190,6 +4355,18 @@ type AllocColorPlanesRequest struct {
 
 func (r *AllocColorPlanesRequest) OpCode() reqCode { return AllocColorPlanes }
 
+/*
+AllocColorPlanes
+
+	1     87                              opcode
+	1     BOOL                            contiguous
+	2     4                               request length
+	4     COLORMAP                        cmap
+	2     CARD16                          colors
+	2     CARD16                          reds
+	2     CARD16                          greens
+	2     CARD16                          blues
+*/
 func parseAllocColorPlanesRequest(order binary.ByteOrder, data byte, body []byte, seq uint16) (*AllocColorPlanesRequest, error) {
 	if len(body) != 12 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, AllocColorPlanes)
@@ -4221,6 +4398,24 @@ type CreateCursorRequest struct {
 
 func (r *CreateCursorRequest) OpCode() reqCode { return CreateCursor }
 
+/*
+CreateCursor
+
+1     93                              opcode
+1                                     unused
+2     8                               request length
+4     CURSOR                          cid
+4     PIXMAP                          source
+4     PIXMAP                          mask
+2     CARD16                          fore-red
+2     CARD16                          fore-green
+2     CARD16                          fore-blue
+2     CARD16                          back-red
+2     CARD16                          back-green
+2     CARD16                          back-blue
+2     CARD16                          x
+2     CARD16                          y
+*/
 func parseCreateCursorRequest(order binary.ByteOrder, body []byte, seq uint16) (*CreateCursorRequest, error) {
 	if len(body) != 28 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, CreateCursor)
@@ -4256,6 +4451,23 @@ type CopyPlaneRequest struct {
 
 func (r *CopyPlaneRequest) OpCode() reqCode { return CopyPlane }
 
+/*
+CopyPlane
+
+1     63                              opcode
+1                                     unused
+2     8                               request length
+4     DRAWABLE                        src-drawable
+4     DRAWABLE                        dst-drawable
+4     GCONTEXT                        gc
+2     INT16                           src-x
+2     INT16                           src-y
+2     INT16                           dst-x
+2     INT16                           dst-y
+2     CARD16                          width
+2     CARD16                          height
+4     BITMASK                         bit-plane
+*/
 func parseCopyPlaneRequest(order binary.ByteOrder, body []byte, seq uint16) (*CopyPlaneRequest, error) {
 	if len(body) != 28 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, CopyPlane)
@@ -4279,6 +4491,13 @@ type ListExtensionsRequest struct{}
 
 func (r *ListExtensionsRequest) OpCode() reqCode { return ListExtensions }
 
+/*
+ListExtensions
+
+1     99                              opcode
+1                                     unused
+2     1                               request length
+*/
 func parseListExtensionsRequest(order binary.ByteOrder, raw []byte, seq uint16) (*ListExtensionsRequest, error) {
 	return &ListExtensionsRequest{}, nil
 }
@@ -4294,6 +4513,18 @@ type ChangePointerControlRequest struct {
 
 func (r *ChangePointerControlRequest) OpCode() reqCode { return ChangePointerControl }
 
+/*
+ChangePointerControl
+
+1     105                             opcode
+1                                     unused
+2     3                               request length
+2     INT16                           acceleration-numerator
+2     INT16                           acceleration-denominator
+2     INT16                           threshold
+1     BOOL                            do-acceleration
+1     BOOL                            do-threshold
+*/
 func parseChangePointerControlRequest(order binary.ByteOrder, body []byte, seq uint16) (*ChangePointerControlRequest, error) {
 	if len(body) != 8 {
 		return nil, NewError(LengthErrorCode, seq, 0, 0, ChangePointerControl)
@@ -4312,6 +4543,13 @@ type GetPointerControlRequest struct{}
 
 func (r *GetPointerControlRequest) OpCode() reqCode { return GetPointerControl }
 
+/*
+GetPointerControl
+
+1     106                             opcode
+1                                     unused
+2     1                               request length
+*/
 func parseGetPointerControlRequest(order binary.ByteOrder, raw []byte, seq uint16) (*GetPointerControlRequest, error) {
 	return &GetPointerControlRequest{}, nil
 }
