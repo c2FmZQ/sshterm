@@ -115,7 +115,13 @@ func (s *x11Server) handleChangeWindowAttributes(client *x11Client, req wire.Req
 			w.attributes.DontPropagateMask = p.Values.DontPropagateMask
 		}
 		if p.ValueMask&wire.CWColormap != 0 {
+			if cm, ok := s.colormaps[xID(p.Values.Colormap)]; !ok {
+				return wire.NewGenericError(seq, uint32(p.Values.Colormap), 0, wire.ChangeWindowAttributes, wire.ColormapErrorCode)
+			} else if cm.visual.VisualID != w.visual {
+				return wire.NewGenericError(seq, 0, 0, wire.ChangeWindowAttributes, wire.MatchErrorCode)
+			}
 			w.attributes.Colormap = p.Values.Colormap
+			w.colormap = xID(p.Values.Colormap)
 		}
 		if p.ValueMask&wire.CWCursor != 0 {
 			w.attributes.Cursor = p.Values.Cursor
@@ -1267,7 +1273,40 @@ func (s *x11Server) handleSetInputFocus(client *x11Client, req wire.Request, seq
 			return err
 		}
 	}
-	s.inputFocus = xid
+
+	if s.inputFocus != xid {
+		oldFocus := s.inputFocus
+		s.inputFocus = xid
+
+		// Send FocusOut to the old focus window
+		if oldFocus != 0 && uint32(oldFocus) != 1 {
+			if w, ok := s.windows[oldFocus]; ok {
+				if w.attributes.EventMask&wire.FocusChangeMask != 0 {
+					s.sendEvent(client, &wire.FocusOutEvent{
+						Sequence: seq,
+						Window:   uint32(oldFocus),
+						Mode:     0, // Normal
+						Detail:   0, // NotifyAncestor
+					})
+				}
+			}
+		}
+
+		// Send FocusIn to the new focus window
+		if xid != 0 && uint32(xid) != 1 {
+			if w, ok := s.windows[xid]; ok {
+				if w.attributes.EventMask&wire.FocusChangeMask != 0 {
+					s.sendEvent(client, &wire.FocusInEvent{
+						Sequence: seq,
+						Window:   uint32(xid),
+						Mode:     0, // Normal
+						Detail:   0, // NotifyAncestor
+					})
+				}
+			}
+		}
+	}
+
 	s.frontend.SetInputFocus(xid, p.RevertTo)
 	return nil
 }
@@ -1889,14 +1928,18 @@ func (s *x11Server) handleCreateColormap(client *x11Client, req wire.Request, se
 	}
 
 	newColormap := &colormap{
-		visual: visual,
-		pixels: make(map[uint32]wire.XColorItem),
+		visual:    visual,
+		pixels:    make(map[uint32]wire.XColorItem),
+		allocated: make([]bool, visual.ColormapEntries),
+		clientID:  make([]uint32, visual.ColormapEntries),
+		writable:  make([]bool, visual.ColormapEntries),
 	}
 
 	if p.Alloc == 1 { // All
-		newColormap.writable = make([]bool, visual.ColormapEntries)
 		for i := range newColormap.writable {
+			newColormap.allocated[i] = true
 			newColormap.writable[i] = true
+			newColormap.clientID[i] = client.id
 		}
 	}
 
@@ -1931,16 +1974,29 @@ func (s *x11Server) handleCopyColormapAndFree(client *x11Client, req wire.Reques
 	}
 
 	newCmap := &colormap{
-		pixels: make(map[uint32]wire.XColorItem),
+		visual:    srcCmap.visual,
+		pixels:    make(map[uint32]wire.XColorItem),
+		allocated: make([]bool, srcCmap.visual.ColormapEntries),
+		clientID:  make([]uint32, srcCmap.visual.ColormapEntries),
+		writable:  make([]bool, srcCmap.visual.ColormapEntries),
 	}
 	s.colormaps[newCmapID] = newCmap
 
-	for pixel, color := range srcCmap.pixels {
-		if color.ClientID == client.id {
-			newCmap.pixels[pixel] = color
+	for i := 0; i < int(srcCmap.visual.ColormapEntries); i++ {
+		if srcCmap.allocated[i] && srcCmap.clientID[i] == client.id {
+			newCmap.allocated[i] = true
+			newCmap.clientID[i] = client.id
+			newCmap.writable[i] = srcCmap.writable[i]
+			if color, ok := srcCmap.pixels[uint32(i)]; ok {
+				newCmap.pixels[uint32(i)] = color
+			}
+			// Free from source
+			srcCmap.allocated[i] = false
+			srcCmap.clientID[i] = 0
+			srcCmap.writable[i] = false
+			delete(srcCmap.pixels, uint32(i))
 		}
 	}
-	delete(s.colormaps, srcCmapID)
 	return nil
 }
 
@@ -2032,11 +2088,41 @@ func (s *x11Server) handleAllocColor(client *x11Client, req wire.Request, seq ui
 		return wire.NewGenericError(seq, uint32(p.Cmap), 0, wire.AllocColor, wire.ColormapErrorCode)
 	}
 
-	// Simple allocation for TrueColor: construct pixel value from RGB
-	r8 := byte(p.Red >> 8)
-	g8 := byte(p.Green >> 8)
-	b8 := byte(p.Blue >> 8)
-	pixel := (uint32(r8) << 16) | (uint32(g8) << 8) | uint32(b8)
+	var pixel uint32
+	if cm.visual.Class == wire.TrueColor || cm.visual.Class == wire.DirectColor {
+		r8 := byte(p.Red >> 8)
+		g8 := byte(p.Green >> 8)
+		b8 := byte(p.Blue >> 8)
+		pixel = (uint32(r8) << 16) | (uint32(g8) << 8) | uint32(b8)
+	} else {
+		// Check if the color is already allocated
+		found := false
+		for i := 0; i < int(cm.visual.ColormapEntries); i++ {
+			if cm.allocated[i] && !cm.writable[i] {
+				item := cm.pixels[uint32(i)]
+				if item.Red == p.Red && item.Green == p.Green && item.Blue == p.Blue {
+					pixel = uint32(i)
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			// Find an unallocated cell
+			for i := 0; i < int(cm.visual.ColormapEntries); i++ {
+				if !cm.allocated[i] {
+					pixel = uint32(i)
+					cm.allocated[i] = true
+					cm.clientID[i] = client.id
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return wire.NewGenericError(seq, 0, 0, wire.AllocColor, wire.AllocErrorCode)
+		}
+	}
 
 	cm.pixels[pixel] = wire.XColorItem{Red: p.Red, Green: p.Green, Blue: p.Blue, ClientID: client.id}
 
@@ -2070,7 +2156,39 @@ func (s *x11Server) handleAllocNamedColor(client *x11Client, req wire.Request, s
 	exactGreen := scale8to16(rgb.Green)
 	exactBlue := scale8to16(rgb.Blue)
 
-	pixel := (uint32(rgb.Red) << 16) | (uint32(rgb.Green) << 8) | uint32(rgb.Blue)
+	var pixel uint32
+	if cm.visual.Class == wire.TrueColor || cm.visual.Class == wire.DirectColor {
+		pixel = (uint32(rgb.Red) << 16) | (uint32(rgb.Green) << 8) | uint32(rgb.Blue)
+	} else {
+		// Check if the color is already allocated
+		found := false
+		for i := 0; i < int(cm.visual.ColormapEntries); i++ {
+			if cm.allocated[i] && !cm.writable[i] {
+				item := cm.pixels[uint32(i)]
+				if item.Red == exactRed && item.Green == exactGreen && item.Blue == exactBlue {
+					pixel = uint32(i)
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			// Find an unallocated cell
+			for i := 0; i < int(cm.visual.ColormapEntries); i++ {
+				if !cm.allocated[i] {
+					pixel = uint32(i)
+					cm.allocated[i] = true
+					cm.clientID[i] = client.id
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return wire.NewGenericError(seq, 0, 0, wire.AllocNamedColor, wire.AllocErrorCode)
+		}
+	}
+
 	cm.pixels[pixel] = wire.XColorItem{Red: exactRed, Green: exactGreen, Blue: exactBlue, ClientID: client.id}
 
 	return &wire.AllocNamedColorReply{
@@ -2086,15 +2204,18 @@ func (s *x11Server) handleAllocNamedColor(client *x11Client, req wire.Request, s
 }
 
 func (s *x11Server) findAllocatableCells(cm *colormap, n uint16) []uint32 {
+	if n == 0 {
+		return []uint32{}
+	}
 	pixels := make([]uint32, 0, n)
-	for i := 0; i < int(cm.visual.ColormapEntries); i++ {
+	for i := 0; i < len(cm.allocated); i++ {
 		if len(pixels) == int(n) {
 			break
 		}
-		if cm.writable[i] {
+		if !cm.allocated[i] {
 			pixels = append(pixels, uint32(i))
 		} else {
-			pixels = pixels[:0] // Reset, we need a contiguous block
+			pixels = pixels[:0]
 		}
 	}
 
@@ -2124,7 +2245,9 @@ func (s *x11Server) handleAllocColorCells(client *x11Client, req wire.Request, s
 	}
 
 	for _, pixel := range pixels {
-		cm.writable[pixel] = false
+		cm.allocated[pixel] = true
+		cm.writable[pixel] = true
+		cm.clientID[pixel] = client.id
 	}
 
 	return &wire.AllocColorCellsReply{
@@ -2154,7 +2277,9 @@ func (s *x11Server) handleAllocColorPlanes(client *x11Client, req wire.Request, 
 	}
 
 	for _, pixel := range pixels {
-		cm.writable[pixel] = false
+		cm.allocated[pixel] = true
+		cm.writable[pixel] = true
+		cm.clientID[pixel] = client.id
 	}
 
 	redMask := uint32(0)
@@ -2191,6 +2316,11 @@ func (s *x11Server) handleFreeColors(client *x11Client, req wire.Request, seq ui
 	}
 
 	for _, pixel := range p.Pixels {
+		if pixel < uint32(len(cm.allocated)) {
+			cm.allocated[pixel] = false
+			cm.writable[pixel] = false
+			cm.clientID[pixel] = 0
+		}
 		delete(cm.pixels, pixel)
 	}
 	return nil

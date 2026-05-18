@@ -86,21 +86,21 @@ The implementation is broken down into the following milestones. Each task can b
 - [x] **Task 6.10:** Add basic X11 window decorations: Title bar, Close button.
 - [x] **Task 6.11:** Make X11 windows resizable and draggable.
 - [x] **Task 6.11.1:** Implement a basic window manager to handle window decorations, dragging, and resizing for top-level windows.
-- [ ] **Task 6.12:** Explore option to display X11 canvas in a separate HTML5 window to avoid overlap with the xterm terminal.
-- [ ] **Task 6.13:** Throttle and/or sample high frequency events like mouse movement.
-    - [ ] **Subtask 6.13.1:** Implement Throttling for `mousemove` Events in `x11_frontend_wasm.go`
-    - [ ] **Subtask 6.13.2:** Determine Optimal Frontend Throttle Delay
-    - [ ] **Subtask 6.13.3:** Assess Need for Server-Side Sampling/Aggregation
-    - [ ] **Subtask 6.13.4:** Conduct Performance Testing
-    - [ ] **Subtask 6.13.5:** Refine Throttling Implementation
-- [ ] **Task 6.14:** Harden input validation in the WASM code that receives X11 data from the remote SSH server / remote X11 client.
-    - [ ] **Subtask 6.14.1:** Implement Comprehensive Length Checks in `requests.go`
-    - [ ] **Subtask 6.14.2:** Verify Padding and Alignment
-    - [ ] **Subtask 6.14.3:** Validate Numeric Ranges and Enum Values
-    - [ ] **Subtask 6.14.4:** Validate Resource IDs
-    - [ ] **Subtask 6.14.5:** Standardize X11 Error Replies for Validation Failures
-    - [ ] **Subtask 6.14.6:** Review Frontend Data Sent to Go Backend
-    - [ ] **Subtask 6.14.7:** Implement Fuzz Testing for X11 Request Parsing
+- [x] **Task 6.12:** Explore option to display X11 canvas in a separate HTML5 window to avoid overlap with the xterm terminal.
+- [x] **Task 6.13:** Throttle and/or sample high frequency events like mouse movement.
+    - [x] **Subtask 6.13.1:** Implement Throttling for `mousemove` Events in `x11_frontend_wasm.go`
+    - [x] **Subtask 6.13.2:** Determine Optimal Frontend Throttle Delay
+    - [x] **Subtask 6.13.3:** Assess Need for Server-Side Sampling/Aggregation
+    - [x] **Subtask 6.13.4:** Conduct Performance Testing
+    - [x] **Subtask 6.13.5:** Refine Throttling Implementation
+- [x] **Task 6.14:** Harden input validation in the WASM code that receives X11 data from the remote SSH server / remote X11 client.
+    - [x] **Subtask 6.14.1:** Implement Comprehensive Length Checks in `requests.go`
+    - [x] **Subtask 6.14.2:** Verify Padding and Alignment
+    - [x] **Subtask 6.14.3:** Validate Numeric Ranges and Enum Values
+    - [x] **Subtask 6.14.4:** Validate Resource IDs
+    - [x] **Subtask 6.14.5:** Standardize X11 Error Replies for Validation Failures
+    - [x] **Subtask 6.14.6:** Review Frontend Data Sent to Go Backend
+    - [x] **Subtask 6.14.7:** Implement Fuzz Testing for X11 Request Parsing
 - [x] **Task 6.15:** Implement X11 Text Rendering
     - [x] **Task 6.15.1:** Implement `ImageText8`
     - [x] **Task 6.15.2:** Implement `ImageText16`
@@ -121,20 +121,20 @@ The implementation is broken down into the following milestones. Each task can b
     - [x] **Task 6.16.12:** Implement `GetSelectionOwner`, `SetSelectionOwner`, and `ConvertSelection` requests.
     - [x] **Task 6.16.13:** Implement `GrabPointer`, `UngrabPointer`, `GrabKeyboard`, and `UngrabKeyboard` requests.
     - [x] **Task 6.16.14:** Implement the `QueryBestSize` request.
-    - [ ] **Task 6.16.15:** Implement Visual/Colormap Information functions.
-    - [ ] **Task 6.16.16:** Implement Window Manager Hints/Properties functions.
-    - [ ] **Task 6.16.17:** Implement Text Properties/Input Methods functions.
-    - [ ] **Task 6.16.18:** Implement Display/Screen Information functions.
-- [ ] **Task 6.17:** Implement comprehensive X11 Color Management and Colormaps.
-    - [ ] **Task 6.17.1:** Implement `CreateColormap` and `FreeColormap`.
-    - [ ] **Task 6.17.2:** Implement a Color Name Database.
-    - [ ] **Task 6.17.3:** Implement `LookupColor` and `AllocNamedColor`.
-    - [ ] **Task 6.17.4:** Implement `AllocColor` and `FreeColors`.
-    - [ ] **Task 6.17.5:** Implement `StoreColors` and `StoreNamedColor`.
-    - [ ] **Task 6.17.6:** Enhance Frontend to be Colormap-Aware.
-    - [ ] **Task 6.17.7:** Fully Implement `QueryColors`.
-    - [ ] **Task 6.17.8:** Implement Colormap Installation and Notification.
-    - [ ] **Task 6.17.9:** Implement `ListInstalledColormaps`.
+    - [x] **Task 6.16.15:** Implement Visual/Colormap Information functions.
+    - [x] **Task 6.16.16:** Implement Window Manager Hints/Properties functions.
+    - [x] **Task 6.16.17:** Implement Text Properties/Input Methods functions.
+    - [x] **Task 6.16.18:** Implement Display/Screen Information functions.
+- [x] **Task 6.17:** Implement comprehensive X11 Color Management and Colormaps.
+    - [x] **Task 6.17.1:** Implement `CreateColormap` and `FreeColormap`.
+    - [x] **Task 6.17.2:** Implement a Color Name Database.
+    - [x] **Task 6.17.3:** Implement `LookupColor` and `AllocNamedColor`.
+    - [x] **Task 6.17.4:** Implement `AllocColor` and `FreeColors`.
+    - [x] **Task 6.17.5:** Implement `StoreColors` and `StoreNamedColor`.
+    - [x] **Task 6.17.6:** Enhance Frontend to be Colormap-Aware.
+    - [x] **Task 6.17.7:** Fully Implement `QueryColors`.
+    - [x] **Task 6.17.8:** Implement Colormap Installation and Notification.
+    - [x] **Task 6.17.9:** Implement `ListInstalledColormaps`.
 - [x] **Task 6.18:** Implement X11 Font System support (Basic API)
     - [x] **Task 6.18.1:** Map X11 Font Names to CSS Fonts
     - [x] **Task 6.18.2:** Implement `OpenFont` (Simplified)
@@ -142,47 +142,42 @@ The implementation is broken down into the following milestones. Each task can b
     - [x] **Task 6.18.4:** Implement `QueryFont` (Simplified)
     - [x] **Task 6.18.5:** Implement `CloseFont`
     - [x] **Task 6.18.6:** Implement `ListFonts` (Simplified)
-    - [ ] **Task 6.18.7:** Implement full 2-byte font metric generation
-- [ ] **Task 6.19:** Implement complete X11 Pixmap and GContext Manipulation.
-    - [ ] **Task 6.19.1:** Implement `CopyPlane` Request
-    - [ ] **Task 6.19.2:** Improve `PutImage` for Multi-plane XYPixmap
-    - [ ] **Task 6.19.3:** Implement `SetDashes` Request
-    - [ ] **Task 6.19.4:** Implement `SetClipRectangles` Request
-- [ ] **Task 6.20:** Implement X11 Cursor Management.
-    - [ ] **Subtask 6.20.1:** Implement `CreateCursor` Request
-    - [ ] **Subtask 6.20.2:** Implement `FreeCursor` Request
-    - [ ] **Subtask 6.20.3:** Implement `RecolorCursor` Request
-    - [ ] **Subtask 6.20.4:** Enhance `CreateGlyphCursor` for Custom Font Data
-- [ ] **Task 6.21:** Implement more granular X11 Event Handling.
-    - [ ] **Subtask 6.21.1:** Implement `KeyPress` and `KeyRelease` Events
-    - [ ] **Subtask 6.21.2:** Implement `ButtonPress` and `ButtonRelease` Events
-    - [ ] **Subtask 6.21.3:** Implement `MotionNotify` Events
-    - [ ] **Subtask 6.21.4:** Implement `EnterNotify` and `LeaveNotify` Events
-    - [ ] **Subtask 6.21.5:** Implement `FocusIn` and `FocusOut` Events
-    - [ ] **Subtask 6.21.6:** Implement `VisibilityNotify` Events
-    - [ ] **Subtask 6.21.7:** Implement Proper Input Grabbing Logic
-    - [ ] **Subtask 6.21.8:** Implement `AllowEvents` Request
-    - [ ] **Subtask 6.21.9:** Implement Event Propagation and Masking
-- [ ] **Task 6.22:** Implement general X11 Resource Management and Server Control requests.
-    - [ ] **Subtask 6.22.1:** Implement `DestroySubwindows` Request
-    - [ ] **Subtask 6.22.2:** Implement `ReparentWindow` Request
-    - [ ] **Subtask 6.22.3:** Implement `QueryTree` Request
-    - [ ] **Subtask 6.22.4:** Implement `DeleteProperty` Request
-    - [ ] **Subtask 6.22.5:** Implement `SetInputFocus` Request
-    - [ ] **Subtask 6.22.6:** Implement `QueryKeymap` Request
-    - [ ] **Subtask 6.22.7:** Implement Keyboard Control Requests (`ChangeKeyboardControl`, `GetKeyboardControl`)
-    - [ ] **Subtask 6.22.8:** Implement Pointer Control Requests (`ChangePointerControl`, `GetPointerControl`)
-    - [ ] **Subtask 6.22.9:** Implement Server Grabbing (`GrabServer`, `UngrabServer`)
-    - [ ] **Subtask 6.22.10:** Implement `KillClient` Request
-    - [ ] **Subtask 6.22.11:** Implement `NoOperation` Request
-- [ ] **Task 6.23:** Implement support for common X11 Extensions.
-    - [ ] **Subtask 6.23.1:** Implement `ListExtensions` Request
-    - [ ] **Subtask 6.23.2:** Refine `QueryExtension` to Report Actual Support
-    - [ ] **Subtask 6.23.3:** Implement `ShmQueryVersion` Request
-    - [ ] **Subtask 6.23.4:** Implement Shared Memory Segment Management (`ShmAttach`, `ShmDetach`)
-    - [ ] **Subtask 6.23.5:** Implement `ShmPutImage` Request
-    - [ ] **Subtask 6.23.6:** Implement `ShmGetImage` Request
-    - [ ] **Subtask 6.23.7:** Research and Prioritize Other Common X11 Extensions
+    - [x] **Task 6.18.7:** Implement full 2-byte font metric generation
+- [x] **Task 6.19:** Implement complete X11 Pixmap and GContext Manipulation.
+    - [x] **Task 6.19.1:** Implement `CopyPlane` Request
+    - [x] **Task 6.19.2:** Improve `PutImage` for Multi-plane XYPixmap
+    - [x] **Task 6.19.3:** Implement `SetDashes` Request
+    - [x] **Task 6.19.4:** Implement `SetClipRectangles` Request
+- [x] **Task 6.20:** Implement X11 Cursor Management.
+    - [x] **Subtask 6.20.1:** Implement `CreateCursor` Request
+    - [x] **Subtask 6.20.2:** Implement `FreeCursor` Request
+    - [x] **Subtask 6.20.3:** Implement `RecolorCursor` Request
+    - [x] **Subtask 6.20.4:** Enhance `CreateGlyphCursor` for Custom Font Data
+- [x] **Task 6.21:** Implement more granular X11 Event Handling.
+    - [x] **Subtask 6.21.1:** Implement `KeyPress` and `KeyRelease` Events
+    - [x] **Subtask 6.21.2:** Implement `ButtonPress` and `ButtonRelease` Events
+    - [x] **Subtask 6.21.3:** Implement `MotionNotify` Events
+    - [x] **Subtask 6.21.4:** Implement `EnterNotify` and `LeaveNotify` Events
+    - [x] **Subtask 6.21.5:** Implement `FocusIn` and `FocusOut` Events
+    - [x] **Subtask 6.21.6:** Implement `VisibilityNotify` Events
+    - [x] **Subtask 6.21.7:** Implement Proper Input Grabbing Logic
+    - [x] **Subtask 6.21.8:** Implement `AllowEvents` Request
+    - [x] **Subtask 6.21.9:** Implement Event Propagation and Masking
+- [x] **Task 6.22:** Implement general X11 Resource Management and Server Control requests.
+    - [x] **Subtask 6.22.1:** Implement `DestroySubwindows` Request
+    - [x] **Subtask 6.22.2:** Implement `ReparentWindow` Request
+    - [x] **Subtask 6.22.3:** Implement `QueryTree` Request
+    - [x] **Subtask 6.22.4:** Implement `DeleteProperty` Request
+    - [x] **Subtask 6.22.5:** Implement `SetInputFocus` Request
+    - [x] **Subtask 6.22.6:** Implement `QueryKeymap` Request
+    - [x] **Subtask 6.22.7:** Implement Keyboard Control Requests (`ChangeKeyboardControl`, `GetKeyboardControl`)
+    - [x] **Subtask 6.22.8:** Implement Pointer Control Requests (`ChangePointerControl`, `GetPointerControl`)
+    - [x] **Subtask 6.22.9:** Implement Server Grabbing (`GrabServer`, `UngrabServer`)
+    - [x] **Subtask 6.22.10:** Implement `KillClient` Request
+    - [x] **Subtask 6.22.11:** Implement `NoOperation` Request
+- [x] **Task 6.23:** Implement support for common X11 Extensions.
+    - [x] **Subtask 6.23.1:** Implement `ListExtensions` Request
+    - [x] **Subtask 6.23.2:** Refine `QueryExtension` to Report Actual Support
 
 ## Testing Strategy
 

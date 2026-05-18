@@ -1432,6 +1432,52 @@ func (e *LeaveNotifyEvent) EncodeMessage(order binary.ByteOrder) []byte {
 	return event
 }
 
+// FocusInEvent represents a FocusIn event (opcode 9).
+type FocusInEvent struct {
+	Sequence uint16 // Sequence number
+	Detail   byte   // Detail (Ancestor, Virtual, Inferior, Nonlinear, NonlinearVirtual, Pointer, PointerRoot, None)
+	Window   uint32 // Event window ID
+	Mode     byte   // Mode (Normal, Grab, Ungrab, WhileGrabbed)
+}
+
+// EventCode returns the event code.
+func (e *FocusInEvent) EventCode() uint8 { return 9 }
+
+// EncodeMessage encodes the FocusInEvent into a byte slice.
+func (e *FocusInEvent) EncodeMessage(order binary.ByteOrder) []byte {
+	event := make([]byte, 32)
+	event[0] = 9 // FocusIn event code
+	event[1] = e.Detail
+	order.PutUint16(event[2:4], e.Sequence)
+	order.PutUint32(event[4:8], e.Window)
+	event[8] = e.Mode
+	// event[9:32] is unused
+	return event
+}
+
+// FocusOutEvent represents a FocusOut event (opcode 10).
+type FocusOutEvent struct {
+	Sequence uint16 // Sequence number
+	Detail   byte   // Detail (Ancestor, Virtual, Inferior, Nonlinear, NonlinearVirtual, Pointer, PointerRoot, None)
+	Window   uint32 // Event window ID
+	Mode     byte   // Mode (Normal, Grab, Ungrab, WhileGrabbed)
+}
+
+// EventCode returns the event code.
+func (e *FocusOutEvent) EventCode() uint8 { return 10 }
+
+// EncodeMessage encodes the FocusOutEvent into a byte slice.
+func (e *FocusOutEvent) EncodeMessage(order binary.ByteOrder) []byte {
+	event := make([]byte, 32)
+	event[0] = 10 // FocusOut event code
+	event[1] = e.Detail
+	order.PutUint16(event[2:4], e.Sequence)
+	order.PutUint32(event[4:8], e.Window)
+	event[8] = e.Mode
+	// event[9:32] is unused
+	return event
+}
+
 // ExposeEvent represents an Expose event (opcode 12).
 type ExposeEvent struct {
 	Sequence      uint16 // Sequence number

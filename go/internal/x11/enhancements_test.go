@@ -295,13 +295,11 @@ func TestAllocColorCells_PseudoColor(t *testing.T) {
 	server, client, _, _ := setupTestServerWithClient(t)
 	colormapID := clientXID(client, 1)
 	server.colormaps[colormapID] = &colormap{
-		visual:   wire.VisualType{Class: wire.PseudoColor, ColormapEntries: 256},
-		pixels:   make(map[uint32]wire.XColorItem),
-		writable: make([]bool, 256),
-	}
-	// Mark all cells as available
-	for i := range server.colormaps[colormapID].writable {
-		server.colormaps[colormapID].writable[i] = true
+		visual:    wire.VisualType{Class: wire.PseudoColor, ColormapEntries: 256},
+		pixels:    make(map[uint32]wire.XColorItem),
+		allocated: make([]bool, 256),
+		writable:  make([]bool, 256),
+		clientID:  make([]uint32, 256),
 	}
 
 	req := &wire.AllocColorCellsRequest{
@@ -315,9 +313,10 @@ func TestAllocColorCells_PseudoColor(t *testing.T) {
 	require.True(t, ok)
 	assert.Len(t, allocReply.Pixels, 5, "Should allocate 5 pixel values")
 
-	// Check that the allocated cells are now marked as not writable
+	// Check that the allocated cells are now marked as allocated and writable
 	for _, pixel := range allocReply.Pixels {
-		assert.False(t, server.colormaps[colormapID].writable[pixel], "Allocated cell should be marked as read-only")
+		assert.True(t, server.colormaps[colormapID].allocated[pixel], "Allocated cell should be marked as allocated")
+		assert.True(t, server.colormaps[colormapID].writable[pixel], "Allocated cell should be marked as writable")
 	}
 }
 
@@ -327,10 +326,16 @@ func TestCopyColormapAndFree(t *testing.T) {
 	dstCmapID := clientXID(client, 2)
 
 	server.colormaps[srcCmapID] = &colormap{
-		pixels: map[uint32]wire.XColorItem{
-			1: {Pixel: 1, Red: 0xffff, ClientID: client.id},
-		},
+		visual:    wire.VisualType{VisualID: 1, Class: wire.PseudoColor, ColormapEntries: 256},
+		pixels:    make(map[uint32]wire.XColorItem),
+		allocated: make([]bool, 256),
+		writable:  make([]bool, 256),
+		clientID:  make([]uint32, 256),
 	}
+	// Add a color item owned by this client
+	server.colormaps[srcCmapID].pixels[1] = wire.XColorItem{Pixel: 1, Red: 0xffff, ClientID: client.id}
+	server.colormaps[srcCmapID].allocated[1] = true
+	server.colormaps[srcCmapID].clientID[1] = client.id
 
 	req := &wire.CopyColormapAndFreeRequest{
 		SrcCmap: wire.Colormap(srcCmapID),
@@ -338,12 +343,16 @@ func TestCopyColormapAndFree(t *testing.T) {
 	}
 
 	server.handleCopyColormapAndFree(client, req, 1)
-	_, srcExists := server.colormaps[srcCmapID]
+
+	srcCmap, srcExists := server.colormaps[srcCmapID]
 	dstCmap, dstExists := server.colormaps[dstCmapID]
 
-	assert.False(t, srcExists, "Source colormap should be freed")
-	assert.True(t, dstExists, "Destination colormap should be created")
+	assert.True(t, srcExists, "Source colormap should still exist (per our implementation move logic)")
+	assert.False(t, srcCmap.allocated[1], "Color item should be freed in source")
+
+	require.True(t, dstExists, "Destination colormap should be created")
 	assert.Contains(t, dstCmap.pixels, uint32(1), "Color item should be copied to destination")
+	assert.True(t, dstCmap.allocated[1], "Color item should be marked as allocated in destination")
 }
 
 // Helper to decode a single message from a buffer for testing replies.

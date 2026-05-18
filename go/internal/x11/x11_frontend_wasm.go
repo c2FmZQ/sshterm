@@ -55,15 +55,18 @@ type fontInfo struct {
 }
 
 type cursorInfo struct {
-	style  string
-	source xID
-	mask   xID
-	x, y   uint16
+	style     string
+	source    xID
+	mask      xID
+	x, y      uint16
+	foreColor [3]uint16
+	backColor [3]uint16
 }
 
 type wasmX11Frontend struct {
 	document           js.Value
 	body               js.Value
+	mainContainer      js.Value
 	windows            map[xID]*windowInfo    // Map to store window elements (div)
 	pixmaps            map[xID]*pixmapInfo    // Map to store pixmap elements (canvas)
 	gcs                map[xID]wire.GC        // Map to store graphics contexts (Go representation)
@@ -115,6 +118,7 @@ func newX11Frontend(logger Logger, s *x11Server) *wasmX11Frontend {
 	frontend := &wasmX11Frontend{
 		document:           document,
 		body:               body,
+		mainContainer:      body,
 		windows:            make(map[xID]*windowInfo),
 		pixmaps:            make(map[xID]*pixmapInfo),
 		gcs:                make(map[xID]wire.GC),
@@ -150,6 +154,21 @@ func newX11Frontend(logger Logger, s *x11Server) *wasmX11Frontend {
 		return nil
 	})
 	win.Call("addEventListener", "resize", resizeHandler)
+
+	gotCapture := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		debugf("X11: GLOBAL gotpointercapture")
+		return nil
+	})
+	lostCapture := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		debugf("X11: GLOBAL lostpointercapture")
+		if frontend.grabbedWindowID != 0 {
+			debugf("X11: Lost pointer capture globally, informing server")
+			frontend.grabbedWindowID = 0
+		}
+		return nil
+	})
+	frontend.mainContainer.Call("addEventListener", "gotpointercapture", gotCapture)
+	frontend.mainContainer.Call("addEventListener", "lostpointercapture", lostCapture)
 
 	frontend.showMessage("X11 Frontend Started")
 	return frontend
@@ -495,6 +514,19 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent, x, y, width, height, dep
 	mouseEvents["wheel"] = w.mouseEventHandler(xid, "wheel")
 	mouseEvents["mouseenter"] = w.pointerCrossingEventHandler(xid, true)
 	mouseEvents["mouseleave"] = w.pointerCrossingEventHandler(xid, false)
+
+	w.mainContainer.Call("addEventListener", "gotpointercapture", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		debugf("X11: gotpointercapture")
+		return nil
+	}))
+	w.mainContainer.Call("addEventListener", "lostpointercapture", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		debugf("X11: lostpointercapture")
+		if w.grabbedWindowID != 0 {
+			debugf("X11: Lost pointer capture, informing server")
+			w.grabbedWindowID = 0
+		}
+		return nil
+	}))
 
 	keyDownEvent := w.keyboardEventHandler(xid, "keydown")
 	keyUpEvent := w.keyboardEventHandler(xid, "keyup")
@@ -1134,7 +1166,11 @@ func (w *wasmX11Frontend) PutImage(drawable xID, gcID xID, format uint8, width, 
 		ctx.Call("putImageData", imageData, dstX, dstY)
 
 	case 2: // ZPixmap
-		// Assuming depth 24, 32bpp, BGRX byte order
+		// Optimization: Use Uint8ClampedArray.set() for bulk copy if byte order matches
+		// Browser expects RGBA.
+		// Our X11 server currently assumes BGRX in x11_sim.go for ZPixmap.
+		// If we can guarantee RGBA or BGRA, we can optimize.
+		// For now, keep the loop but use jsutil.Uint8ClampedArrayFromBytes for the result.
 		length := int(width * height * 4)
 		rgbaData := make([]byte, length)
 		for i := 0; i < int(width*height); i++ {
@@ -1307,23 +1343,20 @@ func (w *wasmX11Frontend) applyGC(drawable xID, gcID xID, draw func(js.Value), o
 	case wire.FunctionNoOp:
 		debugf("applyGC: NoOp, returning")
 		return
+	case wire.FunctionXor:
+		if isFullPlaneMask {
+			nativeOp = "difference"
+			r, g, b := w.GetRGBColor(colormap, gc.Foreground)
+			if r != 255 || g != 255 || b != 255 {
+				useSoftwareEmulation = true
+			}
+		} else {
+			useSoftwareEmulation = true
+		}
 	case wire.FunctionInvert:
 		if isFullPlaneMask {
 			nativeOp = "difference"
 			forceColor = "#ffffff"
-		} else {
-			useSoftwareEmulation = true
-		}
-	case wire.FunctionXor:
-		// Optimization: If drawing with White and PlaneMask is full,
-		// XOR is equivalent to Difference (Invert).
-		if isFullPlaneMask {
-			r, g, b := w.GetRGBColor(colormap, gc.Foreground)
-			if r == 255 && g == 255 && b == 255 {
-				nativeOp = "difference"
-			} else {
-				useSoftwareEmulation = true
-			}
 		} else {
 			useSoftwareEmulation = true
 		}
@@ -2718,6 +2751,14 @@ func (w *wasmX11Frontend) CreateCursor(cursorID xID, source, mask xID, foreColor
 		return
 	}
 
+	// Optimization: Check if we already have this cursor and it's the same
+	if info, ok := w.cursorStyles[uint32(cursorID)]; ok {
+		if info.source == source && info.mask == mask && info.x == x && info.y == y && info.foreColor == foreColor && info.backColor == backColor {
+			debugf("X11: CreateCursor: Using cached cursor for %d", cursorID)
+			return
+		}
+	}
+
 	// Create a temporary canvas to generate the cursor image
 	tempCanvas := w.document.Call("createElement", "canvas")
 	tempCanvas.Set("width", width)
@@ -2786,11 +2827,13 @@ func (w *wasmX11Frontend) CreateCursor(cursorID xID, source, mask xID, foreColor
 	cursorStyle := fmt.Sprintf("url(%s) %d %d, auto", dataURL, x, y)
 
 	w.cursorStyles[uint32(cursorID)] = &cursorInfo{
-		style:  cursorStyle,
-		source: source,
-		mask:   mask,
-		x:      x,
-		y:      y,
+		style:     cursorStyle,
+		source:    source,
+		mask:      mask,
+		x:         x,
+		y:         y,
+		foreColor: foreColor,
+		backColor: backColor,
 	}
 
 	w.recordOperation(CanvasOperation{
@@ -2798,6 +2841,7 @@ func (w *wasmX11Frontend) CreateCursor(cursorID xID, source, mask xID, foreColor
 		Args: []any{uint32(cursorID), uint32(source), uint32(mask), x, y},
 	})
 }
+
 
 func (w *wasmX11Frontend) CreateCursorFromGlyph(cursorID uint32, glyphID uint16) {
 	debugf("X11: createCursorFromGlyph cursorID=%d glyphID=%d", cursorID, glyphID)
@@ -2932,8 +2976,8 @@ func (w *wasmX11Frontend) initDefaultCursors() {
 func (w *wasmX11Frontend) SetCursor(windowID xID, cursorID uint32) {
 	debugf("X11: setCursor window=%d cursor=%d", windowID, cursorID)
 	if winInfo, ok := w.windows[windowID]; ok {
-		if style, ok := w.cursorStyles[cursorID]; ok {
-			winInfo.canvas.Get("style").Set("cursor", style)
+		if info, ok := w.cursorStyles[cursorID]; ok {
+			winInfo.canvas.Get("style").Set("cursor", info.style)
 		} else {
 			winInfo.canvas.Get("style").Set("cursor", "default")
 		}
@@ -3005,9 +3049,10 @@ func (w *wasmX11Frontend) AllowEvents(clientID uint32, mode byte, time uint32) {
 
 func (w *wasmX11Frontend) GrabPointer(grabWindow xID, ownerEvents bool, eventMask uint16, pointerMode, keyboardMode byte, confineTo uint32, cursor uint32, time uint32) byte {
 	debugf("X11: GrabPointer window=%d", grabWindow)
-	if winInfo, ok := w.windows[grabWindow]; ok {
+	if _, ok := w.windows[grabWindow]; ok {
 		if w.lastPointerID != 0 {
-			winInfo.div.Call("setPointerCapture", w.lastPointerID)
+			// use the main container for pointer capture to ensure we get events even outside the window
+			w.mainContainer.Call("setPointerCapture", w.lastPointerID)
 			w.grabbedWindowID = grabWindow
 		}
 	}
@@ -3021,10 +3066,8 @@ func (w *wasmX11Frontend) GrabPointer(grabWindow xID, ownerEvents bool, eventMas
 func (w *wasmX11Frontend) UngrabPointer(time uint32) {
 	debugf("X11: UngrabPointer")
 	if w.grabbedWindowID != 0 {
-		if winInfo, ok := w.windows[w.grabbedWindowID]; ok {
-			if w.lastPointerID != 0 {
-				winInfo.div.Call("releasePointerCapture", w.lastPointerID)
-			}
+		if w.lastPointerID != 0 {
+			w.mainContainer.Call("releasePointerCapture", w.lastPointerID)
 		}
 		w.grabbedWindowID = 0
 	}
@@ -3314,6 +3357,52 @@ func (w *wasmX11Frontend) QueryFont(fid xID) (minBounds, maxBounds wire.XCharInf
 	maxCharOrByte2 = 255 // ASCII range
 	defaultChar = 0      // Will be set to ' ' (32) if not all chars exist
 	drawDirection = 0    // LeftToRight
+	minByte1 = 0
+	maxByte1 = 0
+	allCharsExist = true // Optimistic for the 0-255 range
+
+	charInfos = make([]wire.XCharInfo, 256)
+	for i := 0; i < 256; i++ {
+		char := string([]byte{byte(i)})
+		metrics := ctx.Call("measureText", char)
+		width := uint16(math.Round(metrics.Get("width").Float()))
+		ascent := int16(math.Round(metrics.Get("actualBoundingBoxAscent").Float()))
+		descent := int16(math.Round(metrics.Get("actualBoundingBoxDescent").Float()))
+		lsb := int16(math.Round(metrics.Get("actualBoundingBoxLeft").Float()))
+		rsb := int16(math.Round(metrics.Get("actualBoundingBoxRight").Float()))
+
+		charInfos[i] = wire.XCharInfo{
+			LeftSideBearing:  -lsb, // X11 LSB is distance from origin to left edge, usually negative if to the left
+			RightSideBearing: rsb,
+			CharacterWidth:   width,
+			Ascent:           ascent,
+			Descent:          descent,
+		}
+
+		if i == 0 {
+			minBounds = charInfos[i]
+			maxBounds = charInfos[i]
+		} else {
+			if charInfos[i].LeftSideBearing < minBounds.LeftSideBearing {
+				minBounds.LeftSideBearing = charInfos[i].LeftSideBearing
+			}
+			if charInfos[i].RightSideBearing > maxBounds.RightSideBearing {
+				maxBounds.RightSideBearing = charInfos[i].RightSideBearing
+			}
+			if charInfos[i].CharacterWidth < minBounds.CharacterWidth {
+				minBounds.CharacterWidth = charInfos[i].CharacterWidth
+			}
+			if charInfos[i].CharacterWidth > maxBounds.CharacterWidth {
+				maxBounds.CharacterWidth = charInfos[i].CharacterWidth
+			}
+			if charInfos[i].Ascent > maxBounds.Ascent {
+				maxBounds.Ascent = charInfos[i].Ascent
+			}
+			if charInfos[i].Descent > maxBounds.Descent {
+				maxBounds.Descent = charInfos[i].Descent
+			}
+		}
+	}
 	minByte1 = 0
 	maxByte1 = 0
 	allCharsExist = true // Assume true, set to false if any char has 0 width

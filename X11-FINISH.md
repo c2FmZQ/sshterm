@@ -128,9 +128,9 @@ To test Grabs and Input without a user:
 
 1.  **Stopgap Fixes:**
     -   [x] Fix initialization of default colormap visual (fixes xterm/xeyes startup).
-    -   [ ] Implement `GrabPointer`/`UngrabPointer` in WASM frontend.
-    -   [ ] Add `mousemove` throttling.
-    -   [ ] **Test:** Add `TestX11_Grab` to `main_test.go` using `chromedp` click injection.
+    -   [x] Implement `GrabPointer`/`UngrabPointer` in WASM frontend.
+    -   [x] Add `mousemove` throttling.
+    -   [x] **Test:** Add `TestX11_Grab` to `main_test.go` using `chromedp` click injection.
 2.  **Performance Core:**
     -   [x] Optimize `PutImage` (bulk copy).
     -   [x] Implement native `globalCompositeOperation` mappings.
@@ -138,11 +138,11 @@ To test Grabs and Input without a user:
 3.  **Visuals:**
     -   [x] Implement Dashed Lines & Stipples.
     -   [x] Improve Font Mapping.
-    -   [ ] **Test:** Add `TestX11_Visuals` with Golden Image comparison for dashes/stipples.
+    -   [x] **Test:** Add `TestX11_Visuals` with Golden Image comparison for dashes/stipples.
 4.  **Protocol Completion:**
-    -   [ ] Implement `AllowEvents`.
-    -   [ ] Implement `GetWindowAttributes` (WASM side).
-    -   [ ] **Test:** Verify `AllowEvents` unblocks input queue in `TestX11_Grab`.
+    -   [x] Implement `AllowEvents`.
+    -   [x] Implement `GetWindowAttributes` (WASM side).
+    -   [x] **Test:** Verify `AllowEvents` unblocks input queue in `TestX11_Grab`.
 5.  **Final Polish:**
     -   [x] Dirty region optimization.
-    -   [ ] Full regression testing suite run.
+    -   [x] Full regression testing suite run.

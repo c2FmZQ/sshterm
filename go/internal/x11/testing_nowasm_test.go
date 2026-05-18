@@ -43,10 +43,19 @@ func setupTestServerWithClients(t *testing.T, numClients int) (*x11Server, []*x1
 		pressedKeys:        make(map[byte]bool),
 		dirtyDrawables:     make(map[xID]bool),
 		byteOrder:          binary.LittleEndian,
+		rootVisual:         wire.VisualType{VisualID: 1, Class: wire.TrueColor, ColormapEntries: 256},
+		visualID:           1,
 	}
+	server.visuals = map[uint32]wire.VisualType{1: server.rootVisual}
 	server.initAtoms()
 	server.initRequestHandlers()
-	server.colormaps[xID(server.defaultColormap)] = &colormap{pixels: make(map[uint32]wire.XColorItem)}
+	server.colormaps[xID(server.defaultColormap)] = &colormap{
+		visual:    server.rootVisual,
+		pixels:    make(map[uint32]wire.XColorItem),
+		allocated: make([]bool, server.rootVisual.ColormapEntries),
+		clientID:  make([]uint32, server.rootVisual.ColormapEntries),
+		writable:  make([]bool, server.rootVisual.ColormapEntries),
+	}
 	for k, v := range KeyCodeToKeysym {
 		server.keymap[k] = v
 	}

@@ -186,9 +186,11 @@ func (w *window) mapState() byte {
 }
 
 type colormap struct {
-	visual   wire.VisualType
-	pixels   map[uint32]wire.XColorItem
-	writable []bool // For PseudoColor, etc.
+	visual    wire.VisualType
+	pixels    map[uint32]wire.XColorItem
+	allocated []bool   // Track if a cell is allocated
+	clientID  []uint32 // Track which client allocated the cell
+	writable  []bool   // Track if a cell is writable (allocated via AllocColorCells/Planes)
 }
 
 type property struct {
