@@ -178,11 +178,15 @@ func TestSSHTerm(t *testing.T) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		t.Logf("%s %s", req.Method, req.RequestURI)
 		w.Header().Set("Cache-Control", "no-store")
-		if req.URL.Path == "/tests.x11.config.json" {
+		if req.URL.Path == "/tests.x11.config.json" || req.URL.Path == "/tests.real.config.json" {
 			b, err := os.ReadFile(filepath.Join(*docRoot, "tests.x11.config.json"))
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
+			}
+			if req.URL.Path == "/tests.real.config.json" {
+				b = bytes.Replace(b, []byte(`"hostname": "test-server"`), []byte(`"hostname": "x11-apps.local"`), 1)
+				b = bytes.Replace(b, []byte(`"hostnames": [ "test-server" ]`), []byte(`"hostnames": [ "x11-apps.local" ]`), 1)
 			}
 			key := bytes.TrimSpace(ssh.MarshalAuthorizedKey(sshServerWithCert.pubKey))
 			w.Header().Set("content-type", "application/json")
@@ -462,6 +466,47 @@ func TestSSHTerm(t *testing.T) {
 		cancel()
 		if !<-pass {
 			t.Error("Test failed")
+		}
+	})
+
+	t.Run("X11 Real Apps", func(t *testing.T) {
+		if *withChromeDP == "" {
+			t.Skip("--with-chromedp not set")
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancel()
+		ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
+		defer cancel()
+
+		ctx, cancel = chromedp.NewContext(ctx,
+			chromedp.WithErrorf(t.Logf),
+			chromedp.WithLogf(t.Logf),
+		)
+		defer cancel()
+
+		var buf []byte
+		if err := chromedp.Run(ctx,
+			chromedp.Navigate("https://devtest.local:8443/tests.html?x11&config=tests.real.config.json"),
+			chromedp.WaitVisible("#terminal"),
+			chromedp.Sleep(5*time.Second), // Wait for auto-connect/password prompt
+			chromedp.SendKeys("#terminal", "sshterm\n"),
+			chromedp.Sleep(5*time.Second), // Wait for shell
+			// Launch xeyes
+			chromedp.SendKeys("#terminal", "xeyes &\n"),
+			chromedp.Sleep(5*time.Second),
+			chromedp.WaitVisible("canvas"), // Wait for X11 window to appear
+			chromedp.Sleep(2*time.Second),
+			chromedp.CaptureScreenshot(&buf),
+		); err != nil {
+			t.Fatalf("Failed to run real app test: %v", err)
+		}
+
+		if *outputDir != "" {
+			screenshotPath := filepath.Join(*outputDir, "x11_real_apps_screenshot.png")
+			if err := os.WriteFile(screenshotPath, buf, 0o644); err != nil {
+				t.Fatalf("Failed to save screenshot: %v", err)
+			}
+			t.Logf("X11 Real Apps screenshot saved to %s", screenshotPath)
 		}
 	})
 }
