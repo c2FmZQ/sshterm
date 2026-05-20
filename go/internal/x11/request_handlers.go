@@ -65,7 +65,7 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 	}
 	newWindow.attributes.Class = effectiveClass
 
-	if p.ValueMask&wire.CWColormap != 0 {
+	if p.ValueMask&wire.CWColormap != 0 && p.Values.Colormap != 0 {
 		if cm, ok := s.colormaps[xID(p.Values.Colormap)]; !ok {
 			return wire.NewGenericError(seq, uint32(p.Values.Colormap), 0, wire.CreateWindow, wire.ColormapErrorCode)
 		} else if cm.visual.VisualID != effectiveVisual {

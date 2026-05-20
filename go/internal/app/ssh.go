@@ -28,8 +28,8 @@ package app
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -150,7 +150,7 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 		}{
 			SingleConnection:       false,
 			AuthenticationProtocol: "MIT-MAGIC-COOKIE-1",
-			AuthenticationCookie:   string(cookie),
+			AuthenticationCookie:   hex.EncodeToString(cookie),
 			ScreenNumber:           0,
 		}
 		logger := &termLogger{t}
