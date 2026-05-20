@@ -81,11 +81,15 @@ func main() {
 	var buf []byte
 	log.Println("Starting chromedp actions...")
 	err := chromedp.Run(testCtx,
+		chromedp.EmulateViewport(1280, 1024),
 		chromedp.Navigate(*targetURL),
 		chromedp.WaitVisible(".xterm-rows", chromedp.ByQuery),
 		// Disable clipboard to avoid NotAllowedError in headless env
 		chromedp.Evaluate(`Object.defineProperty(navigator, 'clipboard', { value: null });`, nil),
 		
+		// Initial wait for terminal to settle
+		chromedp.Sleep(5*time.Second),
+
 		// Wait for initial prompt
 		waitForTerminalText(sessionCtx, "sshterm>"),
 		
@@ -117,27 +121,27 @@ func main() {
 		
 		waitForTerminalText(sessionCtx, "testuser@x11-apps:~$"),
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			log.Println("Connected! Launching multiple X11 applications...")
+			log.Println("Connected! Launching multiple X11 applications with distinct positioning...")
 			return nil
 		}),
 
-		// Launch xeyes
-		insertText("xeyes &"),
+		// Launch xterm at top-left
+		insertText("xterm -geometry 80x24+0+0 -e top &"),
 		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
 		chromedp.Sleep(1*time.Second),
 
-		// Launch xclock
-		insertText("xclock &"),
+		// Launch xeyes to the right of xterm
+		insertText("xeyes -geometry 200x150+650+0 &"),
 		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
 		chromedp.Sleep(1*time.Second),
 
-		// Launch xmessage
-		insertText("xmessage 'SSH Term X11 Test Successful' &"),
+		// Launch xclock below xeyes
+		insertText("xclock -geometry 200x200+650+200 &"),
 		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
 		chromedp.Sleep(1*time.Second),
 
-		// Launch xterm
-		insertText("xterm -e top &"),
+		// Launch xmessage below xclock
+		insertText("xmessage -geometry +650+450 'SSH Term X11 Test Successful' &"),
 		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
 
 		logAction("Waiting for multiple X11 windows (canvases)..."),
