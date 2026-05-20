@@ -10,3 +10,4 @@ xterm.mjs
 js_tests/.npm-cache
 .gemini/
 /testserver
+tests/x11-standalone/*.png

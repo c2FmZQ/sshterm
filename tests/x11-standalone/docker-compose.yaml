@@ -1,0 +1,55 @@
+services:
+  chrome:
+    image: "chromedp/headless-shell:141.0.7390.37"
+    shm_size: "2gb"
+    command: [
+      "--ignore-certificate-errors",
+      "--disable-gpu",
+      "--disable-dev-shm-usage"
+    ]
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 5s
+      retries: 5
+      start_period: 5s
+
+  tlsproxy:
+    image: "c2fmzq/tlsproxy:v0.25.4"
+    hostname: tester
+    user: "0:0"
+    volumes:
+      - ./tlsproxy.yaml:/config.yaml:ro
+      - ../../docroot:/docroot:ro
+      - ./standalone.config.json:/docroot/tests.x11.config.json:ro
+    command: [
+      "--config=/config.yaml",
+      "--passphrase=test",
+      "--use-ephemeral-certificate-manager"
+    ]
+    depends_on:
+      x11-apps:
+        condition: service_started
+
+  tester:
+    image: golang:1.26
+    user: "${TEST_UID:-0}:${TEST_GID:-0}"
+    volumes:
+      - ../..:/src
+    working_dir: /src/tests/x11-standalone
+    command: >
+      bash -c "[ -f go.mod ] || go mod init x11-standalone;
+               go mod tidy &&
+               go run main.go --with-chromedp=ws://chrome:9222 --target-url=https://tester:8443/tests.html?x11"
+    depends_on:
+      chrome:
+        condition: service_healthy
+      tlsproxy:
+        condition: service_started
+    environment:
+      - CGO_ENABLED=0
+
+  x11-apps:
+    build:
+      context: .
+      dockerfile: Dockerfile.x11apps
+    hostname: x11-apps
