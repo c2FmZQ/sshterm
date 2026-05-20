@@ -99,8 +99,9 @@ func TestEventDelivery_ActivePointerGrab(t *testing.T) {
 
 	// Client 2 grabs the pointer on client 1's window
 	grabReq := &wire.GrabPointerRequest{
-		GrabWindow: wire.Window(windowID),
-		EventMask:  wire.ButtonPressMask,
+		GrabWindow:  wire.Window(windowID),
+		EventMask:   wire.ButtonPressMask,
+		PointerMode: wire.GrabModeAsync,
 	}
 	reply := server.handleGrabPointer(client2, grabReq, 1)
 	grabReply, ok := reply.(*wire.GrabPointerReply)
@@ -130,7 +131,10 @@ func TestEventDelivery_ActiveKeyboardGrab(t *testing.T) {
 	server.windows[windowID] = &window{xid: windowID, attributes: wire.WindowAttributes{EventMask: wire.KeyPressMask}}
 
 	// Client 2 grabs the keyboard on client 1's window
-	grabReq := &wire.GrabKeyboardRequest{GrabWindow: wire.Window(windowID)}
+	grabReq := &wire.GrabKeyboardRequest{
+		GrabWindow:   wire.Window(windowID),
+		KeyboardMode: wire.GrabModeAsync,
+	}
 	reply := server.handleGrabKeyboard(client2, grabReq, 1)
 	grabReply, ok := reply.(*wire.GrabKeyboardReply)
 	assert.True(t, ok)

@@ -346,8 +346,8 @@ const (
 
 // Grab Modes
 const (
-	GrabModeAsync byte = 0 // Asynchronous grab mode.
-	GrabModeSync  byte = 1 // Synchronous grab mode.
+	GrabModeSync  byte = 0 // Synchronous grab mode.
+	GrabModeAsync byte = 1 // Asynchronous grab mode.
 )
 
 // Grab Status Codes

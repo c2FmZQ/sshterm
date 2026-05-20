@@ -2863,7 +2863,7 @@ func (w *wasmX11Frontend) CreateCursorFromGlyph(cursorID xID, sourceFont xID, so
 	var style string
 	if font, ok := w.fonts[sourceFont]; ok && (font.x11Name == "cursor" || strings.Contains(font.x11Name, "cursor")) {
 		switch sourceChar {
-		case 152, 68: // XC_xterm
+		case 152: // XC_xterm
 			style = "text"
 		case 34: // XC_crosshair
 			style = "crosshair"

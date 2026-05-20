@@ -1658,7 +1658,7 @@ func (s *x11Server) isPointerEvent(event messageEncoder) bool {
 	case *wire.X11RawEvent:
 		if len(e.Data) > 0 {
 			switch e.Data[0] {
-			case 4, 5, 6: // ButtonPress, ButtonRelease, MotionNotify
+			case 4, 5, 6, 7, 8: // ButtonPress, ButtonRelease, MotionNotify, EnterNotify, LeaveNotify
 				return true
 			}
 		}
