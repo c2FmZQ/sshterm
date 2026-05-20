@@ -117,14 +117,32 @@ func main() {
 		
 		waitForTerminalText(sessionCtx, "testuser@x11-apps:~$"),
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			log.Println("Found shell prompt. Launching xeyes...")
+			log.Println("Connected! Launching multiple X11 applications...")
 			return nil
 		}),
+
+		// Launch xeyes
 		insertText("xeyes &"),
 		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
+		chromedp.Sleep(1*time.Second),
+
+		// Launch xclock
+		insertText("xclock &"),
+		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
+		chromedp.Sleep(1*time.Second),
+
+		// Launch xmessage
+		insertText("xmessage 'SSH Term X11 Test Successful' &"),
+		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
+		chromedp.Sleep(1*time.Second),
+
+		// Launch xterm
+		insertText("xterm -e top &"),
+		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
+
+		logAction("Waiting for multiple X11 windows (canvases)..."),
+		waitForCanvases(4),
 		
-		logAction("Waiting for X11 canvas..."),
-		chromedp.WaitVisible("canvas", chromedp.ByQuery),
 		chromedp.Sleep(5*time.Second),
 		chromedp.CaptureScreenshot(&buf),
 	)
@@ -138,7 +156,7 @@ func main() {
 					try {
 						if (window.sshApp && window.sshApp.term) {
 							const term = window.sshApp.term;
-							let s = "";
+							let s = "Buffer length: " + term.buffer.active.length + "\n";
 							for (let i = 0; i < term.buffer.active.length; i++) {
 								const line = term.buffer.active.getLine(i);
 								if (line) s += line.translateToString() + "\n";
@@ -171,6 +189,27 @@ func logAction(s string) chromedp.Action {
 
 func insertText(s string) chromedp.Action {
 	return chromedp.Evaluate(fmt.Sprintf(`document.execCommand('insertText', false, %q)`, s), nil)
+}
+
+func waitForCanvases(n int) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		for {
+			var count int
+			err := chromedp.Evaluate(`document.querySelectorAll('canvas').length`, &count).Do(ctx)
+			if err != nil {
+				return err
+			}
+			if count >= n {
+				log.Printf("Found %d canvases!", count)
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(1 * time.Second):
+			}
+		}
+	})
 }
 
 func waitForTerminalText(ctx context.Context, text string) chromedp.Action {
