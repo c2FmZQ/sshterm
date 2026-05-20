@@ -2871,21 +2871,21 @@ func (w *wasmX11Frontend) CreateCursorFromGlyph(cursorID xID, sourceFont xID, so
 			style = "pointer"
 		case 52: // XC_fleur
 			style = "move"
-		case 138, 94: // XC_right_ptr
+		case 94: // XC_right_ptr
 			style = "pointer"
-		case 150, 108, 32: // XC_watch, XC_clock
+		case 150, 26: // XC_watch, XC_clock
 			style = "wait"
-		case 116, 118: // XC_sb_h_double_arrow
+		case 108: // XC_sb_h_double_arrow
 			style = "ew-resize"
-		case 120, 114: // XC_sb_v_double_arrow
+		case 116: // XC_sb_v_double_arrow
 			style = "ns-resize"
 		case 68: // XC_left_ptr
 			style = "default"
-		case 22: // XC_bottom_left_corner
+		case 12: // XC_bottom_left_corner
 			style = "sw-resize"
-		case 24: // XC_bottom_right_corner
+		case 14: // XC_bottom_right_corner
 			style = "se-resize"
-		case 26: // XC_bottom_side
+		case 16: // XC_bottom_side
 			style = "s-resize"
 		case 70: // XC_left_side
 			style = "w-resize"
@@ -2901,12 +2901,10 @@ func (w *wasmX11Frontend) CreateCursorFromGlyph(cursorID xID, sourceFont xID, so
 			style = "help"
 		case 128: // XC_target
 			style = "crosshair"
-		case 38: // XC_cross
+		case 30: // XC_cross
 			style = "crosshair"
 		case 90: // XC_plus
 			style = "copy"
-		case 150: // XC_watch
-			style = "wait"
 		case 106: // XC_sb_down_arrow
 			style = "s-resize"
 		case 110: // XC_sb_left_arrow
