@@ -2674,7 +2674,20 @@ func (w *wasmX11Frontend) QueryBestSize(class byte, drawable xID, width, height 
 		Type: "queryBestSize",
 		Args: []any{class, uint32(drawable), width, height},
 	})
-	// For now, just return the requested size. This is a simplification.
+	switch class {
+	case 0: // Cursor
+		if width >= 64 && height >= 64 {
+			return 64, 64
+		}
+		if width >= 32 && height >= 32 {
+			return 32, 32
+		}
+		return 16, 16
+	case 1, 2: // Tile, Stipple
+		// For tiles and stipples, we can handle any size, but powers of 2 are preferred.
+		// For now just return the requested size.
+		return width, height
+	}
 	return width, height
 }
 
@@ -2843,34 +2856,76 @@ func (w *wasmX11Frontend) CreateCursor(cursorID xID, source, mask xID, foreColor
 }
 
 
-func (w *wasmX11Frontend) CreateCursorFromGlyph(cursorID uint32, glyphID uint16) {
-	debugf("X11: createCursorFromGlyph cursorID=%d glyphID=%d", cursorID, glyphID)
-	// This is a simplified mapping from X11 cursor font glyphs to CSS cursor styles.
+func (w *wasmX11Frontend) CreateCursorFromGlyph(cursorID xID, sourceFont xID, sourceChar uint16, maskFont xID, maskChar uint16, foreColor, backColor [3]uint16) {
+	debugf("X11: createCursorFromGlyph cursorID=%d sourceFont=%d sourceChar=%d", cursorID, sourceFont, sourceChar)
+
+	// Try to map to standard CSS cursors if it's the "cursor" font
 	var style string
-	switch glyphID {
-	case 68: // XC_xterm
-		style = "text"
-	case 34: // XC_crosshair
-		style = "crosshair"
-	case 58: // XC_hand1
-		style = "pointer"
-	case 52: // XC_fleur
-		style = "move"
-	case 138: // XC_right_ptr
-		style = "pointer"
-	case 108: // XC_watch
-		style = "wait"
-	case 118: // XC_sb_h_double_arrow
-		style = "ew-resize"
-	case 120: // XC_sb_v_double_arrow
-		style = "ns-resize"
-	default:
+	if font, ok := w.fonts[sourceFont]; ok && (font.x11Name == "cursor" || strings.Contains(font.x11Name, "cursor")) {
+		switch sourceChar {
+		case 152, 68: // XC_xterm
+			style = "text"
+		case 34: // XC_crosshair
+			style = "crosshair"
+		case 58, 60: // XC_hand1, XC_hand2
+			style = "pointer"
+		case 52: // XC_fleur
+			style = "move"
+		case 138, 94: // XC_right_ptr
+			style = "pointer"
+		case 150, 108, 32: // XC_watch, XC_clock
+			style = "wait"
+		case 116, 118: // XC_sb_h_double_arrow
+			style = "ew-resize"
+		case 120, 114: // XC_sb_v_double_arrow
+			style = "ns-resize"
+		case 68: // XC_left_ptr
+			style = "default"
+		case 22: // XC_bottom_left_corner
+			style = "sw-resize"
+		case 24: // XC_bottom_right_corner
+			style = "se-resize"
+		case 26: // XC_bottom_side
+			style = "s-resize"
+		case 70: // XC_left_side
+			style = "w-resize"
+		case 96: // XC_right_side
+			style = "e-resize"
+		case 134: // XC_top_left_corner
+			style = "nw-resize"
+		case 136: // XC_top_right_corner
+			style = "ne-resize"
+		case 138: // XC_top_side
+			style = "n-resize"
+		case 92: // XC_question_arrow
+			style = "help"
+		case 128: // XC_target
+			style = "crosshair"
+		case 38: // XC_cross
+			style = "crosshair"
+		case 90: // XC_plus
+			style = "copy"
+		case 150: // XC_watch
+			style = "wait"
+		case 106: // XC_sb_down_arrow
+			style = "s-resize"
+		case 110: // XC_sb_left_arrow
+			style = "w-resize"
+		case 112: // XC_sb_right_arrow
+			style = "e-resize"
+		case 114: // XC_sb_up_arrow
+			style = "n-resize"
+		default:
+			style = "default"
+		}
+	} else {
 		style = "default"
 	}
-	w.cursorStyles[cursorID] = &cursorInfo{style: style}
+
+	w.cursorStyles[uint32(cursorID)] = &cursorInfo{style: style}
 	w.recordOperation(CanvasOperation{
 		Type: "createCursorFromGlyph",
-		Args: []any{cursorID, glyphID},
+		Args: []any{uint32(cursorID), uint32(sourceFont), sourceChar, uint32(maskFont), maskChar},
 	})
 }
 
@@ -2945,12 +3000,23 @@ func (w *wasmX11Frontend) GetFocusWindow(clientID uint32) xID {
 
 
 func (w *wasmX11Frontend) GrabKeyboard(grabWindow xID, ownerEvents bool, time uint32, pointerMode, keyboardMode byte) byte {
-	debugf("X11: GrabKeyboard (not implemented)")
+	debugf("X11: GrabKeyboard window=%d", grabWindow)
+	if win, ok := w.windows[grabWindow]; ok {
+		win.canvas.Call("focus")
+	}
+	w.recordOperation(CanvasOperation{
+		Type: "grabKeyboard",
+		Args: []any{uint32(grabWindow), ownerEvents, time, pointerMode, keyboardMode},
+	})
 	return 0 // Success
 }
 
 func (w *wasmX11Frontend) UngrabKeyboard(time uint32) {
-	debugf("X11: UngrabKeyboard (not implemented)")
+	debugf("X11: UngrabKeyboard")
+	w.recordOperation(CanvasOperation{
+		Type: "ungrabKeyboard",
+		Args: []any{time},
+	})
 }
 
 func (w *wasmX11Frontend) initDefaultCursors() {

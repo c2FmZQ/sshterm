@@ -192,6 +192,17 @@ type MockX11Frontend struct {
 	ChangePointerControlCalls       [][]any
 	GrabPointerCalls                []*grabPointerCall
 	UngrabPointerCalls              []uint32
+	CreateCursorFromGlyphCalls      []*createCursorFromGlyphCall
+}
+
+type createCursorFromGlyphCall struct {
+	cursorID   xID
+	sourceFont xID
+	sourceChar uint16
+	maskFont   xID
+	maskChar   uint16
+	foreColor  [3]uint16
+	backColor  [3]uint16
 }
 
 type grabPointerCall struct {
@@ -428,7 +439,9 @@ func (m *MockX11Frontend) CopyPixmap(srcID, dstID, gcID xID, srcX, srcY, width, 
 func (m *MockX11Frontend) CreateCursor(cursorID xID, source, mask xID, foreColor, backColor [3]uint16, x, y uint16) {
 }
 
-func (m *MockX11Frontend) CreateCursorFromGlyph(cursorID uint32, glyphID uint16) {}
+func (m *MockX11Frontend) CreateCursorFromGlyph(cursorID xID, sourceFont xID, sourceChar uint16, maskFont xID, maskChar uint16, foreColor, backColor [3]uint16) {
+	m.CreateCursorFromGlyphCalls = append(m.CreateCursorFromGlyphCalls, &createCursorFromGlyphCall{cursorID, sourceFont, sourceChar, maskFont, maskChar, foreColor, backColor})
+}
 
 func (m *MockX11Frontend) SetWindowCursor(windowID xID, cursorID xID) {}
 

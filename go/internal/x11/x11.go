@@ -93,7 +93,7 @@ type X11FrontendAPI interface {
 	FreePixmap(xid xID)
 	CopyPixmap(srcID, dstID, gcID xID, srcX, srcY, width, height, dstX, dstY uint32)
 	CreateCursor(cursorID xID, source, mask xID, foreColor, backColor [3]uint16, x, y uint16)
-	CreateCursorFromGlyph(cursorID uint32, glyphID uint16)
+	CreateCursorFromGlyph(cursorID xID, sourceFont xID, sourceChar uint16, maskFont xID, maskChar uint16, foreColor, backColor [3]uint16)
 	SetWindowCursor(windowID xID, cursorID xID)
 	CopyGC(srcGC, dstGC xID)
 	FreeGC(gc xID)
@@ -281,6 +281,16 @@ type x11Server struct {
 	motionEvents          []motionEvent
 	pressedKeys           map[byte]bool
 	dirtyDrawables        map[xID]bool
+
+	pointerFrozen      bool
+	keyboardFrozen     bool
+	pointerEventQueue  []queuedEvent
+	keyboardEventQueue []queuedEvent
+}
+
+type queuedEvent struct {
+	client *x11Client
+	event  messageEncoder
 }
 
 type requestHandler func(client *x11Client, req wire.Request, seq uint16) messageEncoder
@@ -1016,9 +1026,7 @@ func (s *x11Server) sendXInput2RawEvent(client *x11Client, evType uint16, device
 		RawValues:      values, // Assuming raw == relative for virtual device
 	}
 
-	if err := client.send(event); err != nil {
-		debugf("X11: Failed to write XInput2 raw event: %v", err)
-	}
+	s.sendEvent(client, event)
 }
 
 func (s *x11Server) sendXInput2MouseEvent(client *x11Client, evType uint16, deviceID byte, button byte, eventWindowID uint32, x, y int32, state uint16) {
@@ -1084,9 +1092,7 @@ func (s *x11Server) sendXInput2MouseEvent(client *x11Client, evType uint16, devi
 	// XIDeviceEvent.EncodeMessage returns the full packet including the GenericEvent header.
 	// client.send calls EncodeMessage, so we can pass the event directly.
 
-	if err := client.send(event); err != nil {
-		debugf("X11: Failed to write XInput2 mouse event: %v", err)
-	}
+	s.sendEvent(client, event)
 }
 
 func (s *x11Server) sendXInput2KeyboardEvent(client *x11Client, evType uint16, deviceID byte, keycode byte, eventWindowID uint32, state uint16) {
@@ -1136,9 +1142,7 @@ func (s *x11Server) sendXInput2KeyboardEvent(client *x11Client, evType uint16, d
 		Group:     wire.GroupInfo{},
 	}
 
-	if err := client.send(event); err != nil {
-		debugf("X11: Failed to write XInput2 keyboard event: %v", err)
-	}
+	s.sendEvent(client, event)
 }
 
 func (s *x11Server) sendCoreMouseEvent(client *x11Client, eventType string, button byte, eventWindowID uint32, x, y int32, state uint16) {
@@ -1193,9 +1197,7 @@ func (s *x11Server) sendCoreMouseEvent(client *x11Client, eventType string, butt
 		debugf("X11: Unknown mouse event type: %s", eventType)
 		return
 	}
-	if err := client.send(event); err != nil {
-		debugf("X11: Failed to write mouse event: %v", err)
-	}
+	s.sendEvent(client, event)
 }
 
 func (s *x11Server) sendXInputMouseEvent(client *x11Client, eventType string, deviceID, button byte, eventWindowID uint32, x, y int32, state uint16) {
@@ -1236,12 +1238,9 @@ func (s *x11Server) sendXInputMouseEvent(client *x11Client, eventType string, de
 	}
 
 	if xiEvent != nil {
-		if err := client.send(xiEvent); err != nil {
-			debugf("X11: Failed to write XInput mouse event: %v", err)
-		}
+		s.sendEvent(client, xiEvent)
 	}
 }
-
 func (s *x11Server) SendKeyboardEvent(xid xID, eventType string, code string, altKey, ctrlKey, shiftKey, metaKey bool) {
 	debugf("X11: SendKeyboardEvent xid=%d type=%s code=%s alt=%t ctrl=%t shift=%t meta=%t", xid, eventType, code, altKey, ctrlKey, shiftKey, metaKey)
 
@@ -1471,9 +1470,7 @@ func (s *x11Server) sendCoreKeyboardEvent(client *x11Client, eventType string, k
 		return
 	}
 
-	if err := client.send(event); err != nil {
-		debugf("X11: Failed to write keyboard event: %v", err)
-	}
+	s.sendEvent(client, event)
 }
 
 func (s *x11Server) sendXInputKeyboardEvent(client *x11Client, eventType string, keycode byte, eventWindowID uint32, state uint16) {
@@ -1514,12 +1511,9 @@ func (s *x11Server) sendXInputKeyboardEvent(client *x11Client, eventType string,
 	}
 
 	if xiEvent != nil {
-		if err := client.send(xiEvent); err != nil {
-			debugf("X11: Failed to write XInput keyboard event: %v", err)
-		}
+		s.sendEvent(client, xiEvent)
 	}
 }
-
 func (s *x11Server) SendPointerCrossingEvent(isEnter bool, xid xID, rootX, rootY, eventX, eventY int16, state uint16, mode, detail byte) {
 	client, ok := s.clients[((uint32(xid) >> resourceIDShift) & clientIDMask)]
 	if !ok {
@@ -1613,9 +1607,7 @@ func (s *x11Server) sendExposeEvent(windowID xID, x, y, width, height uint16) {
 		Count:    0, // count = 0, no more expose events to follow
 	}
 
-	if err := client.send(event); err != nil {
-		debugf("X11: Failed to write Expose event: %v", err)
-	}
+	s.sendEvent(client, event)
 }
 
 func (s *x11Server) SendClientMessageEvent(windowID xID, messageTypeAtom uint32, data [20]byte) {
@@ -1657,9 +1649,67 @@ func (s *x11Server) SendSelectionNotify(requestor xID, selection, target, proper
 	s.sendEvent(client, event)
 }
 
+func (s *x11Server) isPointerEvent(event messageEncoder) bool {
+	switch e := event.(type) {
+	case *wire.ButtonPressEvent, *wire.ButtonReleaseEvent, *wire.MotionNotifyEvent,
+		*wire.EnterNotifyEvent, *wire.LeaveNotifyEvent,
+		*wire.DeviceButtonPressEvent, *wire.DeviceButtonReleaseEvent, *wire.DeviceMotionNotifyEvent:
+		return true
+	case *wire.X11RawEvent:
+		if len(e.Data) > 0 {
+			switch e.Data[0] {
+			case 4, 5, 6: // ButtonPress, ButtonRelease, MotionNotify
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *x11Server) isKeyboardEvent(event messageEncoder) bool {
+	switch e := event.(type) {
+	case *wire.KeyEvent, *wire.DeviceKeyPressEvent, *wire.DeviceKeyReleaseEvent:
+		return true
+	case *wire.X11RawEvent:
+		if len(e.Data) > 0 {
+			switch e.Data[0] {
+			case 2, 3: // KeyPress, KeyRelease
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *x11Server) sendEvent(client *x11Client, event messageEncoder) {
+	if s.pointerFrozen && s.isPointerEvent(event) {
+		s.pointerEventQueue = append(s.pointerEventQueue, queuedEvent{client: client, event: event})
+		return
+	}
+	if s.keyboardFrozen && s.isKeyboardEvent(event) {
+		s.keyboardEventQueue = append(s.keyboardEventQueue, queuedEvent{client: client, event: event})
+		return
+	}
 	if err := client.send(event); err != nil {
 		s.logger.Errorf("Failed to write event: %v", err)
+	}
+}
+
+func (s *x11Server) flushPointerEvents() {
+	s.pointerFrozen = false
+	queue := s.pointerEventQueue
+	s.pointerEventQueue = nil
+	for _, qe := range queue {
+		s.sendEvent(qe.client, qe.event)
+	}
+}
+
+func (s *x11Server) flushKeyboardEvents() {
+	s.keyboardFrozen = false
+	queue := s.keyboardEventQueue
+	s.keyboardEventQueue = nil
+	for _, qe := range queue {
+		s.sendEvent(qe.client, qe.event)
 	}
 }
 

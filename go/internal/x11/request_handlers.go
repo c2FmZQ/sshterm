@@ -929,6 +929,13 @@ func (s *x11Server) handleGrabPointer(client *x11Client, req wire.Request, seq u
 	s.pointerGrabConfineTo = xID(p.ConfineTo)
 	s.pointerGrabCursor = xID(p.Cursor)
 
+	if p.PointerMode == wire.GrabModeSync {
+		s.pointerFrozen = true
+	}
+	if p.KeyboardMode == wire.GrabModeSync {
+		s.keyboardFrozen = true
+	}
+
 	if p.Cursor != 0 {
 		s.frontend.SetWindowCursor(grabWindow, s.pointerGrabCursor)
 	}
@@ -966,6 +973,7 @@ func (s *x11Server) handleUngrabPointer(client *x11Client, req wire.Request, seq
 	s.keyboardGrabMode = 0
 	s.pointerGrabConfineTo = 0
 	s.pointerGrabCursor = 0
+	s.flushPointerEvents()
 	s.frontend.UngrabPointer(uint32(p.Time))
 	return nil
 }
@@ -1056,6 +1064,13 @@ func (s *x11Server) handleGrabKeyboard(client *x11Client, req wire.Request, seq 
 	s.keyboardGrabMode = p.KeyboardMode
 	s.pointerGrabMode = p.PointerMode
 
+	if p.PointerMode == wire.GrabModeSync {
+		s.pointerFrozen = true
+	}
+	if p.KeyboardMode == wire.GrabModeSync {
+		s.keyboardFrozen = true
+	}
+
 	return &wire.GrabKeyboardReply{
 		Sequence: seq,
 		Status:   wire.GrabSuccess,
@@ -1073,6 +1088,7 @@ func (s *x11Server) handleUngrabKeyboard(client *x11Client, req wire.Request, se
 	s.keyboardGrabOwner = false
 	s.keyboardGrabTime = 0
 	s.keyboardGrabMode = 0
+	s.flushKeyboardEvents()
 	return nil
 }
 
@@ -1114,6 +1130,34 @@ func (s *x11Server) handleUngrabKey(client *x11Client, req wire.Request, seq uin
 
 func (s *x11Server) handleAllowEvents(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.AllowEventsRequest)
+	debugf("X11: handleAllowEvents mode=%d time=%d", p.Mode, p.Time)
+
+	switch p.Mode {
+	case wire.AsyncPointer:
+		s.flushPointerEvents()
+	case wire.SyncPointer:
+		// TODO: Full implementation of SyncPointer
+		s.flushPointerEvents()
+	case wire.ReplayPointer:
+		// TODO: Full implementation of ReplayPointer
+		s.flushPointerEvents()
+	case wire.AsyncKeyboard:
+		s.flushKeyboardEvents()
+	case wire.SyncKeyboard:
+		// TODO: Full implementation of SyncKeyboard
+		s.flushKeyboardEvents()
+	case wire.ReplayKeyboard:
+		// TODO: Full implementation of ReplayKeyboard
+		s.flushKeyboardEvents()
+	case wire.AsyncBoth:
+		s.flushPointerEvents()
+		s.flushKeyboardEvents()
+	case wire.SyncBoth:
+		// TODO: Full implementation of SyncBoth
+		s.flushPointerEvents()
+		s.flushKeyboardEvents()
+	}
+
 	s.frontend.AllowEvents(client.id, p.Mode, uint32(p.Time))
 	return nil
 }
@@ -2484,7 +2528,7 @@ func (s *x11Server) handleCreateGlyphCursor(client *x11Client, req wire.Request,
 	}
 
 	s.cursors[xID(p.Cid)] = true
-	s.frontend.CreateCursorFromGlyph(uint32(p.Cid), p.SourceChar)
+	s.frontend.CreateCursorFromGlyph(xID(p.Cid), xID(p.SourceFont), p.SourceChar, xID(p.MaskFont), p.MaskChar, p.ForeColor, p.BackColor)
 	return nil
 }
 

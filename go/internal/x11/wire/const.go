@@ -132,6 +132,17 @@ const (
 )
 
 const (
+	AsyncPointer   = 0
+	SyncPointer    = 1
+	ReplayPointer  = 2
+	AsyncKeyboard  = 3
+	SyncKeyboard   = 4
+	ReplayKeyboard = 5
+	AsyncBoth      = 6
+	SyncBoth       = 7
+)
+
+const (
 	// XInputExtensionName is the name of the XInput extension.
 	XInputExtensionName = "XInputExtension"
 )
@@ -335,8 +346,8 @@ const (
 
 // Grab Modes
 const (
-	GrabModeSync  byte = 0 // Synchronous grab mode.
-	GrabModeAsync byte = 1 // Asynchronous grab mode.
+	GrabModeAsync byte = 0 // Asynchronous grab mode.
+	GrabModeSync  byte = 1 // Synchronous grab mode.
 )
 
 // Grab Status Codes
