@@ -123,7 +123,6 @@ func TestXIQueryPointer_DeepTraversal(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XIQueryPointer}
-	wire.ExpectReply(2, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	assert.NoError(t, err, "Failed to parse XIQueryPointerReply")
 	queryReply, ok := replyMsg.(*wire.XIQueryPointerReply)
@@ -233,7 +232,6 @@ func TestSetDeviceModifierMappingRequest(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XSetDeviceModifierMapping}
-	wire.ExpectReply(2, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	if assert.NoError(t, err, "Failed to parse SetDeviceModifierMappingReply") {
 		modReply, ok := replyMsg.(*wire.SetDeviceModifierMappingReply)
@@ -263,7 +261,6 @@ func TestSetDeviceButtonMappingRequest(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XSetDeviceButtonMapping}
-	wire.ExpectReply(2, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	assert.NoError(t, err, "Failed to parse SetDeviceButtonMappingReply")
 	buttonReply, ok := replyMsg.(*wire.SetDeviceButtonMappingReply)
@@ -290,7 +287,6 @@ func TestGetFeedbackControlRequest(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XGetFeedbackControl}
-	wire.ExpectReply(2, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	assert.NoError(t, err, "Failed to parse GetFeedbackControlReply")
 	_, ok := replyMsg.(*wire.GetFeedbackControlReply)
@@ -317,7 +313,6 @@ func TestGetDeviceKeyMappingRequest(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XGetDeviceKeyMapping}
-	wire.ExpectReply(2, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	assert.NoError(t, err, "Failed to parse GetDeviceKeyMappingReply")
 	getReply, ok := replyMsg.(*wire.GetDeviceKeyMappingReply)
@@ -346,7 +341,6 @@ func TestGetDeviceModifierMappingRequest(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XGetDeviceModifierMapping}
-	wire.ExpectReply(2, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	assert.NoError(t, err, "Failed to parse GetDeviceModifierMappingReply")
 	_, ok := replyMsg.(*wire.GetDeviceModifierMappingReply)
@@ -371,7 +365,6 @@ func TestGetDeviceButtonMappingRequest(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XGetDeviceButtonMapping}
-	wire.ExpectReply(2, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	assert.NoError(t, err, "Failed to parse GetDeviceButtonMappingReply")
 	_, ok := replyMsg.(*wire.GetDeviceButtonMappingReply)
@@ -396,7 +389,6 @@ func TestQueryDeviceStateRequest(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XQueryDeviceState}
-	wire.ExpectReply(2, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	assert.NoError(t, err, "Failed to parse QueryDeviceStateReply")
 	_, ok := replyMsg.(*wire.QueryDeviceStateReply)
@@ -429,7 +421,6 @@ func TestGetSetDeviceFocusRequest(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XGetDeviceFocus}
-	wire.ExpectReply(3, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	assert.NoError(t, err, "Failed to parse GetDeviceFocusReply")
 	focusReply, ok := replyMsg.(*wire.GetDeviceFocusReply)

@@ -41,7 +41,6 @@ func TestXIGrabDeviceRequest(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XIGrabDevice}
-	wire.ExpectReply(2, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	assert.NoError(t, err, "Failed to parse XIGrabDeviceReply")
 	grabReply, ok := replyMsg.(*wire.XIGrabDeviceReply)
@@ -107,7 +106,6 @@ func TestXIPassiveGrabDeviceRequest(t *testing.T) {
 	clientBuffer.Write(encodedReply)
 
 	opcodes := wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XIPassiveGrabDevice}
-	wire.ExpectReply(2, opcodes)
 	replyMsg, err := wire.ParseReply(opcodes, clientBuffer.Bytes(), client.byteOrder)
 	assert.NoError(t, err, "Failed to parse XIPassiveGrabDeviceReply")
 

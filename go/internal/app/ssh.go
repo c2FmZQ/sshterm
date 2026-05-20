@@ -150,7 +150,7 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 		}{
 			SingleConnection:       false,
 			AuthenticationProtocol: "MIT-MAGIC-COOKIE-1",
-			AuthenticationCookie:   hex.EncodeToString(cookie),
+			AuthenticationCookie:   string(cookie),
 			ScreenNumber:           0,
 		}
 		logger := &termLogger{t}

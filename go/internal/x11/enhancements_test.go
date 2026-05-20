@@ -358,6 +358,5 @@ func TestCopyColormapAndFree(t *testing.T) {
 // Helper to decode a single message from a buffer for testing replies.
 func decodeSingleReply(t *testing.T, buffer *bytes.Buffer, order binary.ByteOrder, seq uint16, opcodes wire.Opcodes) (wire.ServerMessage, error) {
 	t.Helper()
-	wire.ExpectReply(seq, opcodes)
 	return wire.ParseReply(opcodes, buffer.Bytes(), order)
 }

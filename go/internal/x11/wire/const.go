@@ -361,7 +361,9 @@ const (
 
 // Window Classes
 const (
-	InputOutput = 1 // Window class InputOutput.
+	CopyFromParent = 0 // Window class CopyFromParent.
+	InputOutput    = 1 // Window class InputOutput.
+	InputOnly      = 2 // Window class InputOnly.
 )
 
 // Bit Gravity

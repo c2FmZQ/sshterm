@@ -21,7 +21,8 @@ func TestReadServerMessages(t *testing.T) {
 		Depth:    2,
 		Root:     3,
 	}
-	ExpectReply(1, Opcodes{Major: GetGeometry})
+	tracker := NewReplyTracker()
+	tracker.Expect(1, Opcodes{Major: GetGeometry})
 	buf.Write(reply.EncodeMessage(order))
 	// Write an event
 	event := &KeyEvent{
@@ -41,7 +42,7 @@ func TestReadServerMessages(t *testing.T) {
 	}
 	buf.Write(event.EncodeMessage(order))
 
-	ch := ReadServerMessages(buf, order)
+	ch := ReadServerMessagesWithTracker(buf, order, tracker)
 	msg1 := <-ch
 	if _, ok := msg1.(Error); !ok {
 		t.Errorf("expected Error, got %T", msg1)

@@ -23,9 +23,27 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 		return wire.NewGenericError(seq, uint32(p.Drawable), 0, wire.CreateWindow, wire.IDChoiceErrorCode)
 	}
 
+	parent, ok := s.windows[parentXID]
+	if !ok && uint32(parentXID) != s.rootWindowID() {
+		return wire.NewGenericError(seq, uint32(p.Parent), 0, wire.CreateWindow, wire.WindowErrorCode)
+	}
+
+	effectiveClass := uint32(p.Class)
+	if effectiveClass == 0 { // CopyFromParent
+		if parent != nil {
+			effectiveClass = parent.attributes.Class
+		} else {
+			effectiveClass = wire.InputOutput
+		}
+	}
+
+	if parent != nil && parent.attributes.Class == wire.InputOnly && effectiveClass == wire.InputOutput {
+		return wire.NewGenericError(seq, 0, 0, wire.CreateWindow, wire.MatchErrorCode)
+	}
+
 	effectiveVisual := uint32(p.Visual)
 	if effectiveVisual == 0 {
-		if parent, ok := s.windows[parentXID]; ok {
+		if parent != nil {
 			effectiveVisual = parent.visual
 		} else if uint32(parentXID) == s.rootWindowID() {
 			effectiveVisual = s.rootVisual.VisualID
@@ -33,33 +51,40 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 	}
 
 	newWindow := &window{
-		xid:        xid,
-		parent:     parentXID,
-		x:          p.X,
-		y:          p.Y,
-		width:      p.Width,
-		height:     p.Height,
-		depth:      p.Depth,
-		children:   []xID{},
-		attributes: p.Values,
-		visual:     effectiveVisual,
+		xid:         xid,
+		parent:      parentXID,
+		x:           p.X,
+		y:           p.Y,
+		width:       p.Width,
+		height:      p.Height,
+		borderWidth: p.BorderWidth,
+		depth:       p.Depth,
+		children:    []xID{},
+		attributes:  p.Values,
+		visual:      effectiveVisual,
 	}
-	if p.Values.Colormap > 0 {
+	newWindow.attributes.Class = effectiveClass
+
+	if p.ValueMask&wire.CWColormap != 0 {
 		if cm, ok := s.colormaps[xID(p.Values.Colormap)]; !ok {
 			return wire.NewGenericError(seq, uint32(p.Values.Colormap), 0, wire.CreateWindow, wire.ColormapErrorCode)
 		} else if cm.visual.VisualID != effectiveVisual {
 			return wire.NewGenericError(seq, 0, 0, wire.CreateWindow, wire.MatchErrorCode)
 		}
 		newWindow.colormap = xID(p.Values.Colormap)
+	} else if parent != nil {
+		newWindow.colormap = parent.colormap
+		newWindow.attributes.Colormap = wire.Colormap(parent.colormap)
 	} else {
 		newWindow.colormap = xID(s.defaultColormap)
+		newWindow.attributes.Colormap = wire.Colormap(s.defaultColormap)
 	}
 	s.windows[xid] = newWindow
 	s.windowStack = append(s.windowStack, xid)
 
 	// Add to parent's children list
-	if parentWindow, ok := s.windows[parentXID]; ok {
-		parentWindow.children = append(parentWindow.children, xid)
+	if parent != nil {
+		parent.children = append(parent.children, xid)
 	}
 	s.frontend.CreateWindow(xid, uint32(p.Parent), uint32(p.X), uint32(p.Y), uint32(p.Width), uint32(p.Height), uint32(p.Depth), p.ValueMask, p.Values)
 	return nil
@@ -138,24 +163,45 @@ func (s *x11Server) handleGetWindowAttributes(client *x11Client, req wire.Reques
 	if err := s.checkWindow(xid, seq, wire.GetWindowAttributes, 0); err != nil {
 		return err
 	}
-	attrs, _ := s.GetWindowAttributes(xid)
+	w, ok := s.windows[xid]
+	if !ok {
+		// Handle root window
+		return &wire.GetWindowAttributesReply{
+			Sequence:         seq,
+			BackingStore:     0,
+			VisualID:         s.rootVisual.VisualID,
+			Class:            uint16(wire.InputOutput),
+			BitGravity:       0,
+			WinGravity:       0,
+			BackingPlanes:    0,
+			BackingPixel:     0,
+			SaveUnder:        0,
+			MapIsInstalled:   1,
+			MapState:         2, // Viewable
+			OverrideRedirect: 0,
+			Colormap:         uint32(s.defaultColormap),
+			AllEventMasks:    0,
+			YourEventMask:    0,
+			DoNotPropagateMask: 0,
+		}
+	}
 	return &wire.GetWindowAttributesReply{
 		Sequence:           seq,
-		BackingStore:       byte(attrs.BackingStore),
-		VisualID:           s.visualID,
-		Class:              uint16(attrs.Class),
-		BitGravity:         byte(attrs.BitGravity),
-		WinGravity:         byte(attrs.WinGravity),
-		BackingPlanes:      attrs.BackingPlanes,
-		BackingPixel:       attrs.BackingPixel,
-		SaveUnder:          wire.BoolToByte(attrs.SaveUnder),
-		MapIsInstalled:     wire.BoolToByte(attrs.MapIsInstalled),
-		MapState:           byte(attrs.MapState),
-		OverrideRedirect:   wire.BoolToByte(attrs.OverrideRedirect),
-		Colormap:           uint32(attrs.Colormap),
-		AllEventMasks:      attrs.EventMask,
-		YourEventMask:      attrs.EventMask,
-		DoNotPropagateMask: uint16(attrs.DontPropagateMask),
+		BackingStore:       byte(w.attributes.BackingStore),
+		VisualID:           w.visual,
+		Class:              uint16(w.attributes.Class),
+		BitGravity:         byte(w.attributes.BitGravity),
+		WinGravity:         byte(w.attributes.WinGravity),
+		BackingPlanes:      w.attributes.BackingPlanes,
+		BackingPixel:       w.attributes.BackingPixel,
+		SaveUnder:          wire.BoolToByte(w.attributes.SaveUnder),
+		MapIsInstalled:     wire.BoolToByte(w.attributes.MapIsInstalled),
+		MapState:           w.mapState(),
+		OverrideRedirect:   wire.BoolToByte(w.attributes.OverrideRedirect),
+		Colormap:           uint32(w.attributes.Colormap),
+		AllEventMasks:      w.attributes.EventMask,
+		YourEventMask:      w.attributes.EventMask,
+		DoNotPropagateMask: uint16(w.attributes.DontPropagateMask),
 	}
 }
 
@@ -171,9 +217,7 @@ func (s *x11Server) handleDestroyWindow(client *x11Client, req wire.Request, seq
 	if err := s.checkClientID(xid, client, seq, wire.DestroyWindow, 0); err != nil {
 		return err
 	}
-	delete(s.windows, xid)
-	s.removeWindowFromStack(xid)
-	s.frontend.DestroyWindow(xid)
+	s.destroyWindow(xid, true)
 	return nil
 }
 
@@ -187,17 +231,10 @@ func (s *x11Server) handleDestroySubwindows(client *x11Client, req wire.Request,
 		return err
 	}
 	if parent, ok := s.windows[xid]; ok {
-		var destroy func(xID)
-		destroy = func(windowID xID) {
-			if w, ok := s.windows[windowID]; ok {
-				for _, child := range w.children {
-					destroy(child)
-				}
-				delete(s.windows, windowID)
-			}
-		}
-		for _, child := range parent.children {
-			destroy(child)
+		children := make([]xID, len(parent.children))
+		copy(children, parent.children)
+		for _, childID := range children {
+			s.destroyWindow(childID, false)
 		}
 		parent.children = []xID{}
 	}
@@ -366,6 +403,30 @@ func (s *x11Server) handleConfigureWindow(client *x11Client, req wire.Request, s
 		return wire.NewGenericError(seq, uint32(p.Window), 0, wire.ConfigureWindow, wire.MatchErrorCode)
 	}
 
+	if w, ok := s.windows[xid]; ok {
+		valueIndex := 0
+		if (p.ValueMask & (1 << 0)) != 0 { // x
+			w.x = int16(p.Values[valueIndex])
+			valueIndex++
+		}
+		if (p.ValueMask & (1 << 1)) != 0 { // y
+			w.y = int16(p.Values[valueIndex])
+			valueIndex++
+		}
+		if (p.ValueMask & (1 << 2)) != 0 { // width
+			w.width = uint16(p.Values[valueIndex])
+			valueIndex++
+		}
+		if (p.ValueMask & (1 << 3)) != 0 { // height
+			w.height = uint16(p.Values[valueIndex])
+			valueIndex++
+		}
+		if (p.ValueMask & (1 << 4)) != 0 { // border-width
+			w.borderWidth = uint16(p.Values[valueIndex])
+			valueIndex++
+		}
+	}
+
 	if p.ValueMask&wire.CWStackMode != 0 {
 		var stackMode, sibling uint32
 		valueIndex := 0
@@ -507,7 +568,7 @@ func (s *x11Server) handleGetGeometry(client *x11Client, req wire.Request, seq u
 	if uint32(xid) == s.rootWindowID() {
 		return &wire.GetGeometryReply{
 			Sequence:    seq,
-			Depth:       24, // TODO: Get this from rootVisual or screen info
+			Depth:       s.rootVisual.Depth,
 			Root:        s.rootWindowID(),
 			X:           0,
 			Y:           0,
@@ -525,7 +586,7 @@ func (s *x11Server) handleGetGeometry(client *x11Client, req wire.Request, seq u
 			Y:           w.y,
 			Width:       w.width,
 			Height:      w.height,
-			BorderWidth: 0, // Border width is not stored in window struct, assuming 0 for now
+			BorderWidth: w.borderWidth,
 		}
 	}
 	if p, ok := s.pixmaps[xid]; ok {

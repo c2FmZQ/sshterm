@@ -36,6 +36,7 @@ type sshServer struct {
 	resourceIdMask uint32
 	rootWindowID   uint32
 	rootVisualID   uint32
+	x11ReplyTracker *wire.ReplyTracker
 }
 
 func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {

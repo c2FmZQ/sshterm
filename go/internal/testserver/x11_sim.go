@@ -47,6 +47,9 @@ func (s *sshServer) sendRequest(channel ssh.Channel, req EncodableRequest) (uint
 	}
 	s.clientSequence++
 	s.t.Logf("Sent X11 request %d (%d)", s.clientSequence, req.OpCode())
+	if s.x11ReplyTracker != nil {
+		s.x11ReplyTracker.Expect(s.clientSequence, wire.Opcodes{Major: req.OpCode()})
+	}
 	return s.clientSequence, nil
 }
 
@@ -335,7 +338,8 @@ func (s *sshServer) simulateX11Application(serverConn *ssh.ServerConn, authProto
 }
 
 func (s *sshServer) readReplies(channel ssh.Channel) <-chan wire.ServerMessage {
-	return wire.ReadServerMessages(channel, binary.LittleEndian)
+	s.x11ReplyTracker = wire.NewReplyTracker()
+	return wire.ReadServerMessagesWithTracker(channel, binary.LittleEndian, s.x11ReplyTracker)
 }
 
 func (s *sshServer) simulateXEyes(x11Channel ssh.Channel) {
@@ -914,7 +918,6 @@ func (s *sshServer) queryFont(channel ssh.Channel, fid uint32, replyChan <-chan 
 		Fid: wire.Font(fid),
 	}
 
-	wire.ExpectReply(s.clientSequence+1, wire.Opcodes{Major: req.OpCode()})
 	expectedSequence, err := s.sendRequest(channel, req)
 	if err != nil {
 		return fmt.Errorf("failed to write QueryFont request: %w", err)
@@ -977,7 +980,6 @@ func (s *sshServer) listFonts(channel ssh.Channel, maxNames uint16, pattern stri
 		Pattern:  pattern,
 	}
 
-	wire.ExpectReply(s.clientSequence+1, wire.Opcodes{Major: req.OpCode()})
 	if _, err := s.sendRequest(channel, req); err != nil {
 		return err
 	}
@@ -1060,7 +1062,6 @@ func (s *sshServer) allocNamedColor(channel ssh.Channel, cmap uint32, name strin
 		Name: []byte(name),
 	}
 
-	wire.ExpectReply(s.clientSequence+1, wire.Opcodes{Major: req.OpCode()})
 	expectedSequence, err := s.sendRequest(channel, req)
 	if err != nil {
 		return 0, 0, 0, 0, err
@@ -1090,7 +1091,6 @@ func (s *sshServer) allocColor(channel ssh.Channel, cmap uint32, red, green, blu
 		Blue:  blue,
 	}
 
-	wire.ExpectReply(s.clientSequence+1, wire.Opcodes{Major: req.OpCode()})
 	expectedSequence, err := s.sendRequest(channel, req)
 	if err != nil {
 		return 0, 0, 0, 0, err
@@ -1118,7 +1118,6 @@ func (s *sshServer) queryColors(channel ssh.Channel, cmap uint32, pixels []uint3
 		Pixels: pixels,
 	}
 
-	wire.ExpectReply(s.clientSequence+1, wire.Opcodes{Major: req.OpCode()})
 	expectedSequence, err := s.sendRequest(channel, req)
 	if err != nil {
 		return nil, err
@@ -1160,7 +1159,6 @@ func (s *sshServer) listInstalledColormaps(channel ssh.Channel, replyChan <-chan
 		Window: wire.Window(s.clientXID(1)), // dummy window
 	}
 
-	wire.ExpectReply(s.clientSequence+1, wire.Opcodes{Major: req.OpCode()})
 	expectedSequence, err := s.sendRequest(channel, req)
 	if err != nil {
 		return nil, err

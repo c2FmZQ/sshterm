@@ -169,6 +169,7 @@ type window struct {
 	parent                    xID
 	x, y                      int16
 	width, height             uint16
+	borderWidth               uint16
 	mapped                    bool
 	depth                     byte
 	children                  []xID
@@ -612,6 +613,33 @@ func (s *x11Server) GetWindowAttributes(xid xID) (wire.WindowAttributes, bool) {
 		return wire.WindowAttributes{}, false
 	}
 	return w.attributes, true
+}
+
+func (s *x11Server) destroyWindow(xid xID, removeFromParent bool) {
+	w, ok := s.windows[xid]
+	if !ok {
+		return
+	}
+
+	// Recursively destroy children
+	for _, childID := range w.children {
+		s.destroyWindow(childID, false)
+	}
+
+	if removeFromParent {
+		if parent, ok := s.windows[w.parent]; ok {
+			for i, childID := range parent.children {
+				if childID == xid {
+					parent.children = append(parent.children[:i], parent.children[i+1:]...)
+					break
+				}
+			}
+		}
+	}
+
+	delete(s.windows, xid)
+	s.removeWindowFromStack(xid)
+	s.frontend.DestroyWindow(xid)
 }
 
 func (s *x11Server) removeWindowFromStack(xid xID) {
@@ -2159,6 +2187,7 @@ func (s *x11Server) handshake(client *x11Client) {
 	for _, screen := range setup.Screens {
 		for _, depth := range screen.Depths {
 			for _, visual := range depth.Visuals {
+				visual.Depth = depth.Depth
 				s.visuals[visual.VisualID] = visual
 			}
 		}

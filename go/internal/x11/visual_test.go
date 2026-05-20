@@ -669,6 +669,7 @@ func TestVisualTypes(t *testing.T) {
 			for _, screen := range setup.Screens {
 				for _, depth := range screen.Depths {
 					for _, visual := range depth.Visuals {
+						visual.Depth = depth.Depth
 						s.visuals[visual.VisualID] = visual
 					}
 				}

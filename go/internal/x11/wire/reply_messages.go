@@ -15,20 +15,56 @@ type ServerMessage interface {
 	EncodeMessage(order binary.ByteOrder) []byte
 }
 
+// ReplyTracker tracks expected reply opcodes for a given sequence number.
+type ReplyTracker struct {
+	mu               sync.Mutex
+	sequenceToOpcode map[uint16]Opcodes
+}
+
+// NewReplyTracker creates a new ReplyTracker.
+func NewReplyTracker() *ReplyTracker {
+	return &ReplyTracker{
+		sequenceToOpcode: make(map[uint16]Opcodes),
+	}
+}
+
+// Expect registers an expected reply opcode for a given sequence number.
+func (rt *ReplyTracker) Expect(sequence uint16, opcodes Opcodes) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.sequenceToOpcode[sequence] = opcodes
+}
+
+func (rt *ReplyTracker) pop(sequence uint16) (Opcodes, bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	opcodes, ok := rt.sequenceToOpcode[sequence]
+	if ok {
+		delete(rt.sequenceToOpcode, sequence)
+	}
+	return opcodes, ok
+}
+
 var (
-	sequenceToOpcode = make(map[uint16]Opcodes)
-	seqMutex         sync.Mutex
+	defaultReplyTracker = NewReplyTracker()
 )
 
-// ExpectReply registers an expected reply opcode for a given sequence number.
+// ExpectReply registers an expected reply opcode for a given sequence number on the default tracker.
+// Deprecated: Use ReplyTracker.Expect instead.
 func ExpectReply(sequence uint16, opcodes Opcodes) {
-	seqMutex.Lock()
-	defer seqMutex.Unlock()
-	sequenceToOpcode[sequence] = opcodes
+	defaultReplyTracker.Expect(sequence, opcodes)
 }
 
 // ReadServerMessages reads messages from the X server connection and sends them to a channel.
+// It uses the default tracker for replies.
+// Deprecated: Use ReadServerMessagesWithTracker instead.
 func ReadServerMessages(conn io.Reader, order binary.ByteOrder) <-chan ServerMessage {
+	return ReadServerMessagesWithTracker(conn, order, defaultReplyTracker)
+}
+
+// ReadServerMessagesWithTracker reads messages from the X server connection and sends them to a channel.
+// It uses the provided tracker to match replies with their request opcodes.
+func ReadServerMessagesWithTracker(conn io.Reader, order binary.ByteOrder, tracker *ReplyTracker) <-chan ServerMessage {
 	ch := make(chan ServerMessage, 1)
 	go func() {
 		defer close(ch)
@@ -61,12 +97,7 @@ func ReadServerMessages(conn io.Reader, order binary.ByteOrder) <-chan ServerMes
 					debugf("X11: failed to read remaining server message: %v", err)
 					return
 				}
-				seqMutex.Lock()
-				opcodes, ok := sequenceToOpcode[sequenceNumber]
-				if ok {
-					delete(sequenceToOpcode, sequenceNumber)
-				}
-				seqMutex.Unlock()
+				opcodes, ok := tracker.pop(sequenceNumber)
 				if !ok {
 					debugf("X11: unknown sequence number %d", sequenceNumber)
 					continue
@@ -1514,6 +1545,7 @@ type VisualType struct {
 	RedMask         uint32 // Red mask
 	GreenMask       uint32 // Green mask
 	BlueMask        uint32 // Blue mask
+	Depth           byte   // Internal depth (not part of the wire protocol VISUALTYPE structure)
 }
 
 // NewDefaultSetup creates a default Setup structure.
