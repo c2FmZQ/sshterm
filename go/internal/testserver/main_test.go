@@ -51,6 +51,7 @@ import (
 
 	"github.com/chromedp/cdproto"
 	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/cdproto/webauthn"
 	"github.com/chromedp/chromedp"
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
@@ -177,15 +178,11 @@ func TestSSHTerm(t *testing.T) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		t.Logf("%s %s", req.Method, req.RequestURI)
 		w.Header().Set("Cache-Control", "no-store")
-		if req.URL.Path == "/tests.x11.config.json" || req.URL.Path == "/tests.real.config.json" {
+		if req.URL.Path == "/tests.x11.config.json" {
 			b, err := os.ReadFile(filepath.Join(*docRoot, "tests.x11.config.json"))
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
-			}
-			if req.URL.Path == "/tests.real.config.json" {
-				b = bytes.Replace(b, []byte(`"hostname": "test-server"`), []byte(`"hostname": "x11-apps.local"`), 1)
-				b = bytes.Replace(b, []byte(`"hostnames": [ "test-server" ]`), []byte(`"hostnames": [ "x11-apps.local" ]`), 1)
 			}
 			key := bytes.TrimSpace(ssh.MarshalAuthorizedKey(sshServerWithCert.pubKey))
 			w.Header().Set("content-type", "application/json")
@@ -266,6 +263,85 @@ func TestSSHTerm(t *testing.T) {
 		}
 		fmt.Fprintf(os.Stderr, "console.%s: %s\n", ev.Type, strings.Join(parts, " "))
 	}
+
+	t.Run("WASM App Tests", func(t *testing.T) {
+		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancel()
+		ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
+		defer cancel()
+
+		ctx, cancel = chromedp.NewContext(ctx,
+			//chromedp.WithDebugf(t.Logf),
+			chromedp.WithErrorf(t.Logf),
+			chromedp.WithLogf(t.Logf),
+		)
+		defer cancel()
+
+		chromedp.ListenTarget(ctx, func(ev any) {
+			switch ev := ev.(type) {
+			case *cdproto.Message:
+			case *runtime.EventConsoleAPICalled:
+				logConsole(ev)
+			case *runtime.EventExceptionThrown:
+				t.Logf("Exception: * %s", ev.ExceptionDetails.Error())
+			case *webauthn.EventCredentialAdded, *webauthn.EventCredentialAsserted, *webauthn.EventCredentialDeleted, *webauthn.EventCredentialUpdated:
+				t.Logf("WebAuthn event: %#v", ev)
+			default:
+				//t.Logf("Target event: %#v", ev)
+			}
+		})
+
+		if err := chromedp.Run(ctx, webauthn.Enable().WithEnableUI(false)); err != nil {
+			t.Fatalf("webauthn.Enable(): %v", err)
+		}
+
+		var authenticatorID webauthn.AuthenticatorID
+		if err := chromedp.Run(ctx,
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				authID, err := webauthn.AddVirtualAuthenticator(&webauthn.VirtualAuthenticatorOptions{
+					Protocol:                    webauthn.AuthenticatorProtocolCtap2,
+					Ctap2version:                webauthn.Ctap2versionCtap21,
+					Transport:                   webauthn.AuthenticatorTransportInternal,
+					HasResidentKey:              true,
+					HasUserVerification:         true,
+					AutomaticPresenceSimulation: true,
+					IsUserVerified:              true,
+				}).Do(ctx)
+				authenticatorID = authID
+				return err
+			}),
+		); err != nil {
+			t.Fatalf("webauthn.AddVirtualAuthenticator(): %v", err)
+		}
+		t.Logf("AddVirtualAuthenticator: %q", authenticatorID)
+
+		if err := chromedp.Run(ctx,
+			webauthn.ClearCredentials(authenticatorID),
+			webauthn.SetAutomaticPresenceSimulation(authenticatorID, true),
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				creds, err := webauthn.GetCredentials(authenticatorID).Do(ctx)
+				t.Logf("Credentials: %v", creds)
+				return err
+			}),
+		); err != nil {
+			t.Fatalf("webauthn.SetAutomaticPresenceSimulation(): %v", err)
+		}
+
+		var res, output string
+		if err := chromedp.Run(ctx,
+			chromedp.Navigate("https://devtest.local:8443/tests.html"),
+			chromedp.WaitVisible("#done"),
+			chromedp.Evaluate(`window.sshApp.exited`, &res),
+			chromedp.Evaluate(`window.sshApp.term.selectAll(), window.sshApp.term.getSelection()`, &output),
+		); err != nil {
+			t.Logf("chromedp.Run: %v", err)
+		}
+		t.Log(output)
+		t.Log(res)
+		if res != "PASS" {
+			t.FailNow()
+		}
+	})
 
 	t.Run("X11", func(t *testing.T) {
 		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Minute)
