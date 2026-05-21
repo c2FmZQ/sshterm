@@ -217,7 +217,11 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	style.Set("position", "absolute")
 	style.Set("width", js.ValueOf(fmt.Sprintf("%dpx", width)))
 	style.Set("border", "1px solid black")
-	style.Set("zIndex", "100")      // Ensure it's on top
+	winZIndex := w.getHighestZIndex() + 1
+	if len(w.windows) == 0 {
+		winZIndex = 100
+	}
+	style.Set("zIndex", js.ValueOf(fmt.Sprintf("%d", winZIndex)))
 	style.Set("overflow", "hidden") // Hide overflow during resize
 
 	// Create canvas first so it can be referenced in handlers, but don't append yet.
@@ -585,7 +589,7 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 		keyDownEvent:    keyDownEvent, // Store for removal
 		keyUpEvent:      keyUpEvent,   // Store for removal
 		xInputEvents:    make(map[string]js.Func),
-		zIndex:          100,
+		zIndex:          winZIndex,
 		isTopLevel:      isTopLevel,
 		titleBar:        titleBar,
 		windowTitle:     windowTitleSpan,
@@ -1357,11 +1361,13 @@ func (w *wasmX11Frontend) applyGC(drawable xID, gcID xID, draw func(js.Value), o
 	useSoftwareEmulation := false
 
 	// PlaneMask check: Canvas operations affect all channels.
-	// If PlaneMask doesn't cover all visual bits (usually lower 24 bits for TrueColor),
-	// we must fallback to software.
-	// We assume 24-bit depth for simplicity here; if strict adherence is needed
-	// for other depths, this check needs to be smarter.
-	isFullPlaneMask := (gc.PlaneMask & 0xffffff) == 0xffffff
+	// If PlaneMask doesn't cover all visual bits, we must fallback to software.
+	visual := w.server.rootVisual
+	fullMask := visual.RedMask | visual.GreenMask | visual.BlueMask
+	if fullMask == 0 {
+		fullMask = 0xffffff
+	}
+	isFullPlaneMask := (gc.PlaneMask & fullMask) == fullMask
 
 	switch gc.Function {
 	case wire.FunctionClear:

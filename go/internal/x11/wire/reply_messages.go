@@ -1462,10 +1462,14 @@ type SetupResponse struct {
 // EncodeMessage encodes the SetupResponse into a byte slice.
 func (r *SetupResponse) EncodeMessage(order binary.ByteOrder) []byte {
 	if r.Success == 0 {
-		response := make([]byte, 8+len(r.Reason))
-		order.PutUint16(response[2:4], r.ProtocolVersion)
-		order.PutUint16(response[4:6], 0) // length of additional data in 4-byte units
-		order.PutUint16(response[6:8], uint16(len(r.Reason)/4))
+		reasonLen := len(r.Reason)
+		paddedLen := (reasonLen + 3) &^ 3
+		response := make([]byte, 8+paddedLen)
+		response[0] = 0 // Failure
+		response[1] = byte(reasonLen)
+		order.PutUint16(response[2:4], 11) // Protocol Major
+		order.PutUint16(response[4:6], 0)  // Protocol Minor
+		order.PutUint16(response[6:8], uint16(paddedLen/4))
 		copy(response[8:], []byte(r.Reason))
 		return response
 	}
@@ -1473,8 +1477,8 @@ func (r *SetupResponse) EncodeMessage(order binary.ByteOrder) []byte {
 	response := make([]byte, 8+len(setupData))
 	response[0] = r.Success
 	// byte 1 is unused
-	order.PutUint16(response[2:4], r.ProtocolVersion)
-	order.PutUint16(response[4:6], 0) // length of additional data in 4-byte units
+	order.PutUint16(response[2:4], 11) // Protocol Major
+	order.PutUint16(response[4:6], 0)  // Protocol Minor
 	order.PutUint16(response[6:8], uint16(len(setupData)/4))
 	copy(response[8:], setupData)
 	return response

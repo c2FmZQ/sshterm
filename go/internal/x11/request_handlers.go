@@ -80,11 +80,11 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 		newWindow.attributes.Colormap = wire.Colormap(s.defaultColormap)
 	}
 	s.windows[xid] = newWindow
-	s.windowStack = append(s.windowStack, xid)
+	s.windowStack = append([]xID{xid}, s.windowStack...)
 
 	// Add to parent's children list
 	if parent != nil {
-		parent.children = append(parent.children, xid)
+		parent.children = append([]xID{xid}, parent.children...)
 	}
 	s.frontend.CreateWindow(xid, parentXID, int32(p.X), int32(p.Y), uint32(p.Width), uint32(p.Height), uint32(p.Depth), p.ValueMask, p.Values)
 	return nil
@@ -644,7 +644,16 @@ func (s *x11Server) handleQueryTree(client *x11Client, req wire.Request, seq uin
 
 func (s *x11Server) handleInternAtom(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.InternAtomRequest)
-	atomID := s.GetAtom(p.Name)
+	var atomID uint32
+	if p.OnlyIfExists {
+		var ok bool
+		atomID, ok = s.atoms[p.Name]
+		if !ok {
+			atomID = 0 // None
+		}
+	} else {
+		atomID = s.GetAtom(p.Name)
+	}
 
 	return &wire.InternAtomReply{
 		Sequence: seq,
@@ -704,9 +713,9 @@ func (s *x11Server) handleGetProperty(client *x11Client, req wire.Request, seq u
 	}
 
 	// Calculate slice
-	byteOffset := p.Offset * 4
-	byteLength := p.Length * 4
-	totalLen := uint32(len(prop.data))
+	byteOffset := uint64(p.Offset) * 4
+	byteLength := uint64(p.Length) * 4
+	totalLen := uint64(len(prop.data))
 
 	if byteOffset >= totalLen {
 		return &wire.GetPropertyReply{
@@ -744,7 +753,7 @@ func (s *x11Server) handleGetProperty(client *x11Client, req wire.Request, seq u
 			Sequence:              seq,
 			Format:                prop.format,
 			PropertyType:          prop.typeAtom,
-			BytesAfter:            totalLen, // Full length
+			BytesAfter:            uint32(totalLen), // Full length
 			ValueLenInFormatUnits: 0,
 			Value:                 nil,
 		}
@@ -754,7 +763,7 @@ func (s *x11Server) handleGetProperty(client *x11Client, req wire.Request, seq u
 		Sequence:              seq,
 		Format:                prop.format,
 		PropertyType:          prop.typeAtom,
-		BytesAfter:            bytesAfter,
+		BytesAfter:            uint32(bytesAfter),
 		ValueLenInFormatUnits: valueLenInFormatUnits,
 		Value:                 dataToSend,
 	}
@@ -1953,16 +1962,18 @@ func (s *x11Server) handleGetImage(client *x11Client, req wire.Request, seq uint
 		return wire.NewGenericError(seq, 0, 0, wire.GetImage, wire.MatchErrorCode)
 	}
 	var depth byte = 24 // Default
+	visualID := s.visualID
 	xid := xID(p.Drawable)
 	if w, ok := s.windows[xid]; ok {
 		depth = w.depth
-	} else if p, ok := s.pixmaps[xid]; ok {
-		depth = p.depth
+	} else if pm, ok := s.pixmaps[xid]; ok {
+		depth = pm.depth
+		visualID = 0
 	}
 	return &wire.GetImageReply{
 		Sequence:  seq,
 		Depth:     depth,
-		VisualID:  s.visualID,
+		VisualID:  visualID,
 		ImageData: imgData,
 	}
 }
@@ -2318,13 +2329,13 @@ func (s *x11Server) handleAllocNamedColor(client *x11Client, req wire.Request, s
 	}
 }
 
-func (s *x11Server) findAllocatableCells(cm *colormap, n uint16) []uint32 {
+func (s *x11Server) findAllocatableCells(cm *colormap, n uint32) []uint32 {
 	if n == 0 {
 		return []uint32{}
 	}
 	pixels := make([]uint32, 0, n)
 	for i := 0; i < len(cm.allocated); i++ {
-		if len(pixels) == int(n) {
+		if uint32(len(pixels)) == n {
 			break
 		}
 		if !cm.allocated[i] {
@@ -2334,7 +2345,7 @@ func (s *x11Server) findAllocatableCells(cm *colormap, n uint16) []uint32 {
 		}
 	}
 
-	if len(pixels) < int(n) {
+	if uint32(len(pixels)) < n {
 		return nil
 	}
 	return pixels
@@ -2349,12 +2360,13 @@ func (s *x11Server) handleAllocColorCells(client *x11Client, req wire.Request, s
 	if cm.visual.Class != wire.PseudoColor {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorCells, wire.AccessErrorCode)
 	}
-	nreq := p.Colors + p.Planes
+	nreq := uint32(p.Colors) + uint32(p.Planes)
 	if nreq > 0 && len(cm.writable) == 0 {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorCells, wire.AllocErrorCode)
 	}
 
 	pixels := s.findAllocatableCells(cm, nreq)
+
 	if pixels == nil {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorCells, wire.AllocErrorCode)
 	}
@@ -2381,7 +2393,7 @@ func (s *x11Server) handleAllocColorPlanes(client *x11Client, req wire.Request, 
 	if cm.visual.Class != wire.PseudoColor {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.MatchErrorCode)
 	}
-	nreq := p.Reds + p.Greens + p.Blues
+	nreq := uint32(p.Reds) + uint32(p.Greens) + uint32(p.Blues)
 	if nreq > 0 && len(cm.writable) == 0 {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.AllocErrorCode)
 	}
