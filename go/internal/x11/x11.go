@@ -226,65 +226,65 @@ type motionEvent struct {
 }
 
 type x11Server struct {
-	logger                Logger
-	byteOrder             binary.ByteOrder
-	frontend              X11FrontendAPI
-	config                wire.ServerConfig
-	windows               map[xID]*window
-	windowStack           []xID
-	gcs                   map[xID]wire.GC
-	pixmaps               map[xID]*pixmap
-	cursors               map[xID]bool
-	selections            map[uint32]*selectionOwner
-	atoms                 map[string]uint32
-	atomNames             map[uint32]string
-	nextAtomID            uint32
-	properties            map[xID]map[uint32]*property
-	colormaps             map[xID]*colormap
-	defaultColormap       uint32
-	installedColormap     xID
-	visualID              uint32
-	visuals               map[uint32]wire.VisualType
-	pixmapFormats         []wire.Format
+	logger                   Logger
+	byteOrder                binary.ByteOrder
+	frontend                 X11FrontendAPI
+	config                   wire.ServerConfig
+	windows                  map[xID]*window
+	windowStack              []xID
+	gcs                      map[xID]wire.GC
+	pixmaps                  map[xID]*pixmap
+	cursors                  map[xID]bool
+	selections               map[uint32]*selectionOwner
+	atoms                    map[string]uint32
+	atomNames                map[uint32]string
+	nextAtomID               uint32
+	properties               map[xID]map[uint32]*property
+	colormaps                map[xID]*colormap
+	defaultColormap          uint32
+	installedColormap        xID
+	visualID                 uint32
+	visuals                  map[uint32]wire.VisualType
+	pixmapFormats            []wire.Format
 	bitmapFormatScanlineUnit byte
 	bitmapFormatScanlinePad  byte
-	rootVisual            wire.VisualType
-	blackPixel            uint32
-	whitePixel            uint32
-	pointerX, pointerY    int16
-	clients               map[uint32]*x11Client
-	nextClientID          uint32
-	pointerGrabWindow     xID
-	keyboardGrabWindow    xID
-	pointerGrabClientID   uint32
-	keyboardGrabClientID  uint32
-	pointerGrabTime       uint32
-	keyboardGrabTime      uint32
-	pointerGrabOwner      bool
-	keyboardGrabOwner     bool
-	pointerGrabEventMask  uint16
-	keyboardGrabEventMask uint32
-	inputFocus            xID
-	passiveGrabs          map[xID][]*passiveGrab
-	passiveDeviceGrabs    map[xID][]*passiveDeviceGrab
-	deviceGrabs           map[byte]*deviceGrab // device id -> grab info
-	authProtocol          string
-	authCookie            []byte
-	serverGrabbed         bool
-	grabbingClientID      uint32
-	fontPath              []string
-	keymap                map[byte][]uint32
-	pointerState          uint16
-	startTime             time.Time
-	pointerGrabMode       byte
-	keyboardGrabMode      byte
-	pointerGrabConfineTo  xID
-	pointerGrabCursor     xID
-	fonts                 map[xID]bool
-	requestHandlers       map[wire.ReqCode]requestHandler
-	motionEvents          []motionEvent
-	pressedKeys           map[byte]bool
-	dirtyDrawables        map[xID]bool
+	rootVisual               wire.VisualType
+	blackPixel               uint32
+	whitePixel               uint32
+	pointerX, pointerY       int16
+	clients                  map[uint32]*x11Client
+	nextClientID             uint32
+	pointerGrabWindow        xID
+	keyboardGrabWindow       xID
+	pointerGrabClientID      uint32
+	keyboardGrabClientID     uint32
+	pointerGrabTime          uint32
+	keyboardGrabTime         uint32
+	pointerGrabOwner         bool
+	keyboardGrabOwner        bool
+	pointerGrabEventMask     uint16
+	keyboardGrabEventMask    uint32
+	inputFocus               xID
+	passiveGrabs             map[xID][]*passiveGrab
+	passiveDeviceGrabs       map[xID][]*passiveDeviceGrab
+	deviceGrabs              map[byte]*deviceGrab // device id -> grab info
+	authProtocol             string
+	authCookie               []byte
+	serverGrabbed            bool
+	grabbingClientID         uint32
+	fontPath                 []string
+	keymap                   map[byte][]uint32
+	pointerState             uint16
+	startTime                time.Time
+	pointerGrabMode          byte
+	keyboardGrabMode         byte
+	pointerGrabConfineTo     xID
+	pointerGrabCursor        xID
+	fonts                    map[xID]bool
+	requestHandlers          map[wire.ReqCode]requestHandler
+	motionEvents             []motionEvent
+	pressedKeys              map[byte]bool
+	dirtyDrawables           map[xID]bool
 
 	pointerFrozen      bool
 	keyboardFrozen     bool

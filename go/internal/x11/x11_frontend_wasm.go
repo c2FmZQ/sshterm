@@ -1191,7 +1191,7 @@ func (w *wasmX11Frontend) PutImage(drawable xID, gcID xID, format uint8, width, 
 				var pixel uint32
 				bitOffset := x * bpp
 				byteIndex := bitOffset / 8
-				
+
 				switch bpp {
 				case 1:
 					pixel = uint32((line[byteIndex] >> (bitOffset % 8)) & 1)
