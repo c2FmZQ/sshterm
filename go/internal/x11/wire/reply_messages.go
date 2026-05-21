@@ -1558,7 +1558,7 @@ func NewDefaultSetup(config *ServerConfig) *Setup {
 		VendorLength:             uint16(len(config.Vendor)),
 		MaxRequestLength:         0xFFFF,
 		NumScreens:               1,
-		NumPixmapFormats:         1,
+		NumPixmapFormats:         6,
 		ImageByteOrder:           0, // LSBFirst
 		BitmapFormatBitOrder:     0, // LeastSignificant
 		BitmapFormatScanlineUnit: 8,
@@ -1568,11 +1568,37 @@ func NewDefaultSetup(config *ServerConfig) *Setup {
 		VendorString:             config.Vendor,
 		PixmapFormats: []Format{
 			{
+				Depth:        1,
+				BitsPerPixel: 1,
+				ScanlinePad:  8,
+			},
+			{
+				Depth:        4,
+				BitsPerPixel: 4,
+				ScanlinePad:  8,
+			},
+			{
+				Depth:        8,
+				BitsPerPixel: 8,
+				ScanlinePad:  8,
+			},
+			{
+				Depth:        16,
+				BitsPerPixel: 16,
+				ScanlinePad:  16,
+			},
+			{
 				Depth:        24,
 				BitsPerPixel: 32,
 				ScanlinePad:  32,
 			},
+			{
+				Depth:        32,
+				BitsPerPixel: 32,
+				ScanlinePad:  32,
+			},
 		},
+
 		Screens: []Screen{
 			{
 				Root:                0,

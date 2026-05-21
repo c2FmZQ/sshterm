@@ -148,6 +148,34 @@ func main() {
 		waitForCanvases(4),
 		
 		chromedp.Sleep(5*time.Second),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			var termText string
+			err := chromedp.Run(ctx,
+				chromedp.Evaluate(`
+					(function() {
+						try {
+							if (window.sshApp && window.sshApp.term) {
+								const term = window.sshApp.term;
+								let s = "";
+								const active = term.buffer.active;
+								for (let i = 0; i < active.length; i++) {
+									const line = active.getLine(i);
+									if (line) s += line.translateToString() + "\n";
+								}
+								return s;
+							}
+							return "sshApp.term not found";
+						} catch (e) {
+							return "Error: " + e.message;
+						}
+					})()
+				`, &termText),
+			)
+			if err == nil {
+				log.Printf("Final terminal text:\n%s", termText)
+			}
+			return err
+		}),
 		chromedp.CaptureScreenshot(&buf),
 	)
 
@@ -199,12 +227,12 @@ func waitForCanvases(n int) chromedp.Action {
 	return chromedp.ActionFunc(func(ctx context.Context) error {
 		for {
 			var count int
-			err := chromedp.Evaluate(`document.querySelectorAll('canvas').length`, &count).Do(ctx)
+			err := chromedp.Evaluate(`document.querySelectorAll('div[id^="x11-window-"]').length`, &count).Do(ctx)
 			if err != nil {
 				return err
 			}
 			if count >= n {
-				log.Printf("Found %d canvases!", count)
+				log.Printf("Found %d X11 windows!", count)
 				return nil
 			}
 			select {

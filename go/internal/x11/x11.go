@@ -2375,16 +2375,18 @@ func (s *x11Server) calculateImageSize(width, height uint16, format, depth, left
 		return lineSize * int(height) * int(depth)
 	case 2: // ZPixmap
 		bpp := int(depth)
-		if bpp < 8 {
-			bpp = 8
-		}
 		scanlinePad := 8
+		found := false
 		for _, f := range s.pixmapFormats {
 			if f.Depth == depth {
 				bpp = int(f.BitsPerPixel)
 				scanlinePad = int(f.ScanlinePad)
+				found = true
 				break
 			}
+		}
+		if !found {
+			s.logger.Errorf("X11: calculateImageSize: depth %d not found in pixmapFormats: %+v", depth, s.pixmapFormats)
 		}
 		lineSize := ((int(width)*bpp + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
 		return lineSize * int(height)

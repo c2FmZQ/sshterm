@@ -1166,19 +1166,47 @@ func (w *wasmX11Frontend) PutImage(drawable xID, gcID xID, format uint8, width, 
 		ctx.Call("putImageData", imageData, dstX, dstY)
 
 	case 2: // ZPixmap
-		// Optimization: Use Uint8ClampedArray.set() for bulk copy if byte order matches
-		// Browser expects RGBA.
-		// Our X11 server currently assumes BGRX in x11_sim.go for ZPixmap.
-		// If we can guarantee RGBA or BGRA, we can optimize.
-		// For now, keep the loop but use jsutil.Uint8ClampedArrayFromBytes for the result.
-		length := int(width * height * 4)
-		rgbaData := make([]byte, length)
-		for i := 0; i < int(width*height); i++ {
-			if (i*4 + 2) < len(imgData) {
-				rgbaData[i*4+0] = imgData[i*4+2] // R
-				rgbaData[i*4+1] = imgData[i*4+1] // G
-				rgbaData[i*4+2] = imgData[i*4+0] // B
-				rgbaData[i*4+3] = 255            // A
+		bpp := int(depth)
+		scanlinePad := 8
+		for _, f := range w.server.pixmapFormats {
+			if f.Depth == depth {
+				bpp = int(f.BitsPerPixel)
+				scanlinePad = int(f.ScanlinePad)
+				break
+			}
+		}
+		if bpp == 0 {
+			bpp = 8
+		}
+		scanlineStride := ((int(width)*bpp + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
+
+		rgbaData := make([]byte, int(width)*int(height)*4)
+		for y := 0; y < int(height); y++ {
+			line := imgData[y*scanlineStride:]
+			for x := 0; x < int(width); x++ {
+				var pixel uint32
+				bitOffset := x * bpp
+				byteIndex := bitOffset / 8
+				
+				switch bpp {
+				case 1:
+					pixel = uint32((line[byteIndex] >> (bitOffset % 8)) & 1)
+				case 4:
+					pixel = uint32((line[byteIndex] >> (bitOffset % 8)) & 0x0F)
+				case 8:
+					pixel = uint32(line[x])
+				case 16:
+					pixel = uint32(binary.LittleEndian.Uint16(line[x*2 : x*2+2]))
+				case 24, 32:
+					// We assume 32-bit for 24-bit depth on wire as per our setup
+					pixel = binary.LittleEndian.Uint32(line[x*4 : x*4+4])
+				}
+
+				r, g, b := w.GetRGBColor(currentColormap, pixel)
+				rgbaData[(y*int(width)+x)*4+0] = r
+				rgbaData[(y*int(width)+x)*4+1] = g
+				rgbaData[(y*int(width)+x)*4+2] = b
+				rgbaData[(y*int(width)+x)*4+3] = 255
 			}
 		}
 		jsImgData := jsutil.Uint8ClampedArrayFromBytes(rgbaData)
