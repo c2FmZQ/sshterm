@@ -232,7 +232,7 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	offscreenCanvas.Set("width", width)
 	offscreenCanvas.Set("height", height)
 
-	isTopLevel := parent == w.server.rootWindowID()
+	isTopLevel := parent == xID(w.server.rootWindowID())
 	var titleBarHeight int
 	var titleBar, windowTitleSpan js.Value
 	var dragMouseDown, dragMouseMove, dragMouseUp js.Func

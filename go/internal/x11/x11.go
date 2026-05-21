@@ -2042,7 +2042,11 @@ func (s *x11Server) readRequest(client *x11Client) (wire.Request, uint16, error)
 }
 
 func (s *x11Server) cleanupClient(client *x11Client) {
-	// Destroy all windows owned by this client
+	// First, tell the frontend to clean up all windows for this client.
+	// The frontend implementation should not record these as individual operations.
+	s.frontend.DestroyAllWindowsForClient(client.id)
+
+	// Identify all windows owned by this client and remove them from server state.
 	var windowsToDestroy []xID
 	for xid := range s.windows {
 		if (uint32(xid)>>resourceIDShift)&clientIDMask == client.id {
@@ -2050,10 +2054,25 @@ func (s *x11Server) cleanupClient(client *x11Client) {
 		}
 	}
 	for _, xid := range windowsToDestroy {
-		s.destroyWindow(xid, true)
+		w := s.windows[xid]
+		if w != nil {
+			// Remove from parent's children list if parent is NOT owned by the same client.
+			// (If parent IS owned by the same client, it will also be removed from s.windows).
+			if (uint32(w.parent)>>resourceIDShift)&clientIDMask != client.id {
+				if parent, ok := s.windows[w.parent]; ok {
+					for i, childID := range parent.children {
+						if childID == xid {
+							parent.children = append(parent.children[:i], parent.children[i+1:]...)
+							break
+						}
+					}
+				}
+			}
+			delete(s.windows, xid)
+			s.removeWindowFromStack(xid)
+		}
 	}
 
-	s.frontend.DestroyAllWindowsForClient(client.id)
 	delete(s.clients, client.id)
 }
 

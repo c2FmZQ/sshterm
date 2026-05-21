@@ -174,7 +174,7 @@ func TestDrawRectangle(t *testing.T) {
 
 	winID := xID(1)
 	s.windows[winID] = &window{xid: winID, parent: xID(s.rootWindowID()), width: 100, height: 80, mapped: true}
-	fe.CreateWindow(winID, s.rootWindowID(), 10, 10, 100, 80, 24, 0, wire.WindowAttributes{})
+	fe.CreateWindow(winID, xID(s.rootWindowID()), 10, 10, 100, 80, 24, 0, wire.WindowAttributes{})
 	fe.MapWindow(winID)
 
 	gcID := xID(2)
@@ -232,7 +232,7 @@ func TestColors(t *testing.T) {
 
 	winID := xID(1)
 	s.windows[winID] = &window{xid: winID, parent: xID(s.rootWindowID()), width: 200, height: 200, mapped: true}
-	fe.CreateWindow(winID, s.rootWindowID(), 10, 10, 200, 200, 24, 0, wire.WindowAttributes{})
+	fe.CreateWindow(winID, xID(s.rootWindowID()), 10, 10, 200, 200, 24, 0, wire.WindowAttributes{})
 	fe.MapWindow(winID)
 
 	t.Run("DefaultColormap", func(t *testing.T) {
@@ -354,7 +354,7 @@ func TestDrawText(t *testing.T) {
 
 	winID := xID(1)
 	s.windows[winID] = &window{xid: winID, parent: xID(s.rootWindowID()), width: 100, height: 80, mapped: true}
-	fe.CreateWindow(winID, s.rootWindowID(), 10, 10, 100, 80, 24, 0, wire.WindowAttributes{})
+	fe.CreateWindow(winID, xID(s.rootWindowID()), 10, 10, 100, 80, 24, 0, wire.WindowAttributes{})
 	fe.MapWindow(winID)
 
 	gcID := xID(2)
@@ -402,7 +402,7 @@ func TestOverlappingWindows(t *testing.T) {
 
 	winID1 := xID(1)
 	s.windows[winID1] = &window{xid: winID1, parent: xID(s.rootWindowID()), width: 100, height: 80, mapped: true}
-	fe.CreateWindow(winID1, s.rootWindowID(), 10, 10, 100, 80, 24, 0, wire.WindowAttributes{})
+	fe.CreateWindow(winID1, xID(s.rootWindowID()), 10, 10, 100, 80, 24, 0, wire.WindowAttributes{})
 	fe.MapWindow(winID1)
 
 	gcID1 := xID(2)
@@ -412,7 +412,7 @@ func TestOverlappingWindows(t *testing.T) {
 
 	winID2 := xID(3)
 	s.windows[winID2] = &window{xid: winID2, parent: xID(s.rootWindowID()), width: 100, height: 80, mapped: true}
-	fe.CreateWindow(winID2, s.rootWindowID(), 30, 30, 100, 80, 24, 0, wire.WindowAttributes{})
+	fe.CreateWindow(winID2, xID(s.rootWindowID()), 30, 30, 100, 80, 24, 0, wire.WindowAttributes{})
 	fe.MapWindow(winID2)
 
 	gcID2 := xID(4)
@@ -514,7 +514,7 @@ func TestGCLogicalOperations(t *testing.T) {
 			t.Logf("Starting test case: %s", tc.name)
 			t.Cleanup(func() { cleanupDOMElements(t) })
 			s.windows[winID] = &window{xid: winID, parent: xID(s.rootWindowID()), width: winWidth, height: winHeight, mapped: true}
-			fe.CreateWindow(winID, s.rootWindowID(), 10, 10, winWidth, winHeight, 24, 0, wire.WindowAttributes{})
+			fe.CreateWindow(winID, xID(s.rootWindowID()), 10, 10, winWidth, winHeight, 24, 0, wire.WindowAttributes{})
 			fe.MapWindow(winID)
 
 			// 1. Fill window with destination color
@@ -582,7 +582,7 @@ func TestOptimizedGXxor(t *testing.T) {
 		winHeight = 1
 	)
 	s.windows[winID] = &window{xid: winID, parent: xID(s.rootWindowID()), width: winWidth, height: winHeight, mapped: true}
-	fe.CreateWindow(winID, s.rootWindowID(), 10, 10, winWidth, winHeight, 24, 0, wire.WindowAttributes{})
+	fe.CreateWindow(winID, xID(s.rootWindowID()), 10, 10, winWidth, winHeight, 24, 0, wire.WindowAttributes{})
 	fe.MapWindow(winID)
 
 	// Define destination color (arbitrary)
@@ -696,13 +696,13 @@ func TestVisualTypes(t *testing.T) {
 			winID := xID(1)
 			s.windows[winID] = &window{
 				xid:      winID,
-				parent:   xID(s.rootWindowID()),
+				parent:   xID(xID(s.rootWindowID())),
 				width:    1,
 				height:   1,
 				mapped:   true,
 				colormap: xID(s.defaultColormap),
 			}
-			fe.CreateWindow(winID, s.rootWindowID(), 10, 10, 1, 1, 24, wire.CWColormap, wire.WindowAttributes{Colormap: wire.Colormap(s.defaultColormap)})
+			fe.CreateWindow(winID, xID(s.rootWindowID()), 10, 10, 1, 1, 24, wire.CWColormap, wire.WindowAttributes{Colormap: wire.Colormap(s.defaultColormap)})
 			fe.MapWindow(winID)
 
 			gcID := xID(2)
