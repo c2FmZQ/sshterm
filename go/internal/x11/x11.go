@@ -245,6 +245,7 @@ type x11Server struct {
 	installedColormap     xID
 	visualID              uint32
 	visuals               map[uint32]wire.VisualType
+	pixmapFormats         []wire.Format
 	rootVisual            wire.VisualType
 	blackPixel            uint32
 	whitePixel            uint32
@@ -2014,6 +2015,16 @@ func (s *x11Server) readRequest(client *x11Client) (wire.Request, uint16, error)
 		return nil, 0, errParseError
 	}
 
+	maxLen := uint32(0xFFFF)
+	if client.bigRequestsEnabled {
+		maxLen = 0x100000
+	}
+	if length > maxLen {
+		s.logger.Errorf("X11: request length %d exceeds maximum %d", length, maxLen)
+		client.send(wire.NewError(wire.LengthErrorCode, client.sequence, 0, wire.Opcodes{Major: wire.ReqCode(header[0]), Minor: 0}))
+		return nil, 0, errParseError
+	}
+
 	totalSize := 4 * length
 	raw := make([]byte, totalSize)
 	copy(raw[0:4], header[:])
@@ -2213,6 +2224,7 @@ func (s *x11Server) handshake(client *x11Client) {
 		s.logger.Errorf("x11 handshake write: %v", err)
 		return
 	}
+	s.pixmapFormats = setup.PixmapFormats
 	s.visualID = setup.Screens[0].RootVisual
 	for _, screen := range setup.Screens {
 		for _, depth := range screen.Depths {
@@ -2301,4 +2313,68 @@ func HandleX11Forwarding(logger Logger, client *ssh.Client, authProtocol string,
 			}()
 		}
 	}()
+}
+
+func (s *x11Server) resourceExists(xid xID) bool {
+	if _, ok := s.windows[xid]; ok {
+		return true
+	}
+	if _, ok := s.pixmaps[xid]; ok {
+		return true
+	}
+	if _, ok := s.gcs[xid]; ok {
+		return true
+	}
+	if _, ok := s.cursors[xid]; ok {
+		return true
+	}
+	if _, ok := s.colormaps[xid]; ok {
+		return true
+	}
+	if _, ok := s.fonts[xid]; ok {
+		return true
+	}
+	return false
+}
+
+func (s *x11Server) isDescendant(win, target xID) bool {
+	w, ok := s.windows[target]
+	if !ok {
+		return false
+	}
+	for _, childID := range w.children {
+		if childID == win {
+			return true
+		}
+		if s.isDescendant(win, childID) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *x11Server) calculateImageSize(width, height uint16, format, depth, leftPad byte) int {
+	switch format {
+	case 0: // XYBitmap
+		scanlinePad := 32 // Default for many systems
+		lineSize := ((int(width) + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
+		return lineSize * int(height)
+	case 1: // XYPixmap
+		scanlinePad := 32
+		lineSize := ((int(width) + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
+		return lineSize * int(height) * int(depth)
+	case 2: // ZPixmap
+		bpp := 8
+		for _, f := range s.pixmapFormats {
+			if f.Depth == depth {
+				bpp = int(f.BitsPerPixel)
+				break
+			}
+		}
+		scanlinePad := 32
+		lineSize := ((int(width)*bpp + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
+		return lineSize * int(height)
+	default:
+		return 0
+	}
 }

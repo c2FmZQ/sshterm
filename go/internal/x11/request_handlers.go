@@ -18,7 +18,7 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 		return err
 	}
 	// Check if the window ID is already in use
-	if _, exists := s.windows[xid]; exists {
+	if s.resourceExists(xid) {
 		s.logger.Errorf("X11: CreateWindow: ID %d already in use", xid)
 		return wire.NewGenericError(seq, uint32(p.Drawable), 0, wire.CreateWindow, wire.IDChoiceErrorCode)
 	}
@@ -1442,7 +1442,11 @@ func (s *x11Server) handleQueryKeymap(client *x11Client, req wire.Request, seq u
 func (s *x11Server) handleOpenFont(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.OpenFontRequest)
 	fid := xID(p.Fid)
-	if _, exists := s.fonts[fid]; exists {
+	if err := s.checkClientID(fid, client, seq, wire.OpenFont, 0); err != nil {
+		return err
+	}
+	if s.resourceExists(fid) {
+		s.logger.Errorf("X11: OpenFont: ID %s already in use", fid)
 		return wire.NewGenericError(seq, uint32(p.Fid), 0, wire.OpenFont, wire.IDChoiceErrorCode)
 	}
 	s.fonts[fid] = true
@@ -1581,7 +1585,7 @@ func (s *x11Server) handleCreatePixmap(client *x11Client, req wire.Request, seq 
 	}
 
 	// Check if the pixmap ID is already in use
-	if _, exists := s.pixmaps[xid]; exists {
+	if s.resourceExists(xid) {
 		s.logger.Errorf("X11: CreatePixmap: ID %s already in use", xid)
 		return wire.NewGenericError(seq, uint32(p.Pid), 0, wire.CreatePixmap, wire.IDChoiceErrorCode)
 	}
@@ -1620,7 +1624,7 @@ func (s *x11Server) handleCreateGC(client *x11Client, req wire.Request, seq uint
 	}
 
 	// Check if the GC ID is already in use
-	if _, exists := s.gcs[xid]; exists {
+	if s.resourceExists(xid) {
 		s.logger.Errorf("X11: CreateGC: ID %s already in use", xid)
 		return wire.NewGenericError(seq, uint32(xid), 0, wire.CreateGC, wire.IDChoiceErrorCode)
 	}
@@ -1930,6 +1934,11 @@ func (s *x11Server) handlePutImage(client *x11Client, req wire.Request, seq uint
 	if err := s.checkDrawable(drawable, seq, wire.PutImage, 0); err != nil {
 		return err
 	}
+	expectedLen := s.calculateImageSize(p.Width, p.Height, p.Format, p.Depth, p.LeftPad)
+	if len(p.Data) < expectedLen {
+		s.logger.Errorf("X11: PutImage: data length %d is less than expected %d", len(p.Data), expectedLen)
+		return wire.NewGenericError(seq, 0, 0, wire.PutImage, wire.LengthErrorCode)
+	}
 	s.frontend.PutImage(drawable, gcID, p.Format, p.Width, p.Height, p.DstX, p.DstY, p.LeftPad, p.Depth, p.Data)
 	return nil
 }
@@ -2021,7 +2030,8 @@ func (s *x11Server) handleCreateColormap(client *x11Client, req wire.Request, se
 		return err
 	}
 
-	if _, exists := s.colormaps[xid]; exists {
+	if s.resourceExists(xid) {
+		s.logger.Errorf("X11: CreateColormap: ID %s already in use", xid)
 		return wire.NewGenericError(seq, uint32(p.Mid), 0, wire.CreateColormap, wire.IDChoiceErrorCode)
 	}
 	if err := s.checkWindow(xID(p.Window), seq, wire.CreateColormap, 0); err != nil {
