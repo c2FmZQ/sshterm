@@ -1,3 +1,5 @@
+//go:build x11
+
 package main
 
 import (
@@ -12,9 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/c2FmZQ/sshterm/internal/x11/wire"
 	"github.com/gorilla/websocket"
 	"github.com/pkg/sftp"
-	"github.com/c2FmZQ/sshterm/internal/x11/wire"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/terminal"
 )
@@ -33,10 +35,10 @@ type sshServer struct {
 
 	x11SimDone chan struct{}
 
-	resourceIdBase uint32
-	resourceIdMask uint32
-	rootWindowID   uint32
-	rootVisualID   uint32
+	resourceIdBase  uint32
+	resourceIdMask  uint32
+	rootWindowID    uint32
+	rootVisualID    uint32
 	x11ReplyTracker *wire.ReplyTracker
 }
 

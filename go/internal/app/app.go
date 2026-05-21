@@ -186,7 +186,7 @@ func (a *App) initPresetConfig() error {
 	a.presetDone = true
 	for i, ca := range a.cfg.Authorities {
 		if err := a.addAuthority(ca.Name, ca.PublicKey, ca.Hostnames); err != nil {
-			a.term.Errorf("certificateAuthorities[%d]: %w", i, err)
+			a.term.Errorf("certificateAuthorities[%d]: %v", i, err)
 		}
 	}
 	for i, ep := range a.cfg.Endpoints {
