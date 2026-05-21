@@ -44,14 +44,3 @@ services:
     depends_on:
       chrome:
         condition: service_healthy
-
-  x11-apps:
-    container_name: "x11-apps"
-    build:
-      context: ..
-      dockerfile: tests/Dockerfile.x11apps
-    hostname: "x11-apps.local"
-    networks:
-      default:
-        aliases:
-          - x11-apps.local
