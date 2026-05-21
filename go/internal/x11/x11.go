@@ -54,7 +54,7 @@ type Logger interface {
 
 // X11FrontendAPI is the interface for the X11 frontend.
 type X11FrontendAPI interface {
-	CreateWindow(xid xID, parent, x, y, width, height, depth, valueMask uint32, values wire.WindowAttributes)
+	CreateWindow(xid xID, parent xID, x, y int32, width, height, depth, valueMask uint32, values wire.WindowAttributes)
 	ChangeWindowAttributes(xid xID, valueMask uint32, values wire.WindowAttributes)
 	GetWindowAttributes(xid xID) wire.WindowAttributes
 	CreateGC(xid xID, valueMask uint32, values wire.GC)
@@ -270,7 +270,7 @@ type x11Server struct {
 	serverGrabbed         bool
 	grabbingClientID      uint32
 	fontPath              []string
-	keymap                map[byte]uint32
+	keymap                map[byte][]uint32
 	pointerState          uint16
 	startTime             time.Time
 	pointerGrabMode       byte
@@ -2042,6 +2042,17 @@ func (s *x11Server) readRequest(client *x11Client) (wire.Request, uint16, error)
 }
 
 func (s *x11Server) cleanupClient(client *x11Client) {
+	// Destroy all windows owned by this client
+	var windowsToDestroy []xID
+	for xid := range s.windows {
+		if (uint32(xid)>>resourceIDShift)&clientIDMask == client.id {
+			windowsToDestroy = append(windowsToDestroy, xid)
+		}
+	}
+	for _, xid := range windowsToDestroy {
+		s.destroyWindow(xid, true)
+	}
+
 	s.frontend.DestroyAllWindowsForClient(client.id)
 	delete(s.clients, client.id)
 }
@@ -2238,7 +2249,7 @@ func HandleX11Forwarding(logger Logger, client *ssh.Client, authProtocol string,
 					deviceGrabs:        make(map[byte]*deviceGrab),
 					authProtocol:       authProtocol,
 					authCookie:         authCookie,
-					keymap:             make(map[byte]uint32),
+					keymap:             make(map[byte][]uint32),
 					fonts:              make(map[xID]bool),
 					startTime:          time.Now(),
 					motionEvents:       make([]motionEvent, 0, 1024),
@@ -2249,7 +2260,7 @@ func HandleX11Forwarding(logger Logger, client *ssh.Client, authProtocol string,
 				x11ServerInstance.initAtoms()
 				x11ServerInstance.initRequestHandlers()
 				for k, v := range KeyCodeToKeysym {
-					x11ServerInstance.keymap[k] = v
+					x11ServerInstance.keymap[k] = []uint32{v}
 				}
 				x11ServerInstance.frontend = newX11Frontend(logger, x11ServerInstance)
 			})

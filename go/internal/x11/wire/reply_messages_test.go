@@ -751,8 +751,9 @@ func TestReplyMessages(t *testing.T) {
 
 	t.Run("GetKeyboardMapping", func(t *testing.T) {
 		reply := &GetKeyboardMappingReply{
-			Sequence: 33,
-			KeySyms:  []uint32{1, 2, 3},
+			Sequence:          33,
+			KeySymsPerKeycode: 1,
+			KeySyms:           []uint32{1, 2, 3},
 		}
 		encoded := reply.EncodeMessage(binary.LittleEndian)
 		expected := make([]byte, 44)

@@ -208,7 +208,7 @@ func (w *wasmX11Frontend) getBackgroundColor(cmap xID, gc wire.GC) (out string) 
 	}
 }
 
-func (w *wasmX11Frontend) CreateWindow(xid xID, parent, x, y, width, height, depth, valueMask uint32, values wire.WindowAttributes) {
+func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, height, depth, valueMask uint32, values wire.WindowAttributes) {
 	debugf("X11: createWindow xid=%d parent=%d x=%d y=%d width=%d height=%d depth=%d values=%+v", xid, parent, x, y, width, height, depth, values)
 
 	windowDiv := w.document.Call("createElement", "div")
@@ -488,7 +488,7 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent, x, y, width, height, dep
 	// Get offscreen context
 	offscreenCtx := offscreenCanvas.Call("getContext", "2d", ctxOptions)
 
-	var finalX, finalY uint32 = x, y
+	var finalX, finalY int32 = x, y
 	var parentDiv js.Value = w.body
 
 	if !isTopLevel {

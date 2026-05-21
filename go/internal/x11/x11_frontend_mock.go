@@ -307,10 +307,10 @@ type polyText16Call struct {
 	items    []wire.PolyTextItem
 }
 
-func (m *MockX11Frontend) CreateWindow(xid xID, parent, x, y, width, height, depth, valueMask uint32, values wire.WindowAttributes) {
+func (m *MockX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, height, depth, valueMask uint32, values wire.WindowAttributes) {
 	m.CreateWindowCalls = append(m.CreateWindowCalls, &window{
 		xid:        xid,
-		parent:     xID(parent),
+		parent:     parent,
 		x:          int16(x),
 		y:          int16(y),
 		width:      uint16(width),

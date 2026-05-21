@@ -3030,12 +3030,12 @@ func (r *PolyPointRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	binary.Write(buf, order, r.OpCode())
 	buf.WriteByte(r.CoordinateMode)
 	n := len(r.Coordinates)
-	length := uint16(3 + n)
+	length := uint16(3 + n/2)
 	binary.Write(buf, order, length)
 	binary.Write(buf, order, r.Drawable)
 	binary.Write(buf, order, r.Gc)
 	for _, c := range r.Coordinates {
-		binary.Write(buf, order, c)
+		binary.Write(buf, order, uint16(c))
 	}
 	return buf.Bytes()
 }
@@ -3053,8 +3053,8 @@ func ParsePolyPointRequest(order binary.ByteOrder, data byte, requestBody []byte
 	numPoints := (len(requestBody) - 8) / 4
 	for i := 0; i < numPoints; i++ {
 		offset := 8 + i*4
-		x := int32(order.Uint16(requestBody[offset : offset+2]))
-		y := int32(order.Uint16(requestBody[offset+2 : offset+4]))
+		x := int32(int16(order.Uint16(requestBody[offset : offset+2])))
+		y := int32(int16(order.Uint16(requestBody[offset+2 : offset+4])))
 		req.Coordinates = append(req.Coordinates, uint32(x), uint32(y))
 	}
 	return req, nil
@@ -3082,12 +3082,12 @@ func (r *PolyLineRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	binary.Write(buf, order, r.OpCode())
 	buf.WriteByte(r.CoordinateMode)
 	n := len(r.Coordinates)
-	length := uint16(3 + n)
+	length := uint16(3 + n/2)
 	binary.Write(buf, order, length)
 	binary.Write(buf, order, r.Drawable)
 	binary.Write(buf, order, r.Gc)
 	for _, c := range r.Coordinates {
-		binary.Write(buf, order, c)
+		binary.Write(buf, order, uint16(c))
 	}
 	return buf.Bytes()
 }
@@ -3105,8 +3105,8 @@ func ParsePolyLineRequest(order binary.ByteOrder, data byte, requestBody []byte,
 	numPoints := (len(requestBody) - 8) / 4
 	for i := 0; i < numPoints; i++ {
 		offset := 8 + i*4
-		x := int32(order.Uint16(requestBody[offset : offset+2]))
-		y := int32(order.Uint16(requestBody[offset+2 : offset+4]))
+		x := int32(int16(order.Uint16(requestBody[offset : offset+2])))
+		y := int32(int16(order.Uint16(requestBody[offset+2 : offset+4])))
 		req.Coordinates = append(req.Coordinates, uint32(x), uint32(y))
 	}
 	return req, nil
@@ -3140,10 +3140,10 @@ func ParsePolySegmentRequest(order binary.ByteOrder, requestBody []byte, seq uin
 	numSegments := (len(requestBody) - 8) / 8
 	for i := 0; i < numSegments; i++ {
 		offset := 8 + i*8
-		x1 := int32(order.Uint16(requestBody[offset : offset+2]))
-		y1 := int32(order.Uint16(requestBody[offset+2 : offset+4]))
-		x2 := int32(order.Uint16(requestBody[offset+4 : offset+6]))
-		y2 := int32(order.Uint16(requestBody[offset+6 : offset+8]))
+		x1 := int32(int16(order.Uint16(requestBody[offset : offset+2])))
+		y1 := int32(int16(order.Uint16(requestBody[offset+2 : offset+4])))
+		x2 := int32(int16(order.Uint16(requestBody[offset+4 : offset+6])))
+		y2 := int32(int16(order.Uint16(requestBody[offset+6 : offset+8])))
 		req.Segments = append(req.Segments, uint32(x1), uint32(y1), uint32(x2), uint32(y2))
 	}
 	return req, nil
@@ -3177,11 +3177,11 @@ func ParsePolyRectangleRequest(order binary.ByteOrder, requestBody []byte, seq u
 	numRects := (len(requestBody) - 8) / 8
 	for i := 0; i < numRects; i++ {
 		offset := 8 + i*8
-		x := uint32(order.Uint16(requestBody[offset : offset+2]))
-		y := uint32(order.Uint16(requestBody[offset+2 : offset+4]))
+		x := int32(int16(order.Uint16(requestBody[offset : offset+2])))
+		y := int32(int16(order.Uint16(requestBody[offset+2 : offset+4])))
 		width := uint32(order.Uint16(requestBody[offset+4 : offset+6]))
 		height := uint32(order.Uint16(requestBody[offset+6 : offset+8]))
-		req.Rectangles = append(req.Rectangles, x, y, width, height)
+		req.Rectangles = append(req.Rectangles, uint32(x), uint32(y), width, height)
 	}
 	return req, nil
 }
@@ -3214,12 +3214,12 @@ func ParsePolyArcRequest(order binary.ByteOrder, requestBody []byte, seq uint16)
 	numArcs := (len(requestBody) - 8) / 12
 	for i := 0; i < numArcs; i++ {
 		offset := 8 + i*12
-		x := int32(order.Uint16(requestBody[offset : offset+2]))
-		y := int32(order.Uint16(requestBody[offset+2 : offset+4]))
+		x := int32(int16(order.Uint16(requestBody[offset : offset+2])))
+		y := int32(int16(order.Uint16(requestBody[offset+2 : offset+4])))
 		width := uint32(order.Uint16(requestBody[offset+4 : offset+6]))
 		height := uint32(order.Uint16(requestBody[offset+6 : offset+8]))
-		angle1 := int32(order.Uint16(requestBody[offset+8 : offset+10]))
-		angle2 := int32(order.Uint16(requestBody[offset+10 : offset+12]))
+		angle1 := int32(int16(order.Uint16(requestBody[offset+8 : offset+10])))
+		angle2 := int32(int16(order.Uint16(requestBody[offset+10 : offset+12])))
 		req.Arcs = append(req.Arcs, uint32(x), uint32(y), width, height, uint32(angle1), uint32(angle2))
 	}
 	return req, nil
@@ -3251,7 +3251,7 @@ func (r *FillPolyRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	binary.Write(buf, order, r.OpCode())
 	buf.WriteByte(0)
 	n := len(r.Coordinates)
-	length := uint16(4 + n)
+	length := uint16(4 + n/2)
 	binary.Write(buf, order, length)
 	binary.Write(buf, order, r.Drawable)
 	binary.Write(buf, order, r.Gc)
@@ -3259,7 +3259,7 @@ func (r *FillPolyRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	buf.WriteByte(r.CoordinateMode)
 	buf.Write([]byte{0, 0})
 	for _, c := range r.Coordinates {
-		binary.Write(buf, order, c)
+		binary.Write(buf, order, uint16(c))
 	}
 	return buf.Bytes()
 }
@@ -3278,8 +3278,8 @@ func ParseFillPolyRequest(order binary.ByteOrder, requestBody []byte, seq uint16
 	numPoints := (len(requestBody) - 12) / 4
 	for i := 0; i < numPoints; i++ {
 		offset := 12 + i*4
-		x := int32(order.Uint16(requestBody[offset : offset+2]))
-		y := int32(order.Uint16(requestBody[offset+2 : offset+4]))
+		x := int32(int16(order.Uint16(requestBody[offset : offset+2])))
+		y := int32(int16(order.Uint16(requestBody[offset+2 : offset+4])))
 		req.Coordinates = append(req.Coordinates, uint32(x), uint32(y))
 	}
 	return req, nil
@@ -3313,11 +3313,11 @@ func ParsePolyFillRectangleRequest(order binary.ByteOrder, requestBody []byte, s
 	numRects := (len(requestBody) - 8) / 8
 	for i := 0; i < numRects; i++ {
 		offset := 8 + i*8
-		x := uint32(order.Uint16(requestBody[offset : offset+2]))
-		y := uint32(order.Uint16(requestBody[offset+2 : offset+4]))
+		x := int32(int16(order.Uint16(requestBody[offset : offset+2])))
+		y := int32(int16(order.Uint16(requestBody[offset+2 : offset+4])))
 		width := uint32(order.Uint16(requestBody[offset+4 : offset+6]))
 		height := uint32(order.Uint16(requestBody[offset+6 : offset+8]))
-		req.Rectangles = append(req.Rectangles, x, y, width, height)
+		req.Rectangles = append(req.Rectangles, uint32(x), uint32(y), width, height)
 	}
 	return req, nil
 }
@@ -3350,12 +3350,12 @@ func ParsePolyFillArcRequest(order binary.ByteOrder, requestBody []byte, seq uin
 	numArcs := (len(requestBody) - 8) / 12
 	for i := 0; i < numArcs; i++ {
 		offset := 8 + i*12
-		x := int32(order.Uint16(requestBody[offset : offset+2]))
-		y := int32(order.Uint16(requestBody[offset+2 : offset+4]))
+		x := int32(int16(order.Uint16(requestBody[offset : offset+2])))
+		y := int32(int16(order.Uint16(requestBody[offset+2 : offset+4])))
 		width := uint32(order.Uint16(requestBody[offset+4 : offset+6]))
 		height := uint32(order.Uint16(requestBody[offset+6 : offset+8]))
-		angle1 := int32(order.Uint16(requestBody[offset+8 : offset+10]))
-		angle2 := int32(order.Uint16(requestBody[offset+10 : offset+12]))
+		angle1 := int32(int16(order.Uint16(requestBody[offset+8 : offset+10])))
+		angle2 := int32(int16(order.Uint16(requestBody[offset+10 : offset+12])))
 		req.Arcs = append(req.Arcs, uint32(x), uint32(y), width, height, uint32(angle1), uint32(angle2))
 	}
 	return req, nil
@@ -5674,12 +5674,12 @@ func (r *PolySegmentRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	binary.Write(buf, order, r.OpCode())
 	buf.WriteByte(0)
 	n := len(r.Segments)
-	length := uint16(3 + n)
+	length := uint16(3 + n/2)
 	binary.Write(buf, order, length)
 	binary.Write(buf, order, r.Drawable)
 	binary.Write(buf, order, r.Gc)
 	for _, c := range r.Segments {
-		binary.Write(buf, order, c)
+		binary.Write(buf, order, uint16(c))
 	}
 	return buf.Bytes()
 }
@@ -5689,12 +5689,12 @@ func (r *PolyRectangleRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	binary.Write(buf, order, r.OpCode())
 	buf.WriteByte(0)
 	n := len(r.Rectangles)
-	length := uint16(3 + n)
+	length := uint16(3 + n/2)
 	binary.Write(buf, order, length)
 	binary.Write(buf, order, r.Drawable)
 	binary.Write(buf, order, r.Gc)
 	for _, c := range r.Rectangles {
-		binary.Write(buf, order, c)
+		binary.Write(buf, order, uint16(c))
 	}
 	return buf.Bytes()
 }
@@ -5704,12 +5704,12 @@ func (r *PolyArcRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	binary.Write(buf, order, r.OpCode())
 	buf.WriteByte(0)
 	n := len(r.Arcs)
-	length := uint16(3 + n)
+	length := uint16(3 + n/2)
 	binary.Write(buf, order, length)
 	binary.Write(buf, order, r.Drawable)
 	binary.Write(buf, order, r.Gc)
 	for _, c := range r.Arcs {
-		binary.Write(buf, order, c)
+		binary.Write(buf, order, uint16(c))
 	}
 	return buf.Bytes()
 }
@@ -5719,12 +5719,12 @@ func (r *PolyFillRectangleRequest) EncodeMessage(order binary.ByteOrder) []byte 
 	binary.Write(buf, order, r.OpCode())
 	buf.WriteByte(0)
 	n := len(r.Rectangles)
-	length := uint16(3 + n)
+	length := uint16(3 + n/2)
 	binary.Write(buf, order, length)
 	binary.Write(buf, order, r.Drawable)
 	binary.Write(buf, order, r.Gc)
 	for _, c := range r.Rectangles {
-		binary.Write(buf, order, c)
+		binary.Write(buf, order, uint16(c))
 	}
 	return buf.Bytes()
 }
@@ -5734,12 +5734,12 @@ func (r *PolyFillArcRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	binary.Write(buf, order, r.OpCode())
 	buf.WriteByte(0)
 	n := len(r.Arcs)
-	length := uint16(3 + n)
+	length := uint16(3 + n/2)
 	binary.Write(buf, order, length)
 	binary.Write(buf, order, r.Drawable)
 	binary.Write(buf, order, r.Gc)
 	for _, c := range r.Arcs {
-		binary.Write(buf, order, c)
+		binary.Write(buf, order, uint16(c))
 	}
 	return buf.Bytes()
 }

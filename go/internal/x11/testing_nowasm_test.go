@@ -36,7 +36,7 @@ func setupTestServerWithClients(t *testing.T, numClients int) (*x11Server, []*x1
 		passiveGrabs:       make(map[xID][]*passiveGrab),
 		passiveDeviceGrabs: make(map[xID][]*passiveDeviceGrab),
 		deviceGrabs:        make(map[byte]*deviceGrab),
-		keymap:             make(map[byte]uint32),
+		keymap:             make(map[byte][]uint32),
 		fonts:              make(map[xID]bool),
 		defaultColormap:    1,
 		startTime:          time.Now(),
@@ -57,7 +57,7 @@ func setupTestServerWithClients(t *testing.T, numClients int) (*x11Server, []*x1
 		writable:  make([]bool, server.rootVisual.ColormapEntries),
 	}
 	for k, v := range KeyCodeToKeysym {
-		server.keymap[k] = v
+		server.keymap[k] = []uint32{v}
 	}
 
 	t.Cleanup(func() {

@@ -1829,7 +1829,7 @@ func (r *GetKeyboardMappingReply) EncodeMessage(order binary.ByteOrder) []byte {
 
 	reply := make([]byte, 32+numKeysyms*4)
 	reply[0] = 1 // Reply type
-	reply[1] = 1
+	reply[1] = r.KeySymsPerKeycode
 	order.PutUint16(reply[2:4], r.Sequence)
 	order.PutUint32(reply[4:8], length)
 	// bytes 8-31 are unused

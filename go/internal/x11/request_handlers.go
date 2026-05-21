@@ -86,7 +86,7 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 	if parent != nil {
 		parent.children = append(parent.children, xid)
 	}
-	s.frontend.CreateWindow(xid, uint32(p.Parent), uint32(p.X), uint32(p.Y), uint32(p.Width), uint32(p.Height), uint32(p.Depth), p.ValueMask, p.Values)
+	s.frontend.CreateWindow(xid, parentXID, int32(p.X), int32(p.Y), uint32(p.Width), uint32(p.Height), uint32(p.Depth), p.ValueMask, p.Values)
 	return nil
 }
 
@@ -2682,30 +2682,47 @@ func (s *x11Server) handleChangeKeyboardMapping(client *x11Client, req wire.Requ
 	keySymIndex := 0
 	for i := 0; i < int(p.KeyCodeCount); i++ {
 		keyCode := p.FirstKeyCode + wire.KeyCode(i)
+		syms := make([]uint32, p.KeySymsPerKeyCode)
 		for j := 0; j < int(p.KeySymsPerKeyCode); j++ {
-			if j == 0 {
-				s.keymap[byte(keyCode)] = p.KeySyms[keySymIndex]
-			}
+			syms[j] = p.KeySyms[keySymIndex]
 			keySymIndex++
 		}
+		s.keymap[byte(keyCode)] = syms
 	}
 	return nil
 }
 
 func (s *x11Server) handleGetKeyboardMapping(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.GetKeyboardMappingRequest)
-	keySyms := make([]uint32, 0, p.Count)
+	maxSyms := byte(0)
 	for i := 0; i < int(p.Count); i++ {
 		keyCode := p.FirstKeyCode + wire.KeyCode(i)
-		keySym, ok := s.keymap[byte(keyCode)]
-		if !ok {
-			keySym = 0 // NoSymbol
+		if syms, ok := s.keymap[byte(keyCode)]; ok {
+			if byte(len(syms)) > maxSyms {
+				maxSyms = byte(len(syms))
+			}
 		}
-		keySyms = append(keySyms, keySym)
+	}
+	if maxSyms == 0 {
+		maxSyms = 1
+	}
+
+	keySyms := make([]uint32, 0, int(p.Count)*int(maxSyms))
+	for i := 0; i < int(p.Count); i++ {
+		keyCode := p.FirstKeyCode + wire.KeyCode(i)
+		syms, ok := s.keymap[byte(keyCode)]
+		for j := 0; j < int(maxSyms); j++ {
+			if ok && j < len(syms) {
+				keySyms = append(keySyms, syms[j])
+			} else {
+				keySyms = append(keySyms, 0) // NoSymbol
+			}
+		}
 	}
 	return &wire.GetKeyboardMappingReply{
-		Sequence: seq,
-		KeySyms:  keySyms,
+		Sequence:          seq,
+		KeySymsPerKeycode: maxSyms,
+		KeySyms:           keySyms,
 	}
 }
 
