@@ -92,6 +92,10 @@ func ReadServerMessagesWithTracker(conn io.Reader, order binary.ByteOrder, track
 				ch <- p
 			case 1:
 				replyLength := 4 * order.Uint32(header[4:8])
+				if replyLength > 32*1024*1024 {
+					debugf("X11: server message too long: %d", replyLength)
+					return
+				}
 				msg := append(header, make([]byte, replyLength)...)
 				if _, err := io.ReadFull(conn, msg[32:]); err != nil {
 					debugf("X11: failed to read remaining server message: %v", err)

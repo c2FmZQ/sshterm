@@ -80,11 +80,11 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 		newWindow.attributes.Colormap = wire.Colormap(s.defaultColormap)
 	}
 	s.windows[xid] = newWindow
-	s.windowStack = append([]xID{xid}, s.windowStack...)
+	s.windowStack = append(s.windowStack, xid)
 
 	// Add to parent's children list
 	if parent != nil {
-		parent.children = append([]xID{xid}, parent.children...)
+		parent.children = append(parent.children, xid)
 	}
 	s.frontend.CreateWindow(xid, parentXID, int32(p.X), int32(p.Y), uint32(p.Width), uint32(p.Height), uint32(p.Depth), p.ValueMask, p.Values)
 	return nil
@@ -272,6 +272,11 @@ func (s *x11Server) handleReparentWindow(client *x11Client, req wire.Request, se
 	if err := s.checkWindow(parentXID, seq, wire.ReparentWindow, 0); err != nil {
 		return err
 	}
+
+	if s.isDescendant(windowXID, parentXID) {
+		return wire.NewGenericError(seq, uint32(p.Parent), 0, wire.ReparentWindow, wire.MatchErrorCode)
+	}
+
 	window, ok := s.windows[windowXID]
 	if !ok {
 		return wire.NewGenericError(seq, uint32(p.Window), 0, wire.ReparentWindow, wire.WindowErrorCode)
@@ -403,6 +408,17 @@ func (s *x11Server) handleConfigureWindow(client *x11Client, req wire.Request, s
 		return wire.NewGenericError(seq, uint32(p.Window), 0, wire.ConfigureWindow, wire.MatchErrorCode)
 	}
 
+	// Calculate expected number of values
+	expectedValues := 0
+	for i := 0; i < 7; i++ {
+		if (p.ValueMask & (1 << i)) != 0 {
+			expectedValues++
+		}
+	}
+	if len(p.Values) < expectedValues {
+		return wire.NewGenericError(seq, 0, 0, wire.ConfigureWindow, wire.ValueErrorCode)
+	}
+
 	if w, ok := s.windows[xid]; ok {
 		valueIndex := 0
 		if (p.ValueMask & (1 << 0)) != 0 { // x
@@ -452,6 +468,10 @@ func (s *x11Server) handleConfigureWindow(client *x11Client, req wire.Request, s
 		}
 		if (p.ValueMask & wire.CWStackMode) != 0 {
 			stackMode = p.Values[valueIndex]
+		}
+
+		if stackMode > 4 {
+			return wire.NewGenericError(seq, stackMode, 0, wire.ConfigureWindow, wire.ValueErrorCode)
 		}
 
 		s.removeWindowFromStack(xid)
@@ -663,7 +683,10 @@ func (s *x11Server) handleInternAtom(client *x11Client, req wire.Request, seq ui
 
 func (s *x11Server) handleGetAtomName(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.GetAtomNameRequest)
-	name := s.GetAtomName(uint32(p.Atom))
+	name, ok := s.atomNames[uint32(p.Atom)]
+	if !ok {
+		return wire.NewGenericError(seq, uint32(p.Atom), 0, wire.GetAtomName, wire.AtomErrorCode)
+	}
 	return &wire.GetAtomNameReply{
 		Sequence:   seq,
 		NameLength: uint16(len(name)),
@@ -883,6 +906,8 @@ func (s *x11Server) handleConvertSelection(client *x11Client, req wire.Request, 
 				return
 			}
 
+			s.mu.Lock()
+			defer s.mu.Unlock()
 			s.ChangeProperty(requestor, propertyAtom, propertyType, format, data)
 			s.SendSelectionNotify(requestor, selectionAtom, targetAtom, propertyAtom, nil)
 		}()
@@ -1535,7 +1560,9 @@ func (s *x11Server) handleListFonts(client *x11Client, req wire.Request, seq uin
 func (s *x11Server) handleListFontsWithInfo(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.ListFontsWithInfoRequest)
 	fontNames := s.frontend.ListFonts(p.MaxNames, p.Pattern)
-	tempFID := xID(0xFFFFFFFF)
+	// Use a temporary FID that is unique to this client to avoid conflicts.
+	// We use the client's resource ID base and a high-range local ID.
+	tempFID := xID((client.id << 20) | 0xFFFFF)
 
 	for _, name := range fontNames {
 		s.frontend.OpenFont(tempFID, name)
@@ -2216,10 +2243,13 @@ func (s *x11Server) handleAllocColor(client *x11Client, req wire.Request, seq ui
 
 	var pixel uint32
 	if cm.visual.Class == wire.TrueColor || cm.visual.Class == wire.DirectColor {
-		r8 := byte(p.Red >> 8)
-		g8 := byte(p.Green >> 8)
-		b8 := byte(p.Blue >> 8)
-		pixel = (uint32(r8) << 16) | (uint32(g8) << 8) | uint32(b8)
+		r := uint32(p.Red) >> (16 - wire.BitCount(cm.visual.RedMask))
+		g := uint32(p.Green) >> (16 - wire.BitCount(cm.visual.GreenMask))
+		b := uint32(p.Blue) >> (16 - wire.BitCount(cm.visual.BlueMask))
+
+		pixel = (r << wire.BitOffset(cm.visual.RedMask)) |
+			(g << wire.BitOffset(cm.visual.GreenMask)) |
+			(b << wire.BitOffset(cm.visual.BlueMask))
 	} else {
 		// Check if the color is already allocated
 		found := false
@@ -2398,7 +2428,7 @@ func (s *x11Server) handleAllocColorPlanes(client *x11Client, req wire.Request, 
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.AllocErrorCode)
 	}
 
-	pixels := s.findAllocatableCells(cm, nreq)
+	pixels := s.findAllocatableCells(cm, uint32(p.Colors))
 	if pixels == nil {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.AllocErrorCode)
 	}
@@ -2412,19 +2442,32 @@ func (s *x11Server) handleAllocColorPlanes(client *x11Client, req wire.Request, 
 	redMask := uint32(0)
 	greenMask := uint32(0)
 	blueMask := uint32(0)
+	// Note: The protocol says the masks are disjoint.
+	// This implementation is still simplified.
 	for i := 0; i < int(p.Reds); i++ {
-		redMask |= 1 << pixels[i]
+		if i < len(pixels) {
+			redMask |= 1 << pixels[i]
+		}
 	}
 	for i := 0; i < int(p.Greens); i++ {
-		greenMask |= 1 << pixels[int(p.Reds)+i]
+		if int(p.Reds)+i < len(pixels) {
+			greenMask |= 1 << pixels[int(p.Reds)+i]
+		}
 	}
 	for i := 0; i < int(p.Blues); i++ {
-		blueMask |= 1 << pixels[int(p.Reds)+int(p.Greens)+i]
+		if int(p.Reds)+int(p.Greens)+i < len(pixels) {
+			blueMask |= 1 << pixels[int(p.Reds)+int(p.Greens)+i]
+		}
+	}
+
+	numPixels := int(p.Colors)
+	if numPixels > len(pixels) {
+		numPixels = len(pixels)
 	}
 
 	return &wire.AllocColorPlanesReply{
 		Sequence:  seq,
-		Pixels:    pixels[:p.Colors],
+		Pixels:    pixels[:numPixels],
 		RedMask:   redMask,
 		GreenMask: greenMask,
 		BlueMask:  blueMask,
@@ -2716,6 +2759,10 @@ func (s *x11Server) handleChangeKeyboardMapping(client *x11Client, req wire.Requ
 
 func (s *x11Server) handleGetKeyboardMapping(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.GetKeyboardMappingRequest)
+	if p.FirstKeyCode < wire.KeyCode(s.minKeycode) || p.FirstKeyCode+wire.KeyCode(p.Count-1) > wire.KeyCode(s.maxKeycode) {
+		return wire.NewGenericError(seq, uint32(p.FirstKeyCode), 0, wire.GetKeyboardMapping, wire.ValueErrorCode)
+	}
+
 	maxSyms := byte(0)
 	for i := 0; i < int(p.Count); i++ {
 		keyCode := p.FirstKeyCode + wire.KeyCode(i)

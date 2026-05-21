@@ -226,6 +226,7 @@ type motionEvent struct {
 }
 
 type x11Server struct {
+	mu                       sync.RWMutex
 	logger                   Logger
 	byteOrder                binary.ByteOrder
 	frontend                 X11FrontendAPI
@@ -251,6 +252,8 @@ type x11Server struct {
 	rootVisual               wire.VisualType
 	blackPixel               uint32
 	whitePixel               uint32
+	minKeycode               byte
+	maxKeycode               byte
 	pointerX, pointerY       int16
 	clients                  map[uint32]*x11Client
 	nextClientID             uint32
@@ -641,6 +644,7 @@ func (s *x11Server) destroyWindow(xid xID, removeFromParent bool) {
 	}
 
 	delete(s.windows, xid)
+	delete(s.properties, xid)
 	s.removeWindowFromStack(xid)
 	s.frontend.DestroyWindow(xid)
 }
@@ -2106,13 +2110,18 @@ func (s *x11Server) serve(client *x11Client) {
 			}
 			break
 		}
-		reply := s.handleRequest(client, req, seq)
+		reply := func() messageEncoder {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			r := s.handleRequest(client, req, seq)
+			s.flushDirtyWindows()
+			return r
+		}()
 		if reply != nil {
 			if err := client.send(reply); err != nil {
 				s.logger.Errorf("Failed to write reply: %v", err)
 			}
 		}
-		s.flushDirtyWindows()
 	}
 }
 
@@ -2244,6 +2253,8 @@ func (s *x11Server) handshake(client *x11Client) {
 	}
 	s.blackPixel = setup.Screens[0].BlackPixel
 	s.whitePixel = setup.Screens[0].WhitePixel
+	s.minKeycode = setup.MinKeycode
+	s.maxKeycode = setup.MaxKeycode
 }
 
 func HandleX11Forwarding(logger Logger, client *ssh.Client, authProtocol string, authCookie []byte) {

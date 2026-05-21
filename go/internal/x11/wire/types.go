@@ -29,6 +29,31 @@ type Atom uint32
 // VisualID is a 32-bit value representing a visual ID.
 type VisualID uint32
 
+// BitCount returns the number of set bits in a mask.
+func BitCount(mask uint32) uint32 {
+	count := uint32(0)
+	for mask > 0 {
+		if mask&1 != 0 {
+			count++
+		}
+		mask >>= 1
+	}
+	return count
+}
+
+// BitOffset returns the offset of the first set bit in a mask.
+func BitOffset(mask uint32) uint32 {
+	if mask == 0 {
+		return 0
+	}
+	offset := uint32(0)
+	for mask&1 == 0 {
+		mask >>= 1
+		offset++
+	}
+	return offset
+}
+
 // Timestamp is a 32-bit value representing a timestamp in milliseconds.
 type Timestamp uint32
 
