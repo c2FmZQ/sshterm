@@ -28,8 +28,8 @@ package app
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"

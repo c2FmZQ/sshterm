@@ -167,21 +167,21 @@ func (s *x11Server) handleGetWindowAttributes(client *x11Client, req wire.Reques
 	if !ok {
 		// Handle root window
 		return &wire.GetWindowAttributesReply{
-			Sequence:         seq,
-			BackingStore:     0,
-			VisualID:         s.rootVisual.VisualID,
-			Class:            uint16(wire.InputOutput),
-			BitGravity:       0,
-			WinGravity:       0,
-			BackingPlanes:    0,
-			BackingPixel:     0,
-			SaveUnder:        0,
-			MapIsInstalled:   1,
-			MapState:         2, // Viewable
-			OverrideRedirect: 0,
-			Colormap:         uint32(s.defaultColormap),
-			AllEventMasks:    0,
-			YourEventMask:    0,
+			Sequence:           seq,
+			BackingStore:       0,
+			VisualID:           s.rootVisual.VisualID,
+			Class:              uint16(wire.InputOutput),
+			BitGravity:         0,
+			WinGravity:         0,
+			BackingPlanes:      0,
+			BackingPixel:       0,
+			SaveUnder:          0,
+			MapIsInstalled:     1,
+			MapState:           2, // Viewable
+			OverrideRedirect:   0,
+			Colormap:           uint32(s.defaultColormap),
+			AllEventMasks:      0,
+			YourEventMask:      0,
 			DoNotPropagateMask: 0,
 		}
 	}

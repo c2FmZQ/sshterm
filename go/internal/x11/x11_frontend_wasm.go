@@ -2855,7 +2855,6 @@ func (w *wasmX11Frontend) CreateCursor(cursorID xID, source, mask xID, foreColor
 	})
 }
 
-
 func (w *wasmX11Frontend) CreateCursorFromGlyph(cursorID xID, sourceFont xID, sourceChar uint16, maskFont xID, maskChar uint16, foreColor, backColor [3]uint16) {
 	debugf("X11: createCursorFromGlyph cursorID=%d sourceFont=%d sourceChar=%d", cursorID, sourceFont, sourceChar)
 
@@ -2992,10 +2991,6 @@ func (w *wasmX11Frontend) GetFocusWindow(clientID uint32) xID {
 	}
 	return 0
 }
-
-
-
-
 
 func (w *wasmX11Frontend) GrabKeyboard(grabWindow xID, ownerEvents bool, time uint32, pointerMode, keyboardMode byte) byte {
 	debugf("X11: GrabKeyboard window=%d", grabWindow)
