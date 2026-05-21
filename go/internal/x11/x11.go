@@ -246,6 +246,8 @@ type x11Server struct {
 	visualID              uint32
 	visuals               map[uint32]wire.VisualType
 	pixmapFormats         []wire.Format
+	bitmapFormatScanlineUnit byte
+	bitmapFormatScanlinePad  byte
 	rootVisual            wire.VisualType
 	blackPixel            uint32
 	whitePixel            uint32
@@ -2225,6 +2227,8 @@ func (s *x11Server) handshake(client *x11Client) {
 		return
 	}
 	s.pixmapFormats = setup.PixmapFormats
+	s.bitmapFormatScanlineUnit = setup.BitmapFormatScanlineUnit
+	s.bitmapFormatScanlinePad = setup.BitmapFormatScanlinePad
 	s.visualID = setup.Screens[0].RootVisual
 	for _, screen := range setup.Screens {
 		for _, depth := range screen.Depths {
@@ -2356,22 +2360,32 @@ func (s *x11Server) isDescendant(win, target xID) bool {
 func (s *x11Server) calculateImageSize(width, height uint16, format, depth, leftPad byte) int {
 	switch format {
 	case 0: // XYBitmap
-		scanlinePad := 32 // Default for many systems
+		scanlinePad := int(s.bitmapFormatScanlinePad)
+		if scanlinePad == 0 {
+			scanlinePad = 8 // Fallback
+		}
 		lineSize := ((int(width) + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
 		return lineSize * int(height)
 	case 1: // XYPixmap
-		scanlinePad := 32
+		scanlinePad := int(s.bitmapFormatScanlinePad)
+		if scanlinePad == 0 {
+			scanlinePad = 8 // Fallback
+		}
 		lineSize := ((int(width) + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
 		return lineSize * int(height) * int(depth)
 	case 2: // ZPixmap
-		bpp := 8
+		bpp := int(depth)
+		if bpp < 8 {
+			bpp = 8
+		}
+		scanlinePad := 8
 		for _, f := range s.pixmapFormats {
 			if f.Depth == depth {
 				bpp = int(f.BitsPerPixel)
+				scanlinePad = int(f.ScanlinePad)
 				break
 			}
 		}
-		scanlinePad := 32
 		lineSize := ((int(width)*bpp + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
 		return lineSize * int(height)
 	default:
