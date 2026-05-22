@@ -18,4 +18,5 @@ docker run \
   --publish=8443:8443 \
   --name=testserver \
   sshterm-testserver \
-  --test.v --test.failfast
+  --test.v \
+  --test.failfast

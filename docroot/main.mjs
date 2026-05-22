@@ -25,6 +25,4 @@
 
 import { TabManager } from './ssh.mjs';
 
-window.addEventListener('load', () => {
-  new TabManager(document.getElementById('terminal'));
-});
+new TabManager(document.getElementById('terminal'));

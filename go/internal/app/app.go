@@ -61,6 +61,22 @@ type Config struct {
 	StreamHook   func(url string) error                                   `json:"-"`
 }
 
+type termLogger struct {
+	t *terminal.Terminal
+}
+
+func (l *termLogger) Errorf(format string, args ...interface{}) {
+	l.t.Errorf(format, args...)
+}
+
+func (l *termLogger) Infof(format string, args ...interface{}) {
+	l.t.Infof(format, args...)
+}
+
+func (l *termLogger) Printf(format string, args ...interface{}) {
+	l.t.Printf(format, args...)
+}
+
 var globalAgent agent.Agent = &keyRing{}
 var globalLastDBChange time.Time
 
@@ -316,7 +332,7 @@ func (a *App) Run() error {
 					username, _ = t.Prompt("Username: ")
 				}
 				target := username + "@" + a.cfg.AutoConnect.Hostname
-				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent, a.cfg.AutoConnect.JumpHosts); err != nil {
+				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent, a.cfg.AutoConnect.ForwardX11, a.cfg.AutoConnect.JumpHosts); err != nil {
 					t.Errorf("%v", err)
 				}
 			},

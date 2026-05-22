@@ -1,0 +1,614 @@
+[
+  {
+    "raw": "0118080000000000000000000000000000000000000000000000000000000000",
+    "want": "\u0026wire.CreateWindowRequest{Depth:0x18, Drawable:0x0, Parent:0x0, X:0, Y:0, Width:0x0, Height:0x0, BorderWidth:0x0, Class:0x0, Visual:0x0, ValueMask:0x0, Values:wire.WindowAttributes{BackgroundPixmap:0x0, BackgroundPixel:0x0, BorderPixmap:0x0, BorderPixel:0x0, BitGravity:0x0, WinGravity:0x0, BackingStore:0x0, BackingPlanes:0x0, BackingPixel:0x0, OverrideRedirect:false, SaveUnder:false, EventMask:0x0, DontPropagateMask:0x0, Colormap:0x0, Cursor:0x0, Class:0x0, MapIsInstalled:false, MapState:0x0, BackgroundPixelSet:false}}"
+  },
+  {
+    "raw": "020003000000000000000000",
+    "want": "\u0026wire.ChangeWindowAttributesRequest{Window:0x0, ValueMask:0x0, Values:wire.WindowAttributes{BackgroundPixmap:0x0, BackgroundPixel:0x0, BorderPixmap:0x0, BorderPixel:0x0, BitGravity:0x0, WinGravity:0x0, BackingStore:0x0, BackingPlanes:0x0, BackingPixel:0x0, OverrideRedirect:false, SaveUnder:false, EventMask:0x0, DontPropagateMask:0x0, Colormap:0x0, Cursor:0x0, Class:0x0, MapIsInstalled:false, MapState:0x0, BackgroundPixelSet:false}}"
+  },
+  {
+    "raw": "0300020000000000",
+    "want": "\u0026wire.GetWindowAttributesRequest{Window:0x0}"
+  },
+  {
+    "raw": "0400020000000000",
+    "want": "\u0026wire.DestroyWindowRequest{Window:0x0}"
+  },
+  {
+    "raw": "0500020000000000",
+    "want": "\u0026wire.DestroySubwindowsRequest{Window:0x0}"
+  },
+  {
+    "raw": "0601020000000000",
+    "want": "\u0026wire.ChangeSaveSetRequest{Window:0x0, Mode:0x1}"
+  },
+  {
+    "raw": "07000400000000000000000000000000",
+    "want": "\u0026wire.ReparentWindowRequest{Window:0x0, Parent:0x0, X:0, Y:0}"
+  },
+  {
+    "raw": "0800020000000000",
+    "want": "\u0026wire.MapWindowRequest{Window:0x0}"
+  },
+  {
+    "raw": "0900020000000000",
+    "want": "\u0026wire.MapSubwindowsRequest{Window:0x0}"
+  },
+  {
+    "raw": "0a00020000000000",
+    "want": "\u0026wire.UnmapWindowRequest{Window:0x0}"
+  },
+  {
+    "raw": "0b00020000000000",
+    "want": "\u0026wire.UnmapSubwindowsRequest{Window:0x0}"
+  },
+  {
+    "raw": "0c0003000000000000000000",
+    "want": "\u0026wire.ConfigureWindowRequest{Window:0x0, ValueMask:0x0, Values:[]uint32(nil)}"
+  },
+  {
+    "raw": "0d01020000000000",
+    "want": "\u0026wire.CirculateWindowRequest{Window:0x0, Direction:0x1}"
+  },
+  {
+    "raw": "0e00020000000000",
+    "want": "\u0026wire.GetGeometryRequest{Drawable:0x0}"
+  },
+  {
+    "raw": "0f00020000000000",
+    "want": "\u0026wire.QueryTreeRequest{Window:0x0}"
+  },
+  {
+    "raw": "100103000400000041544f4d",
+    "want": "\u0026wire.InternAtomRequest{Name:\"ATOM\", OnlyIfExists:true}"
+  },
+  {
+    "raw": "1100020000000000",
+    "want": "\u0026wire.GetAtomNameRequest{Atom:0x0}"
+  },
+  {
+    "raw": "12000700010000000200000003000000080000000400000074657374",
+    "want": "\u0026wire.ChangePropertyRequest{Window:0x1, Property:0x2, Type:0x3, Format:0x8, Data:[]uint8{0x74, 0x65, 0x73, 0x74}}"
+  },
+  {
+    "raw": "130003000000000000000000",
+    "want": "\u0026wire.DeletePropertyRequest{Window:0x0, Property:0x0}"
+  },
+  {
+    "raw": "140106000100000002000000030000000000000064000000",
+    "want": "\u0026wire.GetPropertyRequest{Window:0x1, Property:0x2, Type:0x0, Delete:true, Offset:0x0, Length:0x64}"
+  },
+  {
+    "raw": "1500020000000000",
+    "want": "\u0026wire.ListPropertiesRequest{Window:0x0}"
+  },
+  {
+    "raw": "16000400000000000000000000000000",
+    "want": "\u0026wire.SetSelectionOwnerRequest{Owner:0x0, Selection:0x0, Time:0x0}"
+  },
+  {
+    "raw": "1700020000000000",
+    "want": "\u0026wire.GetSelectionOwnerRequest{Selection:0x0}"
+  },
+  {
+    "raw": "180006000100000002000000030000000400000005000000",
+    "want": "\u0026wire.ConvertSelectionRequest{Requestor:0x1, Selection:0x2, Target:0x3, Property:0x4, Time:0x5}"
+  },
+  {
+    "raw": "19010b0001000000ffffffff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "want": "\u0026wire.SendEventRequest{Propagate:true, Destination:0x1, EventMask:0xffffffff, EventData:[]uint8{0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f}}"
+  },
+  {
+    "raw": "1a0106000000000000000000000000000000000000000000",
+    "want": "\u0026wire.GrabPointerRequest{OwnerEvents:false, GrabWindow:0x0, EventMask:0x0, PointerMode:0x0, KeyboardMode:0x0, ConfineTo:0x0, Cursor:0x0, Time:0x0}"
+  },
+  {
+    "raw": "1b00020000000000",
+    "want": "\u0026wire.UngrabPointerRequest{Time:0x0}"
+  },
+  {
+    "raw": "1c0106000000000000000000000000000000000000000000",
+    "want": "\u0026wire.GrabButtonRequest{OwnerEvents:true, GrabWindow:0x0, EventMask:0x0, PointerMode:0x0, KeyboardMode:0x0, ConfineTo:0x0, Cursor:0x0, Button:0x0, Modifiers:0x0}"
+  },
+  {
+    "raw": "1d0103000000000000000000",
+    "want": "\u0026wire.UngrabButtonRequest{GrabWindow:0x0, Button:0x1, Modifiers:0x0}"
+  },
+  {
+    "raw": "1e000400000000000000000000000000",
+    "want": "\u0026wire.ChangeActivePointerGrabRequest{Cursor:0x0, Time:0x0, EventMask:0x0}"
+  },
+  {
+    "raw": "1f010400000000000000000000000000",
+    "want": "\u0026wire.GrabKeyboardRequest{OwnerEvents:false, GrabWindow:0x0, Time:0x0, PointerMode:0x0, KeyboardMode:0x0}"
+  },
+  {
+    "raw": "2000020000000000",
+    "want": "\u0026wire.UngrabKeyboardRequest{Time:0x0}"
+  },
+  {
+    "raw": "21010400000000000000000000000000",
+    "want": "\u0026wire.GrabKeyRequest{OwnerEvents:true, GrabWindow:0x0, Modifiers:0x0, Key:0x0, PointerMode:0x0, KeyboardMode:0x0}"
+  },
+  {
+    "raw": "220703000000000000000000",
+    "want": "\u0026wire.UngrabKeyRequest{GrabWindow:0x0, Modifiers:0x0, Key:0x0}"
+  },
+  {
+    "raw": "2301020000000000",
+    "want": "\u0026wire.AllowEventsRequest{Mode:0x1, Time:0x0}"
+  },
+  {
+    "raw": "24000100",
+    "want": "\u0026wire.GrabServerRequest{}"
+  },
+  {
+    "raw": "25000100",
+    "want": "\u0026wire.UngrabServerRequest{}"
+  },
+  {
+    "raw": "2600020000000000",
+    "want": "\u0026wire.QueryPointerRequest{Drawable:0x0}"
+  },
+  {
+    "raw": "27000400000000000000000000000000",
+    "want": "\u0026wire.GetMotionEventsRequest{Window:0x0, Start:0x0, Stop:0x0}"
+  },
+  {
+    "raw": "28000400000000000000000000000000",
+    "want": "\u0026wire.TranslateCoordsRequest{SrcWindow:0x0, DstWindow:0x0, SrcX:0, SrcY:0}"
+  },
+  {
+    "raw": "290006000000000000000000000000000000000000000000",
+    "want": "\u0026wire.WarpPointerRequest{SrcWindow:0x0, DstWindow:0x0, SrcX:0, SrcY:0, SrcWidth:0x0, SrcHeight:0x0, DstX:0, DstY:0}"
+  },
+  {
+    "raw": "2a010400000000000000000000000000",
+    "want": "\u0026wire.SetInputFocusRequest{Focus:0x0, RevertTo:0x0, Time:0x0}"
+  },
+  {
+    "raw": "2b000100",
+    "want": "\u0026wire.GetInputFocusRequest{}"
+  },
+  {
+    "raw": "2c000100",
+    "want": "\u0026wire.QueryKeymapRequest{}"
+  },
+  {
+    "raw": "2d0004000100000004000000666f6e74",
+    "want": "\u0026wire.OpenFontRequest{Fid:0x1, Name:\"font\"}"
+  },
+  {
+    "raw": "2e00020000000000",
+    "want": "\u0026wire.CloseFontRequest{Fid:0x0}"
+  },
+  {
+    "raw": "2f00020000000000",
+    "want": "\u0026wire.QueryFontRequest{Fid:0x0}"
+  },
+  {
+    "raw": "300003000100000041004200",
+    "want": "\u0026wire.QueryTextExtentsRequest{Fid:0x1, Text:[]uint16{0x41, 0x42}}"
+  },
+  {
+    "raw": "31000300c80001002a000000",
+    "want": "\u0026wire.ListFontsRequest{MaxNames:0xc8, Pattern:\"*\"}"
+  },
+  {
+    "raw": "32000300c80001002a000000",
+    "want": "\u0026wire.ListFontsWithInfoRequest{MaxNames:0xc8, Pattern:\"*\"}"
+  },
+  {
+    "raw": "3300040001000000042f746d70",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x33, code:0x10}}"
+  },
+  {
+    "raw": "34000100",
+    "want": "\u0026wire.GetFontPathRequest{}"
+  },
+  {
+    "raw": "35180400000000000000000000000000",
+    "want": "\u0026wire.CreatePixmapRequest{Pid:0x0, Drawable:0x0, Width:0x0, Height:0x0, Depth:0x18}"
+  },
+  {
+    "raw": "3600020000000000",
+    "want": "\u0026wire.FreePixmapRequest{Pid:0x0}"
+  },
+  {
+    "raw": "37000400000000000000000000000000",
+    "want": "\u0026wire.CreateGCRequest{Cid:0x0, Drawable:0x0, ValueMask:0x0, Values:wire.GC{Function:0x3, PlaneMask:0xffffffff, Foreground:0x0, Background:0x1, LineWidth:0x0, LineStyle:0x0, CapStyle:0x1, JoinStyle:0x0, FillStyle:0x0, FillRule:0x0, Tile:0x0, Stipple:0x0, TileStipXOrigin:0x0, TileStipYOrigin:0x0, Font:0x0, SubwindowMode:0x0, GraphicsExposures:0x1, ClipXOrigin:0, ClipYOrigin:0, ClipMask:0x0, DashOffset:0x0, Dashes:0x4, ArcMode:0x1, ClippingRectangles:[]wire.Rectangle(nil), DashPattern:[]uint8(nil)}}"
+  },
+  {
+    "raw": "380003000000000000000000",
+    "want": "\u0026wire.ChangeGCRequest{Gc:0x0, ValueMask:0x0, Values:wire.GC{Function:0x3, PlaneMask:0xffffffff, Foreground:0x0, Background:0x1, LineWidth:0x0, LineStyle:0x0, CapStyle:0x1, JoinStyle:0x0, FillStyle:0x0, FillRule:0x0, Tile:0x0, Stipple:0x0, TileStipXOrigin:0x0, TileStipYOrigin:0x0, Font:0x0, SubwindowMode:0x0, GraphicsExposures:0x1, ClipXOrigin:0, ClipYOrigin:0, ClipMask:0x0, DashOffset:0x0, Dashes:0x4, ArcMode:0x1, ClippingRectangles:[]wire.Rectangle(nil), DashPattern:[]uint8(nil)}}"
+  },
+  {
+    "raw": "39000400000000000000000000000000",
+    "want": "\u0026wire.CopyGCRequest{SrcGC:0x0, DstGC:0x0, ValueMask:0x0}"
+  },
+  {
+    "raw": "3a0003000000000000000000",
+    "want": "\u0026wire.SetDashesRequest{GC:0x0, DashOffset:0x0, Dashes:[]uint8{}}"
+  },
+  {
+    "raw": "3b00050000000000000000000102030400000000",
+    "want": "\u0026wire.SetClipRectanglesRequest{GC:0x0, ClippingX:0, ClippingY:0, Rectangles:[]wire.Rectangle{wire.Rectangle{X:513, Y:1027, Width:0x0, Height:0x0}}, Ordering:0x0}"
+  },
+  {
+    "raw": "3c00020000000000",
+    "want": "\u0026wire.FreeGCRequest{GC:0x0}"
+  },
+  {
+    "raw": "3d010400000000000000000000000000",
+    "want": "\u0026wire.ClearAreaRequest{Exposures:false, Window:0x0, X:0, Y:0, Width:0x0, Height:0x0}"
+  },
+  {
+    "raw": "3e00080000000000000000000000000000000000000000000000000000000000",
+    "want": "\u0026wire.CopyAreaRequest{SrcDrawable:0x0, DstDrawable:0x0, Gc:0x0, SrcX:0, SrcY:0, DstX:0, DstY:0, Width:0x0, Height:0x0}"
+  },
+  {
+    "raw": "3f00080000000000000000000000000000000000000000000000000000000000",
+    "want": "\u0026wire.CopyPlaneRequest{SrcDrawable:0x0, DstDrawable:0x0, Gc:0x0, SrcX:0, SrcY:0, DstX:0, DstY:0, Width:0x0, Height:0x0, PlaneMask:0x0}"
+  },
+  {
+    "raw": "40000400000000000000000000000000",
+    "want": "\u0026wire.PolyPointRequest{Drawable:0x0, Gc:0x0, Coordinates:[]uint32{0x0, 0x0}}"
+  },
+  {
+    "raw": "41000400000000000000000000000000",
+    "want": "\u0026wire.PolyLineRequest{Drawable:0x0, Gc:0x0, Coordinates:[]uint32{0x0, 0x0}}"
+  },
+  {
+    "raw": "420006000000000000000000000000000000000000000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x42, code:0x10}}"
+  },
+  {
+    "raw": "430006000000000000000000000000000000000000000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x43, code:0x10}}"
+  },
+  {
+    "raw": "44000700000000000000000000000000000000000000000000000000",
+    "want": "\u0026wire.PolyArcRequest{Drawable:0x0, Gc:0x0, Arcs:[]uint32{0x0, 0x0, 0x0, 0x0, 0x0, 0x0}}"
+  },
+  {
+    "raw": "4500050000000000000000000000000000000000",
+    "want": "\u0026wire.FillPolyRequest{Drawable:0x0, Gc:0x0, Shape:0x0, Coordinates:[]uint32{0x0, 0x0}}"
+  },
+  {
+    "raw": "460006000000000000000000000000000000000000000000",
+    "want": "\u0026wire.PolyFillRectangleRequest{Drawable:0x0, Gc:0x0, Rectangles:[]uint32{0x0, 0x0, 0x0, 0x0}}"
+  },
+  {
+    "raw": "47020700000000000000000000000000000000000000000000000000",
+    "want": "\u0026wire.PolyFillArcRequest{Drawable:0x0, Gc:0x0, Arcs:[]uint32{0x0, 0x0, 0x0, 0x0, 0x0, 0x0}}"
+  },
+  {
+    "raw": "480206000000000000000000000000000000000000000000",
+    "want": "\u0026wire.PutImageRequest{Drawable:0x0, Gc:0x0, Width:0x0, Height:0x0, DstX:0, DstY:0, LeftPad:0x0, Depth:0x0, Format:0x2, Data:[]uint8{}}"
+  },
+  {
+    "raw": "49000400010000000200000000000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x49, code:0x10}}"
+  },
+  {
+    "raw": "4a000400010000000200000000000000",
+    "want": "\u0026wire.PolyText8Request{Drawable:0x1, GC:0x2, X:0, Y:0, Items:[]wire.PolyTextItem(nil)}"
+  },
+  {
+    "raw": "4b040400010000000200000074657374",
+    "want": "\u0026wire.PolyText16Request{Drawable:0x1, GC:0x2, X:25972, Y:29811, Items:[]wire.PolyTextItem(nil)}"
+  },
+  {
+    "raw": "4c04060001000000020000007400650073007400",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x4c, code:0x10}}"
+  },
+  {
+    "raw": "4d010400010000000200000003000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x4d, code:0x10}}"
+  },
+  {
+    "raw": "4e00020000000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x4e, code:0x10}}"
+  },
+  {
+    "raw": "4f0003000100000002000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x4f, code:0x10}}"
+  },
+  {
+    "raw": "5000020000000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x50, code:0x10}}"
+  },
+  {
+    "raw": "5100020000000000",
+    "want": "\u0026wire.InstallColormapRequest{Cmap:0x0}"
+  },
+  {
+    "raw": "5200020000000000",
+    "want": "\u0026wire.UninstallColormapRequest{Cmap:0x0}"
+  },
+  {
+    "raw": "530004000100000004000000626c7565",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x53, code:0x10}}"
+  },
+  {
+    "raw": "550103000100000001000200",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x55, code:0x10}}"
+  },
+  {
+    "raw": "56010400010000000100020003000400",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x56, code:0x10}}"
+  },
+  {
+    "raw": "5700040001000000ffffffff01000000",
+    "want": "\u0026wire.AllocColorPlanesRequest{Contiguous:false, Cmap:0x1, Colors:0xffff, Reds:0xffff, Greens:0x1, Blues:0x0}"
+  },
+  {
+    "raw": "5800050001000000010000000a0014001e000700",
+    "want": "\u0026wire.FreeColorsRequest{Cmap:0x1, PlaneMask:0x1, Pixels:[]uint32{0x14000a, 0x7001e}}"
+  },
+  {
+    "raw": "5907050001000000020000000300000072656400",
+    "want": "\u0026wire.StoreColorsRequest{Cmap:0x1, Items:[]wire.XColorItem{wire.XColorItem{Pixel:0x2, Red:0x3, Green:0x0, Blue:0x6572, Flags:0x64, ClientID:0x0}}}"
+  },
+  {
+    "raw": "5a0003000100000001000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x5a, code:0x10}}"
+  },
+  {
+    "raw": "5b0004000100000005000000677265656e",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x5b, code:0x10}}"
+  },
+  {
+    "raw": "5c0008000100000002000000030000000a0014001e00280032003c0005000f00",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x5c, code:0x10}}"
+  },
+  {
+    "raw": "5d000800010000000200000003000000410042000a0014001e00280032003c00",
+    "want": "\u0026wire.CreateCursorRequest{Cid:0x1, Source:0x2, Mask:0x3, ForeRed:0x41, ForeGreen:0x42, ForeBlue:0xa, BackRed:0x14, BackGreen:0x1e, BackBlue:0x28, X:0x32, Y:0x3c}"
+  },
+  {
+    "raw": "5e00020000000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x5e, code:0x10}}"
+  },
+  {
+    "raw": "5f000300010000006400c800",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x5f, code:0x10}}"
+  },
+  {
+    "raw": "600103000000000000000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x60, code:0x10}}"
+  },
+  {
+    "raw": "61000300050000005854455354",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x61, code:0x10}}"
+  },
+  {
+    "raw": "62000100",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x62, code:0x10}}"
+  },
+  {
+    "raw": "630207000a0201000102030405060708090a0b0c0d0e0f10",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x63, code:0x10}}"
+  },
+  {
+    "raw": "640002000a050000",
+    "want": "\u0026wire.ChangeKeyboardMappingRequest{KeyCodeCount:0x0, FirstKeyCode:0xa, KeySymsPerKeyCode:0x5, KeySyms:[]uint32(nil)}"
+  },
+  {
+    "raw": "6500020000000000",
+    "want": "\u0026wire.GetKeyboardMappingRequest{FirstKeyCode:0x0, Count:0x0}"
+  },
+  {
+    "raw": "66000100",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x66, code:0x10}}"
+  },
+  {
+    "raw": "67320100",
+    "want": "\u0026wire.GetKeyboardControlRequest{}"
+  },
+  {
+    "raw": "6800020000000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x68, code:0x10}}"
+  },
+  {
+    "raw": "69000100",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x69, code:0x10}}"
+  },
+  {
+    "raw": "6a0003000a00140001020000",
+    "want": "\u0026wire.GetPointerControlRequest{}"
+  },
+  {
+    "raw": "6b000100",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x6b, code:0x10}}"
+  },
+  {
+    "raw": "6c00020000000000",
+    "want": "\u0026wire.GetScreenSaverRequest{}"
+  },
+  {
+    "raw": "6d000400000007003132372e302e302e31",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x6d, code:0x10}}"
+  },
+  {
+    "raw": "6e010100",
+    "want": "\u0026wire.ListHostsRequest{}"
+  },
+  {
+    "raw": "6f010100",
+    "want": "\u0026wire.SetAccessControlRequest{Mode:0x1}"
+  },
+  {
+    "raw": "7000020000000000",
+    "want": "\u0026wire.SetCloseDownModeRequest{Mode:0x0}"
+  },
+  {
+    "raw": "71000500010000000a0002000200000003000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x71, code:0x10}}"
+  },
+  {
+    "raw": "72010100",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x72, code:0x10}}"
+  },
+  {
+    "raw": "730102000300000001020300",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x73, code:0x10}}"
+  },
+  {
+    "raw": "74000100",
+    "want": "\u0026wire.SetPointerMappingRequest{Map:[]uint8{}}"
+  },
+  {
+    "raw": "750205000102030405060708090a0b0c0d0e0f10",
+    "want": "\u0026wire.GetPointerMappingRequest{}"
+  },
+  {
+    "raw": "76000100",
+    "want": "\u0026wire.SetModifierMappingRequest{KeyCodesPerModifier:0x0, KeyCodes:[]wire.KeyCode{}}"
+  },
+  {
+    "raw": "7f000100",
+    "want": "\u0026wire.NoOperationRequest{}"
+  },
+  {
+    "raw": "8301020002000000",
+    "want": "\u0026wire.GetExtensionVersionRequest{MajorVersion:0x2, MinorVersion:0x0}"
+  },
+  {
+    "raw": "83020100",
+    "want": "\u0026wire.ListInputDevicesRequest{}"
+  },
+  {
+    "raw": "8303020001000000",
+    "want": "\u0026wire.OpenDeviceRequest{DeviceID:0x1}"
+  },
+  {
+    "raw": "8304020001000000",
+    "want": "\u0026wire.CloseDeviceRequest{DeviceID:0x1}"
+  },
+  {
+    "raw": "8305020001020000",
+    "want": "\u0026wire.SetDeviceModeRequest{DeviceID:0x1, Mode:0x2}"
+  },
+  {
+    "raw": "830603000100000001000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x83, majorOp:0x6, code:0x10}}"
+  },
+  {
+    "raw": "8307020001000000",
+    "want": "\u0026wire.GetSelectedExtensionEventsRequest{Window:0x1}"
+  },
+  {
+    "raw": "83080400010000000100010001000000",
+    "want": "\u0026wire.ChangeDeviceDontPropagateListRequest{Window:0x1, Mode:0x1, Classes:[]uint32{0x1}}"
+  },
+  {
+    "raw": "8309020001000000",
+    "want": "\u0026wire.GetDeviceDontPropagateListRequest{Window:0x1}"
+  },
+  {
+    "raw": "830a0400010000000200000003000000",
+    "want": "\u0026wire.GetDeviceMotionEventsRequest{Start:0x1, Stop:0x2, DeviceID:0x3}"
+  },
+  {
+    "raw": "830b020001000000",
+    "want": "\u0026wire.ChangeKeyboardDeviceRequest{DeviceID:0x1}"
+  },
+  {
+    "raw": "830c020001020300",
+    "want": "\u0026wire.ChangePointerDeviceRequest{XAxis:0x1, YAxis:0x2, DeviceID:0x3}"
+  },
+  {
+    "raw": "830d050001000000020000000101010000000000",
+    "want": "\u0026wire.GrabDeviceRequest{DeviceID:0x1, GrabWindow:0x1, Time:0x2, OwnerEvents:true, ThisDeviceMode:0x1, OtherDeviceMode:0x0, NumClasses:0x0, Classes:[]uint32{}}"
+  },
+  {
+    "raw": "830e03000100000001000000",
+    "want": "\u0026wire.UngrabDeviceRequest{DeviceID:0x1, Time:0x1}"
+  },
+  {
+    "raw": "830f05000100000000000102030405000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x83, code:0x10}}"
+  },
+  {
+    "raw": "83100400010000000200000001000000",
+    "want": "\u0026wire.UngrabDeviceKeyRequest{GrabWindow:0x1, Modifiers:0x2, Key:0x0, DeviceID:0x0}"
+  },
+  {
+    "raw": "8311050001000000020000000102030405000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x83, majorOp:0x11, code:0x10}}"
+  },
+  {
+    "raw": "83120400010000000200000001000000",
+    "want": "\u0026wire.UngrabDeviceButtonRequest{GrabWindow:0x1, Modifiers:0x2, Button:0x0, DeviceID:0x0}"
+  },
+  {
+    "raw": "831303000100000001000000",
+    "want": "\u0026wire.AllowDeviceEventsRequest{Time:0x1, DeviceID:0x1, Mode:0x0}"
+  },
+  {
+    "raw": "8314020001000000",
+    "want": "\u0026wire.GetDeviceFocusRequest{DeviceID:0x1}"
+  },
+  {
+    "raw": "83150400010000000200000003040000",
+    "want": "\u0026wire.SetDeviceFocusRequest{Focus:0x1, Time:0x2, RevertTo:0x3, DeviceID:0x4}"
+  },
+  {
+    "raw": "8316020001000000",
+    "want": "\u0026wire.GetFeedbackControlRequest{DeviceID:0x1}"
+  },
+  {
+    "raw": "831703000100000001000000",
+    "want": "\u0026wire.ChangeFeedbackControlRequest{Mask:0x1, DeviceID:0x1, ControlID:0x0, Control:[]uint8{}}"
+  },
+  {
+    "raw": "8318020001020300",
+    "want": "\u0026wire.GetDeviceKeyMappingRequest{DeviceID:0x1, FirstKey:0x2, Count:0x3}"
+  },
+  {
+    "raw": "831903000102010100000000",
+    "want": "\u0026wire.ChangeDeviceKeyMappingRequest{DeviceID:0x1, FirstKey:0x2, KeysymsPerKeycode:0x1, KeycodeCount:0x1, Keysyms:[]uint32{0x0}}"
+  },
+  {
+    "raw": "831a020001000000",
+    "want": "\u0026wire.GetDeviceModifierMappingRequest{DeviceID:0x1}"
+  },
+  {
+    "raw": "831b03000101000000000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x83, majorOp:0x1b, code:0x10}}"
+  },
+  {
+    "raw": "831c020001000000",
+    "want": "\u0026wire.GetDeviceButtonMappingRequest{DeviceID:0x1}"
+  },
+  {
+    "raw": "831d03000101000001000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x83, majorOp:0x1d, code:0x10}}"
+  },
+  {
+    "raw": "831e020001000000",
+    "want": "\u0026wire.QueryDeviceStateRequest{DeviceID:0x1}"
+  },
+  {
+    "raw": "831f0b0001000000010101000100000001000000000000000000000000000000000000000000000001000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x83, majorOp:0x1f, code:0x10}}"
+  },
+  {
+    "raw": "8320020001020304",
+    "want": "\u0026wire.DeviceBellRequest{DeviceID:0x1, FeedbackID:0x2, FeedbackClass:0x3, Percent:0x4}"
+  },
+  {
+    "raw": "832103000102010001000000",
+    "want": "\u0026wire.SetDeviceValuatorsRequest{DeviceID:0x1, FirstValuator:0x2, NumValuators:0x1, Valuators:[]int32{1}}"
+  },
+  {
+    "raw": "8322020001000100",
+    "want": "\u0026wire.GetDeviceControlRequest{DeviceID:0x1, Control:0x1}"
+  },
+  {
+    "raw": "83230500010001000c000101000001000000",
+    "want": "\u0026wire.LengthError{baseError:wire.baseError{seq:0x1, badValue:0x0, minorOp:0x0, majorOp:0x83, code:0x10}}"
+  }
+]

@@ -1,7 +1,13 @@
+output/
 ssh.wasm
 tests.wasm
+tests.x11.wasm
 wasm_exec.js
 node_modules
 xterm.css
 xterm.js
 xterm.mjs
+js_tests/.npm-cache
+.gemini/
+/testserver
+tests/x11-standalone/*.png

@@ -27,10 +27,13 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"path"
 	"strings"
@@ -41,6 +44,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/c2FmZQ/sshterm/internal/websocket"
+	"github.com/c2FmZQ/sshterm/internal/x11"
 )
 
 func (a *App) sshCommand() *cli.App {
@@ -68,6 +72,12 @@ func (a *App) sshCommand() *cli.App {
 				Value:   false,
 				Usage:   "Forward access to the local SSH agent. Use with caution.",
 			},
+			&cli.BoolFlag{
+				Name:    "forward-x11",
+				Aliases: []string{"X"},
+				Value:   false,
+				Usage:   "Forward X11 connections.",
+			},
 		},
 	}
 }
@@ -82,10 +92,10 @@ func (a *App) ssh(ctx *cli.Context) error {
 		command = strings.Join(ctx.Args().Slice()[1:], " ")
 	}
 
-	return a.runSSH(ctx.Context, ctx.Args().Get(0), ctx.String("identity"), command, ctx.Bool("forward-agent"), ctx.String("jump-hosts"))
+	return a.runSSH(ctx.Context, ctx.Args().Get(0), ctx.String("identity"), command, ctx.Bool("forward-agent"), ctx.Bool("forward-x11"), ctx.String("jump-hosts"))
 }
 
-func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwardAgent bool, jumpHosts string) (err error) {
+func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwardAgent, forwardX11 bool, jumpHosts string) (err error) {
 	t := a.term
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer func() {
@@ -118,6 +128,44 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 		}
 		if err := agent.RequestAgentForwarding(session); err != nil {
 			return fmt.Errorf("agent.RequestAgentForwarding: %w", err)
+		}
+	}
+
+	if forwardX11 && !x11.Enabled() {
+		t.Errorf("X11 support is not included in this build")
+		return fmt.Errorf("X11 forwarding requested, but X11 support is not included in this build")
+	}
+	if forwardX11 && x11.Enabled() {
+		// Request X11 forwarding.
+		// https://datatracker.ietf.org/doc/html/rfc4254#section-6.3.1
+		cookie := make([]byte, 16)
+		if _, err := io.ReadFull(rand.Reader, cookie); err != nil {
+			return fmt.Errorf("failed to generate X11 cookie: %w", err)
+		}
+		payload := struct {
+			SingleConnection       bool
+			AuthenticationProtocol string
+			AuthenticationCookie   string
+			ScreenNumber           uint32
+		}{
+			SingleConnection:       false,
+			AuthenticationProtocol: "MIT-MAGIC-COOKIE-1",
+			AuthenticationCookie:   hex.EncodeToString(cookie),
+			ScreenNumber:           0,
+		}
+		logger := &termLogger{t}
+		x11.HandleX11Forwarding(logger, client, payload.AuthenticationProtocol, cookie)
+
+		log.Printf("Sending x11-req with payload: %+v\n", payload)
+		ok, err := session.SendRequest("x11-req", true, ssh.Marshal(payload))
+		if err != nil {
+			log.Printf("session.SendRequest x11-req failed: %v\n", err)
+			return fmt.Errorf("session.SendRequest x11-req: %w", err)
+		}
+		if !ok {
+			log.Printf("session.SendRequest x11-req returned false (X11 forwarding rejected by server)\n")
+		} else {
+			log.Printf("session.SendRequest x11-req returned true\n")
 		}
 	}
 

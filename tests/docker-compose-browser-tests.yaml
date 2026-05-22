@@ -25,14 +25,17 @@ services:
     container_name: "devtest"
     hostname: "devtest.local"
     image: "sshterm-testserver"
-    user: "65534:65534"
+    user: "${TEST_UID:-65534}:${TEST_GID:-65534}"
     command: [
       "--with-chromedp=ws://chrome:9222",
+      "--output-dir=/output",
       "--test.v",
       "--test.failfast",
+      "--test.run=${TEST_RUN:-.*}",
     ]
     working_dir: "/"
     volumes:
+      - ../output/:/output
       - type: tmpfs
         target: /tmp
         tmpfs:
