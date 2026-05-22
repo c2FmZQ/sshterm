@@ -777,7 +777,7 @@ func (s *x11Server) handleSetSelectionOwner(client *x11Client, req wire.Request,
 		// Send SelectionClear to old owner
 		if oldClient, ok := s.clients[((uint32(currentOwner.window) >> resourceIDShift) & clientIDMask)]; ok {
 			event := &wire.SelectionClearEvent{
-				Sequence:  oldClient.sequence - 1, // Approximate
+				Sequence:  oldClient.sequence,
 				Time:      time,
 				Owner:     uint32(currentOwner.window),
 				Selection: selectionAtom,
@@ -989,6 +989,16 @@ func (s *x11Server) handleGrabPointer(client *x11Client, req wire.Request, seq u
 		// Let's assume frontend logic mirrors X11 logic and returns 0 on success.
 		if status != wire.GrabSuccess {
 			s.pointerGrabWindow = 0
+			s.pointerGrabClientID = 0
+			s.pointerGrabOwner = false
+			s.pointerGrabEventMask = 0
+			s.pointerGrabTime = 0
+			s.pointerGrabMode = 0
+			s.keyboardGrabMode = 0
+			s.pointerGrabConfineTo = 0
+			s.pointerGrabCursor = 0
+			s.pointerFrozen = false
+			s.keyboardFrozen = false
 			return &wire.GrabPointerReply{Sequence: seq, Status: status}
 		}
 	}
@@ -1526,9 +1536,24 @@ func (s *x11Server) handleListFonts(client *x11Client, req wire.Request, seq uin
 func (s *x11Server) handleListFontsWithInfo(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.ListFontsWithInfoRequest)
 	fontNames := s.frontend.ListFonts(p.MaxNames, p.Pattern)
-	// Use a temporary FID that is unique to this client to avoid conflicts.
-	// We use the client's resource ID base and a high-range local ID.
-	tempFID := xID((client.id << resourceIDShift) | localIDMask)
+	// Find a truly unused ID within the client's namespace
+	tempFID := xID(0)
+	for localID := uint32(localIDMask); localID > 0; localID-- {
+		candidate := xID((client.id << resourceIDShift) | localID)
+		_, inWindows := s.windows[candidate]
+		_, inGCs := s.gcs[candidate]
+		_, inPixmaps := s.pixmaps[candidate]
+		_, inCursors := s.cursors[candidate]
+		_, inColormaps := s.colormaps[candidate]
+		_, inFonts := s.fonts[candidate]
+		if !inWindows && !inGCs && !inPixmaps && !inCursors && !inColormaps && !inFonts {
+			tempFID = candidate
+			break
+		}
+	}
+	if tempFID == 0 {
+		tempFID = xID((client.id << resourceIDShift) | localIDMask)
+	}
 
 	for _, name := range fontNames {
 		s.frontend.OpenFont(tempFID, name)
@@ -2410,8 +2435,11 @@ func (s *x11Server) handleAllocColorPlanes(client *x11Client, req wire.Request, 
 	if !ok {
 		return wire.NewGenericError(seq, uint32(p.Cmap), 0, wire.AllocColorPlanes, wire.ColormapErrorCode)
 	}
-	if cm.visual.Class != wire.DirectColor {
+	if class := cm.visual.Class; class != wire.DirectColor && class != wire.PseudoColor {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.MatchErrorCode)
+	}
+	if p.Colors == 0 {
+		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.ValueErrorCode)
 	}
 	if uint32(p.Reds) > 0xffffffff-uint32(p.Greens) || uint32(p.Reds)+uint32(p.Greens) > 0xffffffff-uint32(p.Blues) {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.ValueErrorCode)
@@ -2421,46 +2449,66 @@ func (s *x11Server) handleAllocColorPlanes(client *x11Client, req wire.Request, 
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.AllocErrorCode)
 	}
 
-	pixels := s.findAllocatableCells(cm, uint32(p.Colors))
-	if pixels == nil {
+	numBits := 0
+	for (1 << numBits) < len(cm.allocated) {
+		numBits++
+	}
+
+	R := int(p.Reds)
+	G := int(p.Greens)
+	B := int(p.Blues)
+	maskSize := R + G + B
+	if maskSize > numBits {
+		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.AllocErrorCode)
+	}
+	blockCount := 1 << maskSize
+
+	var basePixels []uint32
+	for i := 0; i < len(cm.allocated); i += blockCount {
+		if len(basePixels) == int(p.Colors) {
+			break
+		}
+		ok := true
+		for j := 0; j < blockCount; j++ {
+			if i+j >= len(cm.allocated) || cm.allocated[i+j] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			basePixels = append(basePixels, uint32(i))
+		}
+	}
+
+	if len(basePixels) < int(p.Colors) {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.AllocErrorCode)
 	}
 
-	for _, pixel := range pixels {
-		cm.allocated[pixel] = true
-		cm.writable[pixel] = true
-		cm.clientID[pixel] = client.id
+	for _, base := range basePixels {
+		for j := 0; j < blockCount; j++ {
+			pixel := base + uint32(j)
+			cm.allocated[pixel] = true
+			cm.writable[pixel] = true
+			cm.clientID[pixel] = client.id
+		}
 	}
 
 	redMask := uint32(0)
+	for i := 0; i < R; i++ {
+		redMask |= 1 << i
+	}
 	greenMask := uint32(0)
+	for i := 0; i < G; i++ {
+		greenMask |= 1 << (R + i)
+	}
 	blueMask := uint32(0)
-	// Note: The protocol says the masks are disjoint.
-	// This implementation is still simplified.
-	for i := 0; i < int(p.Reds); i++ {
-		if i < len(pixels) {
-			redMask |= 1 << pixels[i]
-		}
-	}
-	for i := 0; i < int(p.Greens); i++ {
-		if int(p.Reds)+i < len(pixels) {
-			greenMask |= 1 << pixels[int(p.Reds)+i]
-		}
-	}
-	for i := 0; i < int(p.Blues); i++ {
-		if int(p.Reds)+int(p.Greens)+i < len(pixels) {
-			blueMask |= 1 << pixels[int(p.Reds)+int(p.Greens)+i]
-		}
-	}
-
-	numPixels := int(p.Colors)
-	if numPixels > len(pixels) {
-		numPixels = len(pixels)
+	for i := 0; i < B; i++ {
+		blueMask |= 1 << (R + G + i)
 	}
 
 	return &wire.AllocColorPlanesReply{
 		Sequence:  seq,
-		Pixels:    pixels[:numPixels],
+		Pixels:    basePixels,
 		RedMask:   redMask,
 		GreenMask: greenMask,
 		BlueMask:  blueMask,

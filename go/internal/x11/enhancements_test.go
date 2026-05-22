@@ -421,17 +421,29 @@ func TestAllocColorPlanes_Visuals(t *testing.T) {
 	_, ok := reply.(*wire.AllocColorPlanesReply)
 	assert.True(t, ok, "AllocColorPlanes should succeed for DirectColor")
 
-	// PseudoColor should fail with BadMatch
+	// PseudoColor should succeed
 	server.colormaps[colormapID] = &colormap{
-		visual: wire.VisualType{Class: wire.PseudoColor},
+		visual:    wire.VisualType{Class: wire.PseudoColor, ColormapEntries: 256},
+		pixels:    make(map[uint32]wire.XColorItem),
+		allocated: make([]bool, 256),
+		writable:  make([]bool, 256),
+		clientID:  make([]uint32, 256),
 	}
-	errReply := server.handleAllocColorPlanes(client, req, 1)
+	reply2 := server.handleAllocColorPlanes(client, req, 2)
+	_, ok = reply2.(*wire.AllocColorPlanesReply)
+	assert.True(t, ok, "AllocColorPlanes should succeed for PseudoColor")
+
+	// TrueColor should fail with BadMatch
+	server.colormaps[colormapID] = &colormap{
+		visual: wire.VisualType{Class: wire.TrueColor},
+	}
+	errReply := server.handleAllocColorPlanes(client, req, 3)
 	encoded := errReply.EncodeMessage(client.byteOrder)
 	clientBuffer.Reset()
 	clientBuffer.Write(encoded)
 	msg, err := wire.ParseError(clientBuffer.Bytes(), client.byteOrder)
 	require.NoError(t, err)
-	assert.Equal(t, wire.MatchErrorCode, msg.Code(), "AllocColorPlanes on PseudoColor should return BadMatch")
+	assert.Equal(t, wire.MatchErrorCode, msg.Code(), "AllocColorPlanes on TrueColor should return BadMatch")
 }
 
 // Helper to decode a single message from a buffer for testing replies.

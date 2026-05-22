@@ -74,11 +74,12 @@ func ReadServerMessagesWithTracker(conn io.Reader, order binary.ByteOrder, track
 				}
 				ch <- p
 			case 1:
-				replyLength := 4 * order.Uint32(header[4:8])
-				if replyLength > 32*1024*1024 {
-					debugf("X11: server message too long: %d", replyLength)
+				numWords := order.Uint32(header[4:8])
+				if numWords > 8*1024*1024 { // 8M words = 32MB
+					debugf("X11: server message too long: %d words", numWords)
 					return
 				}
+				replyLength := 4 * numWords
 				msg := make([]byte, 32+replyLength)
 				copy(msg, header)
 				if _, err := io.ReadFull(conn, msg[32:]); err != nil {
@@ -100,11 +101,12 @@ func ReadServerMessagesWithTracker(conn io.Reader, order binary.ByteOrder, track
 			default:
 				var msg []byte
 				if msgType == 35 { // GenericEvent
-					length := 4 * order.Uint32(header[4:8])
-					if length > 32*1024*1024 {
-						debugf("X11: GenericEvent too long: %d", length)
+					numWords := order.Uint32(header[4:8])
+					if numWords > 8*1024*1024 {
+						debugf("X11: GenericEvent too long: %d words", numWords)
 						return
 					}
+					length := 4 * numWords
 					msg = make([]byte, 32+length)
 					copy(msg, header)
 					if _, err := io.ReadFull(conn, msg[32:]); err != nil {
