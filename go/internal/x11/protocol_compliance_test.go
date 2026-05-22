@@ -136,7 +136,7 @@ func TestMandatoryNotifications(t *testing.T) {
 
 	// 1. CreateNotify: Client 2 listens on root window
 	server.windows[xID(server.rootWindowID())].eventMasks[client2.id] = wire.SubstructureNotifyMask
-	
+
 	windowID := clientXID(client1, 100)
 	createReq := &wire.CreateWindowRequest{
 		Drawable: wire.Window(windowID),
@@ -265,7 +265,7 @@ func TestIntegerOverflowPrevention(t *testing.T) {
 	// Use large offsets that would overflow int16 if not handled correctly
 	currParent := rootID
 	expectedAbsX := int32(0)
-	
+
 	// Nest 10 windows, each at (5000, 5000)
 	for i := 1; i <= 10; i++ {
 		winID := clientXID(client, uint32(i))
@@ -304,7 +304,7 @@ func TestPropertyCleanup(t *testing.T) {
 	server, client, _, _ := setupTestServerWithClient(t)
 	windowID := clientXID(client, 1)
 	server.windows[windowID] = &window{xid: windowID, eventMasks: make(map[uint32]uint32)}
-	
+
 	atom := server.GetAtom("MY_PROP")
 	server.ChangeProperty(windowID, atom, atom, 8, []byte("hello"))
 	assert.Contains(t, server.properties, windowID)
@@ -345,7 +345,7 @@ func TestInternAtom_OnlyIfExists(t *testing.T) {
 
 func TestXInput_DynamicOffsets(t *testing.T) {
 	server, client, _, clientBuffer := setupTestServerWithClient(t)
-	
+
 	// Verify server initialization
 	assert.Equal(t, byte(64), server.xinputFirstEvent)
 	assert.Equal(t, byte(64), server.xinputFirstError)
@@ -360,18 +360,18 @@ func TestXInput_DynamicOffsets(t *testing.T) {
 	// Send an XInput event and verify encoded code
 	windowID := clientXID(client, 1)
 	server.windows[windowID] = &window{xid: windowID, eventMasks: make(map[uint32]uint32)}
-	
+
 	// DeviceKeyPress is 4. Base is 64. Total should be 68.
 	event := &wire.DeviceKeyPressEvent{
 		DeviceID: 3,
 		Event:    uint32(windowID),
 	}
 	server.sendEvent(client, event)
-	
+
 	assert.True(t, clientBuffer.Len() >= 32)
 	encoded := clientBuffer.Bytes()
 	assert.Equal(t, byte(68), encoded[0], "Encoded event code should include base offset")
-	
+
 	// Parse it back
 	decoded, err := wire.ParseEvent(encoded, client.byteOrder)
 	assert.NoError(t, err)

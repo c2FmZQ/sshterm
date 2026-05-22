@@ -695,13 +695,13 @@ func TestVisualTypes(t *testing.T) {
 
 			winID := xID(1)
 			s.windows[winID] = &window{
-				xid:      winID,
-				parent:   xID(xID(s.rootWindowID())),
-				width:    1,
-				height:   1,
-				mapped:   true,
-				colormap: xID(s.defaultColormap),
-		eventMasks: make(map[uint32]uint32),
+				xid:        winID,
+				parent:     xID(xID(s.rootWindowID())),
+				width:      1,
+				height:     1,
+				mapped:     true,
+				colormap:   xID(s.defaultColormap),
+				eventMasks: make(map[uint32]uint32),
 			}
 			fe.CreateWindow(winID, xID(s.rootWindowID()), 10, 10, 1, 1, 24, wire.CWColormap, wire.WindowAttributes{Colormap: wire.Colormap(s.defaultColormap)})
 			fe.MapWindow(winID)

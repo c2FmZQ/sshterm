@@ -15,7 +15,7 @@ func TestXIGrabDeviceRequest(t *testing.T) {
 
 	windowID := clientXID(client, 10)
 	server.windows[windowID] = &window{
-		xid: windowID,
+		xid:        windowID,
 		eventMasks: make(map[uint32]uint32),
 	}
 
@@ -79,7 +79,7 @@ func TestXIPassiveGrabDeviceRequest(t *testing.T) {
 
 	windowID := clientXID(client, 10)
 	server.windows[windowID] = &window{
-		xid: windowID,
+		xid:        windowID,
 		eventMasks: make(map[uint32]uint32),
 	}
 
@@ -134,7 +134,7 @@ func TestXIPassiveUngrabDeviceRequest(t *testing.T) {
 
 	windowID := clientXID(client, 10)
 	server.windows[windowID] = &window{
-		xid: windowID,
+		xid:        windowID,
 		eventMasks: make(map[uint32]uint32),
 	}
 
