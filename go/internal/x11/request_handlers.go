@@ -71,7 +71,11 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 		depth:       p.Depth,
 		children:    []xID{},
 		attributes:  p.Values,
+		eventMasks:  make(map[uint32]uint32),
 		visual:      effectiveVisual,
+	}
+	if p.ValueMask&wire.CWEventMask != 0 {
+		newWindow.eventMasks[client.id] = p.Values.EventMask
 	}
 	newWindow.attributes.Class = effectiveClass
 
@@ -144,7 +148,7 @@ func (s *x11Server) handleChangeWindowAttributes(client *x11Client, req wire.Req
 			w.attributes.SaveUnder = p.Values.SaveUnder
 		}
 		if p.ValueMask&wire.CWEventMask != 0 {
-			w.attributes.EventMask = p.Values.EventMask
+			w.eventMasks[client.id] = p.Values.EventMask
 		}
 		if p.ValueMask&wire.CWDontPropagate != 0 {
 			w.attributes.DontPropagateMask = p.Values.DontPropagateMask

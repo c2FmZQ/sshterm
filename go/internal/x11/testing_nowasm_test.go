@@ -59,6 +59,7 @@ func setupTestServerWithClients(t *testing.T, numClients int) (*x11Server, []*x1
 			Class: wire.InputOutput,
 		},
 		children: make([]xID, 0),
+		eventMasks: make(map[uint32]uint32),
 	}
 	server.initAtoms()
 	server.initRequestHandlers()

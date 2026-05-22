@@ -174,6 +174,7 @@ type window struct {
 	depth                     byte
 	children                  []xID
 	attributes                wire.WindowAttributes
+	eventMasks                map[uint32]uint32 // clientID -> mask
 	colormap                  xID
 	dontPropagateDeviceEvents map[uint32]bool
 	visual                    uint32
@@ -627,11 +628,11 @@ func (s *x11Server) destroyWindow(xid xID, removeFromParent bool) {
 	}
 
 	parentXID := w.parent
+	s.sendDestroyNotifyEvent(xid, parentXID)
 
 	delete(s.windows, xid)
 	delete(s.properties, xid)
 	s.frontend.DestroyWindow(xid)
-	s.sendDestroyNotifyEvent(xid, parentXID)
 }
 
 func (s *x11Server) reconfigureStacking(xid xID, stackMode uint32, sibling xID) {
@@ -1042,9 +1043,11 @@ func (s *x11Server) SendMouseEvent(xid xID, eventType string, x, y, detail int32
 		}
 	} else {
 		if w, ok := s.windows[originalXID]; ok {
-			if client, ok := s.clients[((uint32(originalXID) >> resourceIDShift) & clientIDMask)]; ok {
-				if w.attributes.EventMask&eventMask != 0 {
-					s.sendCoreMouseEvent(client, eventType, button, uint32(originalXID), x, y, state)
+			for clientID, mask := range w.eventMasks {
+				if mask&eventMask != 0 {
+					if client, ok := s.clients[clientID]; ok {
+						s.sendCoreMouseEvent(client, eventType, button, uint32(originalXID), x, y, state)
+					}
 				}
 			}
 		}
@@ -1526,9 +1529,11 @@ func (s *x11Server) SendKeyboardEvent(xid xID, eventType string, code string, al
 	}
 
 	if w, ok := s.windows[focusID]; ok {
-		if client, ok := s.clients[((uint32(focusID) >> resourceIDShift) & clientIDMask)]; ok {
-			if w.attributes.EventMask&eventMask != 0 {
-				s.sendCoreKeyboardEvent(client, eventType, keycode, uint32(focusID), state)
+		for clientID, mask := range w.eventMasks {
+			if mask&eventMask != 0 {
+				if client, ok := s.clients[clientID]; ok {
+					s.sendCoreKeyboardEvent(client, eventType, keycode, uint32(focusID), state)
+				}
 			}
 		}
 	}
@@ -1672,45 +1677,54 @@ func (s *x11Server) sendCreateNotifyEvent(windowID xID) {
 	}
 	// Send to parent if SubstructureNotifyMask set
 	if parent, ok := s.windows[w.parent]; ok {
-		parentClientID := (uint32(w.parent) >> resourceIDShift) & clientIDMask
-		if client, ok := s.clients[parentClientID]; ok {
-			if parent.attributes.EventMask&wire.SubstructureNotifyMask != 0 {
-				s.sendEvent(client, &wire.CreateNotifyEvent{
-					Sequence:         client.sequence - 1,
-					Parent:           uint32(w.parent),
-					Window:           uint32(windowID),
-					X:                w.x,
-					Y:                w.y,
-					Width:            w.width,
-					Height:           w.height,
-					BorderWidth:      w.borderWidth,
-					OverrideRedirect: w.attributes.OverrideRedirect,
-				})
+		for clientID, mask := range parent.eventMasks {
+			if mask&wire.SubstructureNotifyMask != 0 {
+				if client, ok := s.clients[clientID]; ok {
+					s.sendEvent(client, &wire.CreateNotifyEvent{
+						Sequence:         client.sequence - 1,
+						Parent:           uint32(w.parent),
+						Window:           uint32(windowID),
+						X:                w.x,
+						Y:                w.y,
+						Width:            w.width,
+						Height:           w.height,
+						BorderWidth:      w.borderWidth,
+						OverrideRedirect: w.attributes.OverrideRedirect,
+					})
+				}
 			}
 		}
 	}
 }
 
 func (s *x11Server) sendDestroyNotifyEvent(windowID xID, parentXID xID) {
-	// Send to owner if StructureNotifyMask set
-	clientID := (uint32(windowID) >> resourceIDShift) & clientIDMask
-	if client, ok := s.clients[clientID]; ok {
-		s.sendEvent(client, &wire.DestroyNotifyEvent{
-			Sequence: client.sequence - 1,
-			Event:    uint32(windowID),
-			Window:   uint32(windowID),
-		})
+	w, ok := s.windows[windowID]
+	if !ok {
+		return
 	}
-	// Send to parent if SubstructureNotifyMask set
-	if parent, ok := s.windows[parentXID]; ok {
-		parentClientID := (uint32(parentXID) >> resourceIDShift) & clientIDMask
-		if client, ok := s.clients[parentClientID]; ok {
-			if parent.attributes.EventMask&wire.SubstructureNotifyMask != 0 {
+	// Send to all clients that set StructureNotifyMask on this window
+	for clientID, mask := range w.eventMasks {
+		if mask&wire.StructureNotifyMask != 0 {
+			if client, ok := s.clients[clientID]; ok {
 				s.sendEvent(client, &wire.DestroyNotifyEvent{
 					Sequence: client.sequence - 1,
-					Event:    uint32(parentXID),
+					Event:    uint32(windowID),
 					Window:   uint32(windowID),
 				})
+			}
+		}
+	}
+	// Send to all clients that set SubstructureNotifyMask on the parent
+	if parent, ok := s.windows[parentXID]; ok {
+		for clientID, mask := range parent.eventMasks {
+			if mask&wire.SubstructureNotifyMask != 0 {
+				if client, ok := s.clients[clientID]; ok {
+					s.sendEvent(client, &wire.DestroyNotifyEvent{
+						Sequence: client.sequence - 1,
+						Event:    uint32(parentXID),
+						Window:   uint32(windowID),
+					})
+				}
 			}
 		}
 	}
@@ -1721,29 +1735,31 @@ func (s *x11Server) sendMapNotifyEvent(windowID xID) {
 	if !ok {
 		return
 	}
-	// Send to owner if StructureNotifyMask set
-	clientID := (uint32(windowID) >> resourceIDShift) & clientIDMask
-	if client, ok := s.clients[clientID]; ok {
-		if w.attributes.EventMask&wire.StructureNotifyMask != 0 {
-			s.sendEvent(client, &wire.MapNotifyEvent{
-				Sequence:         client.sequence - 1,
-				Event:            uint32(windowID),
-				Window:           uint32(windowID),
-				OverrideRedirect: w.attributes.OverrideRedirect,
-			})
-		}
-	}
-	// Send to parent if SubstructureNotifyMask set
-	if parent, ok := s.windows[w.parent]; ok {
-		parentClientID := (uint32(w.parent) >> resourceIDShift) & clientIDMask
-		if client, ok := s.clients[parentClientID]; ok {
-			if parent.attributes.EventMask&wire.SubstructureNotifyMask != 0 {
+	// Send to all clients that set StructureNotifyMask on this window
+	for clientID, mask := range w.eventMasks {
+		if mask&wire.StructureNotifyMask != 0 {
+			if client, ok := s.clients[clientID]; ok {
 				s.sendEvent(client, &wire.MapNotifyEvent{
 					Sequence:         client.sequence - 1,
-					Event:            uint32(w.parent),
+					Event:            uint32(windowID),
 					Window:           uint32(windowID),
 					OverrideRedirect: w.attributes.OverrideRedirect,
 				})
+			}
+		}
+	}
+	// Send to all clients that set SubstructureNotifyMask on the parent
+	if parent, ok := s.windows[w.parent]; ok {
+		for clientID, mask := range parent.eventMasks {
+			if mask&wire.SubstructureNotifyMask != 0 {
+				if client, ok := s.clients[clientID]; ok {
+					s.sendEvent(client, &wire.MapNotifyEvent{
+						Sequence:         client.sequence - 1,
+						Event:            uint32(w.parent),
+						Window:           uint32(windowID),
+						OverrideRedirect: w.attributes.OverrideRedirect,
+					})
+				}
 			}
 		}
 	}
@@ -1754,29 +1770,31 @@ func (s *x11Server) sendUnmapNotifyEvent(windowID xID, fromConfigure bool) {
 	if !ok {
 		return
 	}
-	// Send to owner if StructureNotifyMask set
-	clientID := (uint32(windowID) >> resourceIDShift) & clientIDMask
-	if client, ok := s.clients[clientID]; ok {
-		if w.attributes.EventMask&wire.StructureNotifyMask != 0 {
-			s.sendEvent(client, &wire.UnmapNotifyEvent{
-				Sequence:      client.sequence - 1,
-				Event:         uint32(windowID),
-				Window:        uint32(windowID),
-				FromConfigure: fromConfigure,
-			})
-		}
-	}
-	// Send to parent if SubstructureNotifyMask set
-	if parent, ok := s.windows[w.parent]; ok {
-		parentClientID := (uint32(w.parent) >> resourceIDShift) & clientIDMask
-		if client, ok := s.clients[parentClientID]; ok {
-			if parent.attributes.EventMask&wire.SubstructureNotifyMask != 0 {
+	// Send to all clients that set StructureNotifyMask on this window
+	for clientID, mask := range w.eventMasks {
+		if mask&wire.StructureNotifyMask != 0 {
+			if client, ok := s.clients[clientID]; ok {
 				s.sendEvent(client, &wire.UnmapNotifyEvent{
 					Sequence:      client.sequence - 1,
-					Event:         uint32(w.parent),
+					Event:         uint32(windowID),
 					Window:        uint32(windowID),
 					FromConfigure: fromConfigure,
 				})
+			}
+		}
+	}
+	// Send to all clients that set SubstructureNotifyMask on the parent
+	if parent, ok := s.windows[w.parent]; ok {
+		for clientID, mask := range parent.eventMasks {
+			if mask&wire.SubstructureNotifyMask != 0 {
+				if client, ok := s.clients[clientID]; ok {
+					s.sendEvent(client, &wire.UnmapNotifyEvent{
+						Sequence:      client.sequence - 1,
+						Event:         uint32(w.parent),
+						Window:        uint32(windowID),
+						FromConfigure: fromConfigure,
+					})
+				}
 			}
 		}
 	}
@@ -1788,32 +1806,13 @@ func (s *x11Server) sendConfigureNotifyEvent(windowID xID, x, y int16, width, he
 		return
 	}
 	debugf("X11: Sending ConfigureNotify event for window %d", windowID)
-	// Send to owner if StructureNotifyMask set
-	clientID := (uint32(windowID) >> resourceIDShift) & clientIDMask
-	if client, ok := s.clients[clientID]; ok {
-		if w.attributes.EventMask&wire.StructureNotifyMask != 0 {
-			s.sendEvent(client, &wire.ConfigureNotifyEvent{
-				Sequence:         client.sequence - 1,
-				Event:            uint32(windowID),
-				Window:           uint32(windowID),
-				AboveSibling:     uint32(aboveSibling),
-				X:                x,
-				Y:                y,
-				Width:            width,
-				Height:           height,
-				BorderWidth:      borderWidth,
-				OverrideRedirect: w.attributes.OverrideRedirect,
-			})
-		}
-	}
-	// Send to parent if SubstructureNotifyMask set
-	if parent, ok := s.windows[w.parent]; ok {
-		parentClientID := (uint32(w.parent) >> resourceIDShift) & clientIDMask
-		if client, ok := s.clients[parentClientID]; ok {
-			if parent.attributes.EventMask&wire.SubstructureNotifyMask != 0 {
+	// Send to all clients that set StructureNotifyMask on this window
+	for clientID, mask := range w.eventMasks {
+		if mask&wire.StructureNotifyMask != 0 {
+			if client, ok := s.clients[clientID]; ok {
 				s.sendEvent(client, &wire.ConfigureNotifyEvent{
 					Sequence:         client.sequence - 1,
-					Event:            uint32(w.parent),
+					Event:            uint32(windowID),
 					Window:           uint32(windowID),
 					AboveSibling:     uint32(aboveSibling),
 					X:                x,
@@ -1823,6 +1822,27 @@ func (s *x11Server) sendConfigureNotifyEvent(windowID xID, x, y int16, width, he
 					BorderWidth:      borderWidth,
 					OverrideRedirect: w.attributes.OverrideRedirect,
 				})
+			}
+		}
+	}
+	// Send to all clients that set SubstructureNotifyMask on the parent
+	if parent, ok := s.windows[w.parent]; ok {
+		for clientID, mask := range parent.eventMasks {
+			if mask&wire.SubstructureNotifyMask != 0 {
+				if client, ok := s.clients[clientID]; ok {
+					s.sendEvent(client, &wire.ConfigureNotifyEvent{
+						Sequence:         client.sequence - 1,
+						Event:            uint32(w.parent),
+						Window:           uint32(windowID),
+						AboveSibling:     uint32(aboveSibling),
+						X:                x,
+						Y:                y,
+						Width:            width,
+						Height:           height,
+						BorderWidth:      borderWidth,
+						OverrideRedirect: w.attributes.OverrideRedirect,
+					})
+				}
 			}
 		}
 	}

@@ -53,7 +53,7 @@ func TestQueryBestSize(t *testing.T) {
 func TestRotateProperties(t *testing.T) {
 	server, client, _, _ := setupTestServerWithClient(t)
 	windowID := clientXID(client, 1)
-	server.windows[windowID] = &window{xid: windowID} // Create the window
+	server.windows[windowID] = &window{xid: windowID, eventMasks: make(map[uint32]uint32)} // Create the window
 
 	// Setup initial properties
 	atom1 := server.GetAtom("PROP1")
@@ -143,7 +143,7 @@ func TestTranslateCoords(t *testing.T) {
 	server, client, _, _ := setupTestServerWithClient(t)
 
 	parentID := clientXID(client, 1)
-	server.windows[parentID] = &window{xid: parentID, parent: xID(server.rootWindowID()), x: 100, y: 100}
+	server.windows[parentID] = &window{xid: parentID, parent: xID(server.rootWindowID()), x: 100, y: 100, eventMasks: make(map[uint32]uint32)}
 
 	req := &wire.TranslateCoordsRequest{
 		SrcWindow: wire.Window(parentID),
@@ -167,23 +167,25 @@ func TestTranslateCoordsWithChild(t *testing.T) {
 	parentID := clientXID(client, 1)
 	childID := clientXID(client, 2)
 	server.windows[parentID] = &window{
-		xid:      parentID,
-		parent:   xID(server.rootWindowID()),
-		x:        100,
-		y:        100,
-		width:    200,
-		height:   200,
-		children: []xID{childID},
-		mapped:   true,
+		xid:        parentID,
+		parent:     xID(server.rootWindowID()),
+		x:          100,
+		y:          100,
+		width:      200,
+		height:     200,
+		children:   []xID{childID},
+		mapped:     true,
+		eventMasks: make(map[uint32]uint32),
 	}
 	server.windows[childID] = &window{
-		xid:    childID,
-		parent: parentID,
-		x:      10,
-		y:      20,
-		width:  50,
-		height: 50,
-		mapped: true,
+		xid:        childID,
+		parent:     parentID,
+		x:          10,
+		y:          20,
+		width:      50,
+		height:     50,
+		mapped:     true,
+		eventMasks: make(map[uint32]uint32),
 	}
 	// Put child on top of parent in the stacking order
 	server.windows[xID(server.rootWindowID())].children = []xID{parentID}
@@ -206,7 +208,7 @@ func TestTranslateCoordsWithChild(t *testing.T) {
 func TestGetMotionEvents(t *testing.T) {
 	server, client, _, _ := setupTestServerWithClient(t)
 	windowID := clientXID(client, 1)
-	server.windows[windowID] = &window{xid: windowID} // Create the window
+	server.windows[windowID] = &window{xid: windowID, eventMasks: make(map[uint32]uint32)} // Create the window
 
 	// Populate motion buffer
 	server.motionEvents = []motionEvent{
@@ -233,7 +235,7 @@ func TestGetMotionEvents(t *testing.T) {
 func TestListProperties(t *testing.T) {
 	server, client, _, _ := setupTestServerWithClient(t)
 	windowID := clientXID(client, 1)
-	server.windows[windowID] = &window{xid: windowID} // Create the window
+	server.windows[windowID] = &window{xid: windowID, eventMasks: make(map[uint32]uint32)} // Create the window
 	atom1 := server.GetAtom("PROP1")
 	atom2 := server.GetAtom("PROP2")
 

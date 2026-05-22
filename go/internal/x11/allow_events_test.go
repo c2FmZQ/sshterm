@@ -18,6 +18,7 @@ func TestAllowEvents_Queuing(t *testing.T) {
 		width:      100,
 		height:     100,
 		attributes: wire.WindowAttributes{EventMask: wire.PointerMotionMask | wire.ButtonPressMask},
+		eventMasks: map[uint32]uint32{client.id: wire.PointerMotionMask | wire.ButtonPressMask},
 	}
 	server.pointerX = 50
 	server.pointerY = 50
@@ -60,6 +61,7 @@ func TestAllowEvents_KeyboardQueuing(t *testing.T) {
 	server.windows[windowID] = &window{
 		xid:        windowID,
 		attributes: wire.WindowAttributes{EventMask: wire.KeyPressMask},
+		eventMasks: map[uint32]uint32{client.id: wire.KeyPressMask},
 	}
 	server.inputFocus = windowID
 

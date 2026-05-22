@@ -12,7 +12,7 @@ import (
 func TestGrabPointer_FrontendIntegration(t *testing.T) {
 	server, client, mockFrontend, _ := setupTestServerWithClient(t)
 	windowID := clientXID(client, 1)
-	server.windows[windowID] = &window{xid: windowID}
+	server.windows[windowID] = &window{xid: windowID, eventMasks: make(map[uint32]uint32)}
 
 	req := &wire.GrabPointerRequest{
 		GrabWindow:   wire.Window(windowID),
@@ -47,7 +47,7 @@ func TestGrabPointer_FrontendIntegration(t *testing.T) {
 func TestKeyboardEvent_PointerRoot(t *testing.T) {
 	server, client, _, clientBuffer := setupTestServerWithClient(t)
 	windowID := clientXID(client, 1)
-	server.windows[windowID] = &window{xid: windowID, attributes: wire.WindowAttributes{EventMask: wire.KeyPressMask}}
+	server.windows[windowID] = &window{xid: windowID, attributes: wire.WindowAttributes{EventMask: wire.KeyPressMask}, eventMasks: map[uint32]uint32{client.id: wire.KeyPressMask}}
 
 	// Set input focus to PointerRoot (1)
 	server.inputFocus = 1

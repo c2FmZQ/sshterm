@@ -19,6 +19,7 @@ func TestXInputEventDelivery_Simple(t *testing.T) {
 	server.windows[windowID] = &window{
 		xid:        windowID,
 		attributes: wire.WindowAttributes{},
+		eventMasks: make(map[uint32]uint32),
 	}
 
 	// 2. Open the virtual pointer device (ID 2)
@@ -68,6 +69,7 @@ func TestXInputEventDelivery_Keyboard(t *testing.T) {
 	server.windows[windowID] = &window{
 		xid:        windowID,
 		attributes: wire.WindowAttributes{},
+		eventMasks: make(map[uint32]uint32),
 	}
 	server.inputFocus = windowID
 
@@ -125,7 +127,7 @@ func TestXInput2_QueryVersion(t *testing.T) {
 func TestXInput2_SelectEvents(t *testing.T) {
 	server, client, _, _ := setupTestServerWithClient(t)
 	windowID := clientXID(client, 100)
-	server.windows[windowID] = &window{xid: windowID}
+	server.windows[windowID] = &window{xid: windowID, eventMasks: make(map[uint32]uint32)}
 
 	// XISelectEvents
 	mask := []uint32{0} // Empty mask for now
@@ -164,6 +166,7 @@ func TestXInputGrab_Active(t *testing.T) {
 	server.windows[windowID] = &window{
 		xid:        windowID,
 		attributes: wire.WindowAttributes{EventMask: wire.ButtonPressMask},
+		eventMasks: map[uint32]uint32{client.id: wire.ButtonPressMask},
 	}
 
 	// 2. Open device
@@ -215,6 +218,7 @@ func TestXInputGrab_PassiveButton(t *testing.T) {
 	server.windows[windowID] = &window{
 		xid:        windowID,
 		attributes: wire.WindowAttributes{EventMask: wire.ButtonPressMask},
+		eventMasks: map[uint32]uint32{client.id: wire.ButtonPressMask},
 	}
 
 	// 2. Open device
@@ -260,6 +264,7 @@ func TestXInputGrab_PassiveKey(t *testing.T) {
 	server.windows[windowID] = &window{
 		xid:        windowID,
 		attributes: wire.WindowAttributes{EventMask: wire.KeyPressMask},
+		eventMasks: map[uint32]uint32{client.id: wire.KeyPressMask},
 	}
 	server.inputFocus = windowID
 
@@ -311,6 +316,7 @@ func TestXIRawMotionDelivery(t *testing.T) {
 			attributes: wire.WindowAttributes{
 				EventMask: 0,
 			},
+		eventMasks: map[uint32]uint32{client.id: 0},
 		}
 
 		// Select XI_RawMotion (17) on Root Window (0)
@@ -413,6 +419,7 @@ func TestXIRawMotionDelivery(t *testing.T) {
 			attributes: wire.WindowAttributes{
 				EventMask: 0,
 			},
+		eventMasks: map[uint32]uint32{client.id: 0},
 		}
 
 		// Select XI_RawMotion on Root Window
@@ -474,6 +481,7 @@ func TestXIRawMotionDelivery_NotSelected(t *testing.T) {
 		xid:    winID,
 		parent: xID(s.rootWindowID()),
 		mapped: true,
+		eventMasks: make(map[uint32]uint32),
 	}
 
 	// Do NOT select XI_RawMotion

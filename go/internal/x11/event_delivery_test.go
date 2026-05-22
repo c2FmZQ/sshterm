@@ -16,8 +16,8 @@ func TestEventDelivery_SingleClient_CorrectWindow(t *testing.T) {
 	// Create two windows for the client
 	windowID1 := clientXID(client, 100)
 	windowID2 := clientXID(client, 200)
-	server.windows[windowID1] = &window{xid: windowID1, attributes: wire.WindowAttributes{EventMask: wire.ButtonPressMask}}
-	server.windows[windowID2] = &window{xid: windowID2, attributes: wire.WindowAttributes{EventMask: wire.KeyPressMask}}
+	server.windows[windowID1] = &window{xid: windowID1, attributes: wire.WindowAttributes{EventMask: wire.ButtonPressMask}, eventMasks: map[uint32]uint32{client.id: wire.ButtonPressMask}}
+	server.windows[windowID2] = &window{xid: windowID2, attributes: wire.WindowAttributes{EventMask: wire.KeyPressMask}, eventMasks: map[uint32]uint32{client.id: wire.KeyPressMask}}
 
 	// --- Test Mouse Event Delivery ---
 	server.SendMouseEvent(windowID1, "mousedown", 10, 10, 1)
@@ -43,7 +43,7 @@ func TestEventDelivery_SingleClient_CorrectWindow(t *testing.T) {
 func TestEventDelivery_PassiveButtonGrab(t *testing.T) {
 	server, client, _, clientBuffer := setupTestServerWithClient(t)
 	windowID := clientXID(client, 1)
-	server.windows[windowID] = &window{xid: windowID}
+	server.windows[windowID] = &window{xid: windowID, eventMasks: make(map[uint32]uint32)}
 
 	// Client grabs button 1 on the window
 	req := &wire.GrabButtonRequest{
@@ -69,7 +69,7 @@ func TestEventDelivery_PassiveButtonGrab(t *testing.T) {
 func TestEventDelivery_PassiveKeyGrab(t *testing.T) {
 	server, client, _, clientBuffer := setupTestServerWithClient(t)
 	windowID := clientXID(client, 1)
-	server.windows[windowID] = &window{xid: windowID}
+	server.windows[windowID] = &window{xid: windowID, eventMasks: make(map[uint32]uint32)}
 
 	req := &wire.GrabKeyRequest{
 		GrabWindow: wire.Window(windowID),
@@ -95,7 +95,7 @@ func TestEventDelivery_ActivePointerGrab(t *testing.T) {
 	client2Buffer := clientBuffers[1]
 
 	windowID := clientXID(client1, 2) // Window belongs to client 1
-	server.windows[windowID] = &window{xid: windowID, attributes: wire.WindowAttributes{EventMask: wire.ButtonPressMask}}
+	server.windows[windowID] = &window{xid: windowID, attributes: wire.WindowAttributes{EventMask: wire.ButtonPressMask}, eventMasks: map[uint32]uint32{client1.id: wire.ButtonPressMask}}
 
 	// Client 2 grabs the pointer on client 1's window
 	grabReq := &wire.GrabPointerRequest{
@@ -128,7 +128,7 @@ func TestEventDelivery_ActiveKeyboardGrab(t *testing.T) {
 	client2Buffer := clientBuffers[1]
 
 	windowID := clientXID(client1, 2) // Window belongs to client 1
-	server.windows[windowID] = &window{xid: windowID, attributes: wire.WindowAttributes{EventMask: wire.KeyPressMask}}
+	server.windows[windowID] = &window{xid: windowID, attributes: wire.WindowAttributes{EventMask: wire.KeyPressMask}, eventMasks: map[uint32]uint32{client1.id: wire.KeyPressMask}}
 
 	// Client 2 grabs the keyboard on client 1's window
 	grabReq := &wire.GrabKeyboardRequest{
@@ -160,7 +160,7 @@ func TestEventDelivery_OwnerEventsTrue(t *testing.T) {
 	client2Buffer := clientBuffers[1]
 
 	windowID := clientXID(client1, 1) // Window belongs to client 1
-	server.windows[windowID] = &window{xid: windowID, attributes: wire.WindowAttributes{EventMask: wire.ButtonPressMask}}
+	server.windows[windowID] = &window{xid: windowID, attributes: wire.WindowAttributes{EventMask: wire.ButtonPressMask}, eventMasks: map[uint32]uint32{client1.id: wire.ButtonPressMask}}
 
 	// Client 2 grabs button 1 on the window with ownerEvents = true
 	req := &wire.GrabButtonRequest{

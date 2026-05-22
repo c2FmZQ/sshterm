@@ -17,6 +17,7 @@ func TestGrabDeviceKeyRequest(t *testing.T) {
 	windowID := clientXID(client, 10)
 	server.windows[windowID] = &window{
 		xid: windowID,
+		eventMasks: make(map[uint32]uint32),
 	}
 
 	req := &wire.GrabDeviceKeyRequest{
@@ -47,6 +48,7 @@ func TestUngrabDeviceKeyRequest(t *testing.T) {
 	windowID := clientXID(client, 10)
 	server.windows[windowID] = &window{
 		xid: windowID,
+		eventMasks: make(map[uint32]uint32),
 	}
 	server.passiveDeviceGrabs[windowID] = []*passiveDeviceGrab{
 		{
@@ -85,6 +87,7 @@ func TestXIQueryPointer_DeepTraversal(t *testing.T) {
 		height:   100,
 		mapped:   true,
 		children: []xID{childID},
+		eventMasks: make(map[uint32]uint32),
 	}
 	server.windows[childID] = &window{
 		xid:      childID,
@@ -95,6 +98,7 @@ func TestXIQueryPointer_DeepTraversal(t *testing.T) {
 		height:   50,
 		mapped:   true,
 		children: []xID{grandchildID},
+		eventMasks: make(map[uint32]uint32),
 	}
 	server.windows[grandchildID] = &window{
 		xid:    grandchildID,
@@ -104,6 +108,7 @@ func TestXIQueryPointer_DeepTraversal(t *testing.T) {
 		width:  20,
 		height: 20,
 		mapped: true,
+		eventMasks: make(map[uint32]uint32),
 	}
 	// Stacking order
 	server.windows[xID(server.rootWindowID())].children = []xID{parentID}
@@ -439,6 +444,7 @@ func TestGrabDeviceButtonRequest(t *testing.T) {
 	windowID := clientXID(client, 10)
 	server.windows[windowID] = &window{
 		xid: windowID,
+		eventMasks: make(map[uint32]uint32),
 	}
 
 	req := &wire.GrabDeviceButtonRequest{
@@ -464,6 +470,7 @@ func TestUngrabDeviceButtonRequest(t *testing.T) {
 	windowID := clientXID(client, 10)
 	server.windows[windowID] = &window{
 		xid: windowID,
+		eventMasks: make(map[uint32]uint32),
 	}
 	server.passiveDeviceGrabs[windowID] = []*passiveDeviceGrab{
 		{
