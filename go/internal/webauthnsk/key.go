@@ -58,9 +58,13 @@ type Key struct {
 
 func Create(name string) (*Key, error) {
 	challenge := make([]byte, 32)
-	rand.Read(challenge)
+	if _, err := rand.Read(challenge); err != nil {
+		return nil, fmt.Errorf("failed to generate random challenge: %w", err)
+	}
 	uid := make([]byte, 32)
-	rand.Read(uid)
+	if _, err := rand.Read(uid); err != nil {
+		return nil, fmt.Errorf("failed to generate random user ID: %w", err)
+	}
 	resp, err := jsutil.WebAuthnCreate(jsutil.CreateOptions{
 		Challenge: challenge,
 		Alg:       algES256,
@@ -213,7 +217,9 @@ func (k *Key) MarshalPrivate(passphrase string) (*pem.Block, error) {
 		}, nil
 	}
 	salt := make([]byte, 16)
-	rand.Read(salt)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, fmt.Errorf("failed to generate random salt: %w", err)
+	}
 	numIter := 100000
 	dk := pbkdf2.Key([]byte(passphrase), salt, numIter, 32, sha256.New)
 	block, err := aes.NewCipher(dk)
@@ -225,7 +231,9 @@ func (k *Key) MarshalPrivate(passphrase string) (*pem.Block, error) {
 		return nil, err
 	}
 	nonce := make([]byte, gcm.NonceSize())
-	rand.Read(nonce)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("failed to generate random nonce: %w", err)
+	}
 	encID := gcm.Seal(nonce, nonce, k.id, nil)
 	buf := cryptobyte.NewBuilder([]byte{1})
 	buf.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {

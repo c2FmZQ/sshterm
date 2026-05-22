@@ -2370,6 +2370,9 @@ func (s *x11Server) handleAllocColorCells(client *x11Client, req wire.Request, s
 	if cm.visual.Class != wire.PseudoColor {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorCells, wire.AccessErrorCode)
 	}
+	if uint32(p.Colors) > 0xffffffff-uint32(p.Planes) {
+		return wire.NewGenericError(seq, 0, 0, wire.AllocColorCells, wire.ValueErrorCode)
+	}
 	nreq := uint32(p.Colors) + uint32(p.Planes)
 	if nreq > 0 && len(cm.writable) == 0 {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorCells, wire.AllocErrorCode)
@@ -2402,6 +2405,9 @@ func (s *x11Server) handleAllocColorPlanes(client *x11Client, req wire.Request, 
 	}
 	if cm.visual.Class != wire.PseudoColor {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.MatchErrorCode)
+	}
+	if uint32(p.Reds) > 0xffffffff-uint32(p.Greens) || uint32(p.Reds)+uint32(p.Greens) > 0xffffffff-uint32(p.Blues) {
+		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.ValueErrorCode)
 	}
 	nreq := uint32(p.Reds) + uint32(p.Greens) + uint32(p.Blues)
 	if nreq > 0 && len(cm.writable) == 0 {
@@ -2739,6 +2745,9 @@ func (s *x11Server) handleChangeKeyboardMapping(client *x11Client, req wire.Requ
 
 func (s *x11Server) handleGetKeyboardMapping(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.GetKeyboardMappingRequest)
+	if p.Count == 0 {
+		return wire.NewGenericError(seq, 0, 0, wire.GetKeyboardMapping, wire.ValueErrorCode)
+	}
 	if p.FirstKeyCode < wire.KeyCode(s.minKeycode) || p.FirstKeyCode+wire.KeyCode(p.Count-1) > wire.KeyCode(s.maxKeycode) {
 		return wire.NewGenericError(seq, uint32(p.FirstKeyCode), 0, wire.GetKeyboardMapping, wire.ValueErrorCode)
 	}
