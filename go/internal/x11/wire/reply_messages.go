@@ -97,9 +97,24 @@ func ReadServerMessagesWithTracker(conn io.Reader, order binary.ByteOrder, track
 				}
 				ch <- p
 			default:
-				p, err := ParseEvent(header, order)
+				var msg []byte
+				if msgType == 35 { // GenericEvent
+					length := 4 * order.Uint32(header[4:8])
+					if length > 32*1024*1024 {
+						debugf("X11: GenericEvent too long: %d", length)
+						return
+					}
+					msg = append(header, make([]byte, length)...)
+					if _, err := io.ReadFull(conn, msg[32:]); err != nil {
+						debugf("X11: failed to read remaining GenericEvent: %v", err)
+						return
+					}
+				} else {
+					msg = header
+				}
+				p, err := ParseEvent(msg, order)
 				if err != nil {
-					debugf("X11 ReadServerMessages: ParseEvent(%x): %v", header, err)
+					debugf("X11 ReadServerMessages: ParseEvent(%x): %v", msg, err)
 					continue
 				}
 				ch <- p

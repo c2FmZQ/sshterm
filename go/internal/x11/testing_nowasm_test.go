@@ -45,7 +45,7 @@ func setupTestServerWithClients(t *testing.T, numClients int) (*x11Server, []*x1
 		pressedKeys:        make(map[byte]bool),
 		dirtyDrawables:     make(map[xID]bool),
 		byteOrder:          binary.LittleEndian,
-		rootVisual:         wire.VisualType{VisualID: 1, Class: wire.TrueColor, ColormapEntries: 256},
+		rootVisual:         wire.VisualType{VisualID: 1, Class: wire.TrueColor, ColormapEntries: 256, RedMask: 0xff0000, GreenMask: 0x00ff00, BlueMask: 0x0000ff},
 		visualID:           1,
 	}
 	server.visuals = map[uint32]wire.VisualType{1: server.rootVisual}

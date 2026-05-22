@@ -91,7 +91,7 @@ func main() {
 		chromedp.Sleep(5*time.Second),
 
 		// Wait for initial prompt
-		waitForTerminalText(sessionCtx, "sshterm>"),
+		waitForTerminalText("sshterm>"),
 		
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			log.Println("Sending 'ep add' command...")
@@ -102,7 +102,7 @@ func main() {
 		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
 		
 		// Wait for next prompt
-		waitForTerminalText(sessionCtx, "sshterm>"),
+		waitForTerminalText("sshterm>"),
 		
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			log.Println("Sending 'ssh -X' command...")
@@ -111,7 +111,7 @@ func main() {
 		insertText("ssh -X testuser@x11-apps"),
 		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
 		
-		waitForTerminalText(sessionCtx, "password:"),
+		waitForTerminalText("password:"),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			log.Println("Found password prompt. Sending 'sshterm'...")
 			return nil
@@ -119,7 +119,7 @@ func main() {
 		insertText("sshterm"),
 		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
 		
-		waitForTerminalText(sessionCtx, "testuser@x11-apps:~$"),
+		waitForTerminalText("testuser@x11-apps:~$"),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			log.Println("Connected! Launching multiple X11 applications with distinct positioning...")
 			return nil
@@ -244,7 +244,7 @@ func waitForCanvases(n int) chromedp.Action {
 	})
 }
 
-func waitForTerminalText(ctx context.Context, text string) chromedp.Action {
+func waitForTerminalText(text string) chromedp.Action {
 	return chromedp.ActionFunc(func(ctx context.Context) error {
 		target := strings.ToLower(text)
 		for {

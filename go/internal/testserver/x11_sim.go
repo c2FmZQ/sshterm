@@ -65,7 +65,8 @@ func (s *sshServer) readReply(reply <-chan wire.ServerMessage) wire.ServerMessag
 			}
 			return r
 		case <-time.After(5 * time.Second):
-			s.t.Fatal("timeout waiting for reply")
+			s.t.Error("timeout waiting for reply")
+			return nil
 		}
 	}
 }

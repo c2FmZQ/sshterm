@@ -803,6 +803,9 @@ func NewWindowAttributes() wire.WindowAttributes {
 }
 
 func (s *x11Server) SendMouseEvent(xid xID, eventType string, x, y, detail int32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	debugf("X11: SendMouseEvent xid=%d type=%s x=%d y=%d detail=%d", xid, eventType, x, y, detail)
 
 	originalXID := xid
@@ -1347,6 +1350,9 @@ func (s *x11Server) sendXInputMouseEvent(client *x11Client, eventType string, de
 	}
 }
 func (s *x11Server) SendKeyboardEvent(xid xID, eventType string, code string, altKey, ctrlKey, shiftKey, metaKey bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	debugf("X11: SendKeyboardEvent xid=%d type=%s code=%s alt=%t ctrl=%t shift=%t meta=%t", xid, eventType, code, altKey, ctrlKey, shiftKey, metaKey)
 
 	state := uint16(0)
@@ -1622,6 +1628,9 @@ func (s *x11Server) sendXInputKeyboardEvent(client *x11Client, eventType string,
 	}
 }
 func (s *x11Server) SendPointerCrossingEvent(isEnter bool, xid xID, rootX, rootY, eventX, eventY int16, state uint16, mode, detail byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	client, ok := s.clients[((uint32(xid) >> resourceIDShift) & clientIDMask)]
 	if !ok {
 		log.Printf("X11: Failed to write pointer crossing event: client %d not found", ((uint32(xid) >> resourceIDShift) & clientIDMask))
@@ -1870,6 +1879,9 @@ func (s *x11Server) sendExposeEvent(windowID xID, x, y, width, height uint16) {
 }
 
 func (s *x11Server) SendClientMessageEvent(windowID xID, messageTypeAtom uint32, data [20]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	debugf("X11: Sending ClientMessage event for window %d", windowID)
 	client, ok := s.clients[((uint32(windowID) >> resourceIDShift) & clientIDMask)]
 	if !ok {
@@ -2301,6 +2313,9 @@ func (s *x11Server) readRequest(client *x11Client) (wire.Request, uint16, error)
 }
 
 func (s *x11Server) cleanupClient(client *x11Client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	// First, tell the frontend to clean up all windows for this client.
 	// The frontend implementation should not record these as individual operations.
 	s.frontend.DestroyAllWindowsForClient(client.id)

@@ -1359,13 +1359,23 @@ func (s *x11Server) handleSetInputFocus(client *x11Client, req wire.Request, seq
 		// Send FocusOut to the old focus window
 		if oldFocus != 0 && uint32(oldFocus) != 1 {
 			if w, ok := s.windows[oldFocus]; ok {
-				if w.attributes.EventMask&wire.FocusChangeMask != 0 {
-					s.sendEvent(client, &wire.FocusOutEvent{
-						Sequence: seq,
-						Window:   uint32(oldFocus),
-						Mode:     0, // Normal
-						Detail:   0, // NotifyAncestor
-					})
+				for clientID, mask := range w.eventMasks {
+					if mask&wire.FocusChangeMask != 0 {
+						if c, ok := s.clients[clientID]; ok {
+							var eventSeq uint16
+							if c == client {
+								eventSeq = seq
+							} else {
+								eventSeq = c.sequence - 1
+							}
+							s.sendEvent(c, &wire.FocusOutEvent{
+								Sequence: eventSeq,
+								Window:   uint32(oldFocus),
+								Mode:     0, // Normal
+								Detail:   0, // NotifyAncestor
+							})
+						}
+					}
 				}
 			}
 		}
@@ -1373,13 +1383,23 @@ func (s *x11Server) handleSetInputFocus(client *x11Client, req wire.Request, seq
 		// Send FocusIn to the new focus window
 		if xid != 0 && uint32(xid) != 1 {
 			if w, ok := s.windows[xid]; ok {
-				if w.attributes.EventMask&wire.FocusChangeMask != 0 {
-					s.sendEvent(client, &wire.FocusInEvent{
-						Sequence: seq,
-						Window:   uint32(xid),
-						Mode:     0, // Normal
-						Detail:   0, // NotifyAncestor
-					})
+				for clientID, mask := range w.eventMasks {
+					if mask&wire.FocusChangeMask != 0 {
+						if c, ok := s.clients[clientID]; ok {
+							var eventSeq uint16
+							if c == client {
+								eventSeq = seq
+							} else {
+								eventSeq = c.sequence - 1
+							}
+							s.sendEvent(c, &wire.FocusInEvent{
+								Sequence: eventSeq,
+								Window:   uint32(xid),
+								Mode:     0, // Normal
+								Detail:   0, // NotifyAncestor
+							})
+						}
+					}
 				}
 			}
 		}
@@ -2270,7 +2290,13 @@ func (s *x11Server) handleAllocNamedColor(client *x11Client, req wire.Request, s
 
 	var pixel uint32
 	if cm.visual.Class == wire.TrueColor || cm.visual.Class == wire.DirectColor {
-		pixel = (uint32(rgb.Red) << 16) | (uint32(rgb.Green) << 8) | uint32(rgb.Blue)
+		r := uint32(exactRed) >> (16 - wire.BitCount(cm.visual.RedMask))
+		g := uint32(exactGreen) >> (16 - wire.BitCount(cm.visual.GreenMask))
+		b := uint32(exactBlue) >> (16 - wire.BitCount(cm.visual.BlueMask))
+
+		pixel = (r << wire.BitOffset(cm.visual.RedMask)) |
+			(g << wire.BitOffset(cm.visual.GreenMask)) |
+			(b << wire.BitOffset(cm.visual.BlueMask))
 	} else {
 		// Check if the color is already allocated
 		found := false
@@ -2326,8 +2352,6 @@ func (s *x11Server) findAllocatableCells(cm *colormap, n uint32) []uint32 {
 		}
 		if !cm.allocated[i] {
 			pixels = append(pixels, uint32(i))
-		} else {
-			pixels = pixels[:0]
 		}
 	}
 

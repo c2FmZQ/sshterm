@@ -133,7 +133,7 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 
 	if forwardX11 && !x11.Enabled() {
 		t.Errorf("X11 support is not included in this build")
-		log.Printf("ForwardX11 requested, but X11 is not enabled")
+		return fmt.Errorf("X11 forwarding requested, but X11 support is not included in this build")
 	}
 	if forwardX11 && x11.Enabled() {
 		// Request X11 forwarding.
@@ -163,10 +163,10 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 			return fmt.Errorf("session.SendRequest x11-req: %w", err)
 		}
 		if !ok {
-			log.Printf("session.SendRequest x11-req returned false\n")
-			return fmt.Errorf("session.SendRequest x11-req failed")
+			log.Printf("session.SendRequest x11-req returned false (X11 forwarding rejected by server)\n")
+		} else {
+			log.Printf("session.SendRequest x11-req returned true\n")
 		}
-		log.Printf("session.SendRequest x11-req returned true\n")
 	}
 
 	session.Stdin = t
