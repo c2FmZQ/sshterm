@@ -823,6 +823,15 @@ func (s *x11Server) handleConvertSelection(client *x11Client, req wire.Request, 
 	if !ok && selectionAtom == clipboardAtom {
 		go func() {
 			content, err := s.frontend.ReadClipboard()
+
+			s.mu.Lock()
+			defer s.mu.Unlock()
+
+			clientID := (uint32(requestor) >> resourceIDShift) & clientIDMask
+			if _, exists := s.clients[clientID]; !exists {
+				return
+			}
+
 			if err != nil {
 				s.SendSelectionNotify(requestor, selectionAtom, targetAtom, 0, nil)
 				return
@@ -845,8 +854,6 @@ func (s *x11Server) handleConvertSelection(client *x11Client, req wire.Request, 
 				return
 			}
 
-			s.mu.Lock()
-			defer s.mu.Unlock()
 			s.ChangeProperty(requestor, propertyAtom, propertyType, format, data)
 			s.SendSelectionNotify(requestor, selectionAtom, targetAtom, propertyAtom, nil)
 		}()
@@ -1521,7 +1528,7 @@ func (s *x11Server) handleListFontsWithInfo(client *x11Client, req wire.Request,
 	fontNames := s.frontend.ListFonts(p.MaxNames, p.Pattern)
 	// Use a temporary FID that is unique to this client to avoid conflicts.
 	// We use the client's resource ID base and a high-range local ID.
-	tempFID := xID((client.id << 20) | 0xFFFFF)
+	tempFID := xID((client.id << resourceIDShift) | localIDMask)
 
 	for _, name := range fontNames {
 		s.frontend.OpenFont(tempFID, name)

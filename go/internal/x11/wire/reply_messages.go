@@ -79,7 +79,8 @@ func ReadServerMessagesWithTracker(conn io.Reader, order binary.ByteOrder, track
 					debugf("X11: server message too long: %d", replyLength)
 					return
 				}
-				msg := append(header, make([]byte, replyLength)...)
+				msg := make([]byte, 32+replyLength)
+				copy(msg, header)
 				if _, err := io.ReadFull(conn, msg[32:]); err != nil {
 					debugf("X11: failed to read remaining server message: %v", err)
 					return
@@ -104,7 +105,8 @@ func ReadServerMessagesWithTracker(conn io.Reader, order binary.ByteOrder, track
 						debugf("X11: GenericEvent too long: %d", length)
 						return
 					}
-					msg = append(header, make([]byte, length)...)
+					msg = make([]byte, 32+length)
+					copy(msg, header)
 					if _, err := io.ReadFull(conn, msg[32:]); err != nil {
 						debugf("X11: failed to read remaining GenericEvent: %v", err)
 						return
