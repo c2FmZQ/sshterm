@@ -3171,7 +3171,11 @@ func (w *wasmX11Frontend) UngrabPointer(time uint32) {
 }
 
 func (w *wasmX11Frontend) SendConfigureAndExposeEvent(windowID xID, x, y int16, width, height uint16) {
-	w.server.sendConfigureNotifyEvent(windowID, x, y, width, height)
+	var borderWidth uint16
+	if win, ok := w.server.windows[windowID]; ok {
+		borderWidth = win.borderWidth
+	}
+	w.server.sendConfigureNotifyEvent(windowID, x, y, width, height, borderWidth, 0)
 	w.server.sendExposeEvent(windowID, 0, 0, width, height) // Send expose for the entire window
 	if win, ok := w.server.windows[windowID]; ok {
 		for _, childID := range win.children {

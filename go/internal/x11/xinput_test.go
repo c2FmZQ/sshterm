@@ -105,7 +105,10 @@ func TestXIQueryPointer_DeepTraversal(t *testing.T) {
 		height: 20,
 		mapped: true,
 	}
-	server.windowStack = []xID{parentID, childID, grandchildID} // Stacking order
+	// Stacking order
+	server.windows[xID(server.rootWindowID())].children = []xID{parentID}
+	server.windows[parentID].children = []xID{childID}
+	server.windows[childID].children = []xID{grandchildID}
 
 	// Pointer at (35, 35) absolute, which is inside the grandchild
 	server.pointerX = 35

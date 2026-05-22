@@ -551,7 +551,7 @@ func (e *GenericEventData) EncodeMessage(order binary.ByteOrder) []byte {
 // EncodeMessage encodes the DeviceMotionNotifyEvent into a byte slice.
 func (e *DeviceMotionNotifyEvent) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := make([]byte, 32)
-	buf[0] = byte(XInputOpcode)
+	buf[0] = e.BaseEventCode + DeviceMotionNotify
 	buf[1] = 6 // DeviceMotionNotify
 	order.PutUint16(buf[2:4], e.Sequence)
 	order.PutUint32(buf[4:8], e.Time)
@@ -574,7 +574,7 @@ func (e *DeviceMotionNotifyEvent) EventCode() uint8 { return byte(XInputOpcode) 
 // EncodeMessage encodes the ProximityInEvent into a byte slice.
 func (e *ProximityInEvent) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := make([]byte, 32)
-	buf[0] = byte(XInputOpcode)
+	buf[0] = e.BaseEventCode + ProximityIn
 	buf[1] = 8 // ProximityIn
 	order.PutUint16(buf[2:4], e.Sequence)
 	order.PutUint32(buf[4:8], e.Time)
@@ -597,7 +597,7 @@ func (e *ProximityInEvent) EventCode() uint8 { return byte(XInputOpcode) }
 // EncodeMessage encodes the ProximityOutEvent into a byte slice.
 func (e *ProximityOutEvent) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := make([]byte, 32)
-	buf[0] = byte(XInputOpcode)
+	buf[0] = e.BaseEventCode + ProximityOut
 	buf[1] = 9 // ProximityOut
 	order.PutUint16(buf[2:4], e.Sequence)
 	order.PutUint32(buf[4:8], e.Time)
@@ -654,6 +654,7 @@ func ParseButtonPressEvent(buf []byte, order binary.ByteOrder) (*ButtonPressEven
 // ParseDeviceButtonReleaseEvent parses an XInput DeviceButtonRelease event.
 func ParseDeviceButtonReleaseEvent(buf []byte, order binary.ByteOrder) (*DeviceButtonReleaseEvent, error) {
 	e := &DeviceButtonReleaseEvent{}
+	e.BaseEventCode = buf[0] - DeviceButtonRelease
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
 	e.Root = order.Uint32(buf[8:12])
@@ -811,6 +812,7 @@ func ParseClientMessageEvent(buf []byte, order binary.ByteOrder) (*ClientMessage
 // ParseDeviceKeyPressEvent parses an XInput DeviceKeyPress event.
 func ParseDeviceKeyPressEvent(buf []byte, order binary.ByteOrder) (*DeviceKeyPressEvent, error) {
 	e := &DeviceKeyPressEvent{}
+	e.BaseEventCode = buf[0] - DeviceKeyPress
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
 	e.Root = order.Uint32(buf[8:12])
@@ -829,6 +831,7 @@ func ParseDeviceKeyPressEvent(buf []byte, order binary.ByteOrder) (*DeviceKeyPre
 // ParseDeviceKeyReleaseEvent parses an XInput DeviceKeyRelease event.
 func ParseDeviceKeyReleaseEvent(buf []byte, order binary.ByteOrder) (*DeviceKeyReleaseEvent, error) {
 	e := &DeviceKeyReleaseEvent{}
+	e.BaseEventCode = buf[0] - DeviceKeyRelease
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
 	e.Root = order.Uint32(buf[8:12])
@@ -847,6 +850,7 @@ func ParseDeviceKeyReleaseEvent(buf []byte, order binary.ByteOrder) (*DeviceKeyR
 // ParseDeviceButtonPressEvent parses an XInput DeviceButtonPress event.
 func ParseDeviceButtonPressEvent(buf []byte, order binary.ByteOrder) (*DeviceButtonPressEvent, error) {
 	e := &DeviceButtonPressEvent{}
+	e.BaseEventCode = buf[0] - DeviceButtonPress
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
 	e.Root = order.Uint32(buf[8:12])
@@ -1078,6 +1082,7 @@ func ParseGenericEvent(buf []byte, order binary.ByteOrder) (*GenericEventData, e
 // ParseDeviceMotionNotifyEvent parses an XInput DeviceMotionNotify event.
 func ParseDeviceMotionNotifyEvent(buf []byte, order binary.ByteOrder) (*DeviceMotionNotifyEvent, error) {
 	e := &DeviceMotionNotifyEvent{}
+	e.BaseEventCode = buf[0] - DeviceMotionNotify
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
 	e.Root = order.Uint32(buf[8:12])
@@ -1096,6 +1101,7 @@ func ParseDeviceMotionNotifyEvent(buf []byte, order binary.ByteOrder) (*DeviceMo
 // ParseProximityInEvent parses an XInput ProximityIn event.
 func ParseProximityInEvent(buf []byte, order binary.ByteOrder) (*ProximityInEvent, error) {
 	e := &ProximityInEvent{}
+	e.BaseEventCode = buf[0] - ProximityIn
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
 	e.Root = order.Uint32(buf[8:12])
@@ -1114,6 +1120,7 @@ func ParseProximityInEvent(buf []byte, order binary.ByteOrder) (*ProximityInEven
 // ParseProximityOutEvent parses an XInput ProximityOut event.
 func ParseProximityOutEvent(buf []byte, order binary.ByteOrder) (*ProximityOutEvent, error) {
 	e := &ProximityOutEvent{}
+	e.BaseEventCode = buf[0] - ProximityOut
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
 	e.Root = order.Uint32(buf[8:12])
@@ -1202,7 +1209,7 @@ func ParseEvent(buf []byte, order binary.ByteOrder) (Event, error) {
 		return ParseMappingNotifyEvent(buf, order)
 	case GenericEvent:
 		return ParseGenericEvent(buf, order)
-	case byte(XInputOpcode):
+	case byte(XInputOpcode), 66, 67, 68, 69, 70, 71, 72, 73:
 		switch buf[1] {
 		case DeviceKeyPress:
 			return ParseDeviceKeyPressEvent(buf, order)
@@ -1226,7 +1233,7 @@ func ParseEvent(buf []byte, order binary.ByteOrder) (Event, error) {
 // DeviceButtonReleaseEvent parses an XInput DeviceButtonRelease event.
 func (e *DeviceButtonReleaseEvent) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := make([]byte, 32)
-	buf[0] = byte(XInputOpcode)
+	buf[0] = e.BaseEventCode + DeviceButtonRelease
 	buf[1] = DeviceButtonRelease
 	order.PutUint16(buf[2:4], e.Sequence)
 	order.PutUint32(buf[4:8], e.Time)
@@ -1633,8 +1640,9 @@ func (e *X11RawEvent) EncodeMessage(order binary.ByteOrder) []byte {
 
 // DeviceKeyPressEvent is an XInput key press event.
 type DeviceKeyPressEvent struct {
-	DeviceID   byte   // Device ID
-	Sequence   uint16 // Sequence number
+	BaseEventCode uint8  // Base event code
+	DeviceID      byte   // Device ID
+	Sequence      uint16 // Sequence number
 	Time       uint32 // Time of event
 	Root       uint32 // Root window ID
 	Event      uint32 // Event window ID
@@ -1654,7 +1662,7 @@ func (e *DeviceKeyPressEvent) EventCode() uint8 { return byte(XInputOpcode) }
 // EncodeMessage encodes the DeviceKeyPressEvent into a byte slice.
 func (e *DeviceKeyPressEvent) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := make([]byte, 32)
-	buf[0] = byte(XInputOpcode)
+	buf[0] = e.BaseEventCode + DeviceKeyPress
 	buf[1] = DeviceKeyPress
 	order.PutUint16(buf[2:4], e.Sequence)
 	order.PutUint32(buf[4:8], e.Time)
@@ -1673,8 +1681,9 @@ func (e *DeviceKeyPressEvent) EncodeMessage(order binary.ByteOrder) []byte {
 
 // DeviceKeyReleaseEvent is an XInput key release event.
 type DeviceKeyReleaseEvent struct {
-	DeviceID   byte   // Device ID
-	Sequence   uint16 // Sequence number
+	BaseEventCode uint8  // Base event code
+	DeviceID      byte   // Device ID
+	Sequence      uint16 // Sequence number
 	Time       uint32 // Time of event
 	Root       uint32 // Root window ID
 	Event      uint32 // Event window ID
@@ -1694,7 +1703,7 @@ func (e *DeviceKeyReleaseEvent) EventCode() uint8 { return byte(XInputOpcode) }
 // EncodeMessage encodes the DeviceKeyReleaseEvent into a byte slice.
 func (e *DeviceKeyReleaseEvent) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := make([]byte, 32)
-	buf[0] = byte(XInputOpcode)
+	buf[0] = e.BaseEventCode + DeviceKeyRelease
 	buf[1] = DeviceKeyRelease
 	order.PutUint16(buf[2:4], e.Sequence)
 	order.PutUint32(buf[4:8], e.Time)
@@ -1713,8 +1722,9 @@ func (e *DeviceKeyReleaseEvent) EncodeMessage(order binary.ByteOrder) []byte {
 
 // DeviceButtonPressEvent is an XInput button press event.
 type DeviceButtonPressEvent struct {
-	DeviceID   byte   // Device ID
-	Sequence   uint16 // Sequence number
+	BaseEventCode uint8  // Base event code
+	DeviceID      byte   // Device ID
+	Sequence      uint16 // Sequence number
 	Time       uint32 // Time of event
 	Root       uint32 // Root window ID
 	Event      uint32 // Event window ID
@@ -1739,7 +1749,7 @@ func (e *DeviceButtonPressEvent) SetSequence(seq uint16) {
 // EncodeMessage encodes the DeviceButtonPressEvent into a byte slice.
 func (e *DeviceButtonPressEvent) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := make([]byte, 32)
-	buf[0] = byte(XInputOpcode)
+	buf[0] = e.BaseEventCode + DeviceButtonPress
 	buf[1] = DeviceButtonPress
 	order.PutUint16(buf[2:4], e.Sequence)
 	order.PutUint32(buf[4:8], e.Time)
@@ -1758,8 +1768,9 @@ func (e *DeviceButtonPressEvent) EncodeMessage(order binary.ByteOrder) []byte {
 
 // DeviceButtonReleaseEvent represents an XInput button release event.
 type DeviceButtonReleaseEvent struct {
-	Sequence   uint16 // Sequence number
-	DeviceID   byte   // Device ID
+	BaseEventCode uint8  // Base event code
+	Sequence      uint16 // Sequence number
+	DeviceID      byte   // Device ID
 	Time       uint32 // Time of event
 	Button     byte   // Button code
 	Root       uint32 // Root window ID
@@ -1778,8 +1789,9 @@ func (e *DeviceButtonReleaseEvent) EventCode() uint8 { return byte(XInputOpcode)
 
 // DeviceMotionNotifyEvent represents an XInput motion event.
 type DeviceMotionNotifyEvent struct {
-	Sequence   uint16 // Sequence number
-	DeviceID   byte   // Device ID
+	BaseEventCode uint8  // Base event code
+	Sequence      uint16 // Sequence number
+	DeviceID      byte   // Device ID
 	Time       uint32 // Time of event
 	Detail     byte   // Detail
 	Root       uint32 // Root window ID
@@ -1795,8 +1807,9 @@ type DeviceMotionNotifyEvent struct {
 
 // ProximityInEvent represents an XInput proximity in event.
 type ProximityInEvent struct {
-	Sequence   uint16 // Sequence number
-	DeviceID   byte   // Device ID
+	BaseEventCode uint8  // Base event code
+	Sequence      uint16 // Sequence number
+	DeviceID      byte   // Device ID
 	Time       uint32 // Time of event
 	Detail     byte   // Detail
 	Root       uint32 // Root window ID
@@ -1812,8 +1825,9 @@ type ProximityInEvent struct {
 
 // ProximityOutEvent represents an XInput proximity out event.
 type ProximityOutEvent struct {
-	Sequence   uint16 // Sequence number
-	DeviceID   byte   // Device ID
+	BaseEventCode uint8  // Base event code
+	Sequence      uint16 // Sequence number
+	DeviceID      byte   // Device ID
 	Time       uint32 // Time of event
 	Detail     byte   // Detail
 	Root       uint32 // Root window ID

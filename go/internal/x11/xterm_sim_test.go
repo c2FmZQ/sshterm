@@ -40,7 +40,8 @@ func TestXTermSimulation(t *testing.T) {
 			Colormap:        1,
 		},
 	}
-	server.handleCreateWindow(client, createWindowReq, 1)
+	reply := server.handleCreateWindow(client, createWindowReq, 1)
+	require.Nil(t, reply, "handleCreateWindow returned error: %v", reply)
 
 	// Verify window created in frontend
 	assert.Equal(t, 1, len(mockFrontend.CreateWindowCalls), "Frontend CreateWindow should be called")

@@ -232,7 +232,6 @@ type x11Server struct {
 	frontend                 X11FrontendAPI
 	config                   wire.ServerConfig
 	windows                  map[xID]*window
-	windowStack              []xID
 	gcs                      map[xID]wire.GC
 	pixmaps                  map[xID]*pixmap
 	cursors                  map[xID]bool
@@ -257,6 +256,8 @@ type x11Server struct {
 	pointerX, pointerY       int16
 	clients                  map[uint32]*x11Client
 	nextClientID             uint32
+	xinputFirstEvent         byte
+	xinputFirstError         byte
 	pointerGrabWindow        xID
 	keyboardGrabWindow       xID
 	pointerGrabClientID      uint32
@@ -517,33 +518,33 @@ func (s *x11Server) getAbsoluteWindowCoords(xid xID) (int16, int16, bool) {
 	if !ok {
 		return 0, 0, false
 	}
-	absX, absY := w.x, w.y
+	absX, absY := int32(w.x), int32(w.y)
 	for uint32(w.parent) != s.rootWindowID() {
 		parentW, ok := s.windows[w.parent]
 		if !ok {
 			s.logger.Errorf("Could not find parent window object for %d", w.parent)
 			break
 		}
-		absX += parentW.x
-		absY += parentW.y
+		absX += int32(parentW.x)
+		absY += int32(parentW.y)
 		w = parentW
 	}
-	return absX, absY, true
+	return int16(absX), int16(absY), true
 }
 
 func (s *x11Server) findChildWindowAt(parentXID xID, x, y int16) xID {
 	parent, ok := s.windows[parentXID]
-	if !ok || !parent.mapped {
+	if !ok || (uint32(parentXID) != s.rootWindowID() && !parent.mapped) {
 		return 0 // None
 	}
 
-	// Iterate backwards through the global window stack to find the topmost child.
-	for i := len(s.windowStack) - 1; i >= 0; i-- {
-		childXID := s.windowStack[i]
+	// Iterate backwards through the parent's children to find the topmost child.
+	for i := len(parent.children) - 1; i >= 0; i-- {
+		childXID := parent.children[i]
 		child, ok := s.windows[childXID]
 
-		// Ensure the window is valid, mapped, and actually a child of the target parent.
-		if !ok || !child.mapped || child.parent != parentXID {
+		// Ensure the window is valid and mapped.
+		if !ok || !child.mapped {
 			continue
 		}
 
@@ -570,13 +571,13 @@ func (s *x11Server) findDirectChildWindowAt(parentXID xID, x, y int16) xID {
 		return 0 // None
 	}
 
-	// Iterate backwards through the global window stack to find the topmost child.
-	for i := len(s.windowStack) - 1; i >= 0; i-- {
-		childXID := s.windowStack[i]
+	// Iterate backwards through the parent's children to find the topmost child.
+	for i := len(parent.children) - 1; i >= 0; i-- {
+		childXID := parent.children[i]
 		child, ok := s.windows[childXID]
 
-		// Ensure the window is valid, mapped, and actually a direct child of the target parent.
-		if !ok || !child.mapped || child.parent != parentXID {
+		// Ensure the window is valid and mapped.
+		if !ok || !child.mapped {
 			continue
 		}
 
@@ -592,25 +593,7 @@ func (s *x11Server) findDirectChildWindowAt(parentXID xID, x, y int16) xID {
 }
 
 func (s *x11Server) findTopLevelWindowAt(x, y int16) xID {
-	// Iterate backwards through the window stack to check the top-most windows first.
-	for i := len(s.windowStack) - 1; i >= 0; i-- {
-		xid := s.windowStack[i]
-		child, ok := s.windows[xid]
-		if !ok || !child.mapped || uint32(child.parent) != s.rootWindowID() {
-			continue
-		}
-
-		if x >= child.x && x < (child.x+int16(child.width)) &&
-			y >= child.y && y < (child.y+int16(child.height)) {
-			// This window contains the point. Check its children recursively.
-			grandchildID := s.findChildWindowAt(child.xid, x-child.x, y-child.y)
-			if grandchildID != 0 {
-				return grandchildID
-			}
-			return child.xid
-		}
-	}
-	return 0 // No child found
+	return s.findChildWindowAt(xID(s.rootWindowID()), x, y)
 }
 
 func (s *x11Server) GetWindowAttributes(xid xID) (wire.WindowAttributes, bool) {
@@ -643,23 +626,107 @@ func (s *x11Server) destroyWindow(xid xID, removeFromParent bool) {
 		}
 	}
 
+	parentXID := w.parent
+
 	delete(s.windows, xid)
 	delete(s.properties, xid)
-	s.removeWindowFromStack(xid)
 	s.frontend.DestroyWindow(xid)
+	s.sendDestroyNotifyEvent(xid, parentXID)
 }
 
-func (s *x11Server) removeWindowFromStack(xid xID) {
-	idx := -1
-	for i, id := range s.windowStack {
+func (s *x11Server) reconfigureStacking(xid xID, stackMode uint32, sibling xID) {
+	w, ok := s.windows[xid]
+	if !ok {
+		return
+	}
+	parent, ok := s.windows[w.parent]
+	if !ok {
+		return
+	}
+
+	// Remove from current position
+	for i, id := range parent.children {
 		if id == xid {
-			idx = i
+			parent.children = append(parent.children[:i], parent.children[i+1:]...)
 			break
 		}
 	}
-	if idx != -1 {
-		s.windowStack = append(s.windowStack[:idx], s.windowStack[idx+1:]...)
+
+	done := false
+	switch stackMode {
+	case 0: // Above
+		if sibling != 0 {
+			for i, id := range parent.children {
+				if id == sibling {
+					parent.children = append(parent.children[:i+1], append([]xID{xid}, parent.children[i+1:]...)...)
+					done = true
+					break
+				}
+			}
+		}
+		if !done {
+			parent.children = append(parent.children, xid) // Default to top
+		}
+	case 1: // Below
+		if sibling != 0 {
+			for i, id := range parent.children {
+				if id == sibling {
+					parent.children = append(parent.children[:i], append([]xID{xid}, parent.children[i:]...)...)
+					done = true
+					break
+				}
+			}
+		}
+		if !done {
+			parent.children = append([]xID{xid}, parent.children...) // Default to bottom
+		}
+	case 2: // TopIf
+		parent.children = append(parent.children, xid)
+	case 3: // BottomIf
+		parent.children = append([]xID{xid}, parent.children...)
+	case 4: // Opposite
+		parent.children = append(parent.children, xid) // Treat as Top for simplicity
 	}
+}
+
+func (s *x11Server) moveWindowToTop(xid xID) {
+	w, ok := s.windows[xid]
+	if !ok {
+		return
+	}
+	parent, ok := s.windows[w.parent]
+	if !ok {
+		return
+	}
+	// Remove from current position
+	for i, childID := range parent.children {
+		if childID == xid {
+			parent.children = append(parent.children[:i], parent.children[i+1:]...)
+			break
+		}
+	}
+	// Append to the end (top)
+	parent.children = append(parent.children, xid)
+}
+
+func (s *x11Server) moveWindowToBottom(xid xID) {
+	w, ok := s.windows[xid]
+	if !ok {
+		return
+	}
+	parent, ok := s.windows[w.parent]
+	if !ok {
+		return
+	}
+	// Remove from current position
+	for i, childID := range parent.children {
+		if childID == xid {
+			parent.children = append(parent.children[:i], parent.children[i+1:]...)
+			break
+		}
+	}
+	// Prepend to the beginning (bottom)
+	parent.children = append([]xID{xid}, parent.children...)
 }
 
 func (s *x11Server) checkWindow(xid xID, seq uint16, majorReq wire.ReqCode, minorReq byte) wire.Error {
@@ -1598,29 +1665,166 @@ func (s *x11Server) SendPointerCrossingEvent(isEnter bool, xid xID, rootX, rootY
 	}
 }
 
-func (s *x11Server) sendConfigureNotifyEvent(windowID xID, x, y int16, width, height uint16) {
-	debugf("X11: Sending ConfigureNotify event for window %d", windowID)
-	client, ok := s.clients[((uint32(windowID) >> resourceIDShift) & clientIDMask)]
+func (s *x11Server) sendCreateNotifyEvent(windowID xID) {
+	w, ok := s.windows[windowID]
 	if !ok {
-		log.Printf("X11: Failed to write ConfigureNotify event: client %d not found", ((uint32(windowID) >> resourceIDShift) & clientIDMask))
 		return
 	}
-
-	event := &wire.ConfigureNotifyEvent{
-		Sequence:         client.sequence - 1,
-		Event:            uint32(windowID),
-		Window:           uint32(windowID),
-		AboveSibling:     0, // None
-		X:                x,
-		Y:                y,
-		Width:            width,
-		Height:           height,
-		BorderWidth:      0,
-		OverrideRedirect: false,
+	// Send to parent if SubstructureNotifyMask set
+	if parent, ok := s.windows[w.parent]; ok {
+		parentClientID := (uint32(w.parent) >> resourceIDShift) & clientIDMask
+		if client, ok := s.clients[parentClientID]; ok {
+			if parent.attributes.EventMask&wire.SubstructureNotifyMask != 0 {
+				s.sendEvent(client, &wire.CreateNotifyEvent{
+					Sequence:         client.sequence - 1,
+					Parent:           uint32(w.parent),
+					Window:           uint32(windowID),
+					X:                w.x,
+					Y:                w.y,
+					Width:            w.width,
+					Height:           w.height,
+					BorderWidth:      w.borderWidth,
+					OverrideRedirect: w.attributes.OverrideRedirect,
+				})
+			}
+		}
 	}
+}
 
-	if err := client.send(event); err != nil {
-		debugf("X11: Failed to write ConfigureNotify event: %v", err)
+func (s *x11Server) sendDestroyNotifyEvent(windowID xID, parentXID xID) {
+	// Send to owner if StructureNotifyMask set
+	clientID := (uint32(windowID) >> resourceIDShift) & clientIDMask
+	if client, ok := s.clients[clientID]; ok {
+		s.sendEvent(client, &wire.DestroyNotifyEvent{
+			Sequence: client.sequence - 1,
+			Event:    uint32(windowID),
+			Window:   uint32(windowID),
+		})
+	}
+	// Send to parent if SubstructureNotifyMask set
+	if parent, ok := s.windows[parentXID]; ok {
+		parentClientID := (uint32(parentXID) >> resourceIDShift) & clientIDMask
+		if client, ok := s.clients[parentClientID]; ok {
+			if parent.attributes.EventMask&wire.SubstructureNotifyMask != 0 {
+				s.sendEvent(client, &wire.DestroyNotifyEvent{
+					Sequence: client.sequence - 1,
+					Event:    uint32(parentXID),
+					Window:   uint32(windowID),
+				})
+			}
+		}
+	}
+}
+
+func (s *x11Server) sendMapNotifyEvent(windowID xID) {
+	w, ok := s.windows[windowID]
+	if !ok {
+		return
+	}
+	// Send to owner if StructureNotifyMask set
+	clientID := (uint32(windowID) >> resourceIDShift) & clientIDMask
+	if client, ok := s.clients[clientID]; ok {
+		if w.attributes.EventMask&wire.StructureNotifyMask != 0 {
+			s.sendEvent(client, &wire.MapNotifyEvent{
+				Sequence:         client.sequence - 1,
+				Event:            uint32(windowID),
+				Window:           uint32(windowID),
+				OverrideRedirect: w.attributes.OverrideRedirect,
+			})
+		}
+	}
+	// Send to parent if SubstructureNotifyMask set
+	if parent, ok := s.windows[w.parent]; ok {
+		parentClientID := (uint32(w.parent) >> resourceIDShift) & clientIDMask
+		if client, ok := s.clients[parentClientID]; ok {
+			if parent.attributes.EventMask&wire.SubstructureNotifyMask != 0 {
+				s.sendEvent(client, &wire.MapNotifyEvent{
+					Sequence:         client.sequence - 1,
+					Event:            uint32(w.parent),
+					Window:           uint32(windowID),
+					OverrideRedirect: w.attributes.OverrideRedirect,
+				})
+			}
+		}
+	}
+}
+
+func (s *x11Server) sendUnmapNotifyEvent(windowID xID, fromConfigure bool) {
+	w, ok := s.windows[windowID]
+	if !ok {
+		return
+	}
+	// Send to owner if StructureNotifyMask set
+	clientID := (uint32(windowID) >> resourceIDShift) & clientIDMask
+	if client, ok := s.clients[clientID]; ok {
+		if w.attributes.EventMask&wire.StructureNotifyMask != 0 {
+			s.sendEvent(client, &wire.UnmapNotifyEvent{
+				Sequence:      client.sequence - 1,
+				Event:         uint32(windowID),
+				Window:        uint32(windowID),
+				FromConfigure: fromConfigure,
+			})
+		}
+	}
+	// Send to parent if SubstructureNotifyMask set
+	if parent, ok := s.windows[w.parent]; ok {
+		parentClientID := (uint32(w.parent) >> resourceIDShift) & clientIDMask
+		if client, ok := s.clients[parentClientID]; ok {
+			if parent.attributes.EventMask&wire.SubstructureNotifyMask != 0 {
+				s.sendEvent(client, &wire.UnmapNotifyEvent{
+					Sequence:      client.sequence - 1,
+					Event:         uint32(w.parent),
+					Window:        uint32(windowID),
+					FromConfigure: fromConfigure,
+				})
+			}
+		}
+	}
+}
+
+func (s *x11Server) sendConfigureNotifyEvent(windowID xID, x, y int16, width, height, borderWidth uint16, aboveSibling xID) {
+	w, ok := s.windows[windowID]
+	if !ok {
+		return
+	}
+	debugf("X11: Sending ConfigureNotify event for window %d", windowID)
+	// Send to owner if StructureNotifyMask set
+	clientID := (uint32(windowID) >> resourceIDShift) & clientIDMask
+	if client, ok := s.clients[clientID]; ok {
+		if w.attributes.EventMask&wire.StructureNotifyMask != 0 {
+			s.sendEvent(client, &wire.ConfigureNotifyEvent{
+				Sequence:         client.sequence - 1,
+				Event:            uint32(windowID),
+				Window:           uint32(windowID),
+				AboveSibling:     uint32(aboveSibling),
+				X:                x,
+				Y:                y,
+				Width:            width,
+				Height:           height,
+				BorderWidth:      borderWidth,
+				OverrideRedirect: w.attributes.OverrideRedirect,
+			})
+		}
+	}
+	// Send to parent if SubstructureNotifyMask set
+	if parent, ok := s.windows[w.parent]; ok {
+		parentClientID := (uint32(w.parent) >> resourceIDShift) & clientIDMask
+		if client, ok := s.clients[parentClientID]; ok {
+			if parent.attributes.EventMask&wire.SubstructureNotifyMask != 0 {
+				s.sendEvent(client, &wire.ConfigureNotifyEvent{
+					Sequence:         client.sequence - 1,
+					Event:            uint32(w.parent),
+					Window:           uint32(windowID),
+					AboveSibling:     uint32(aboveSibling),
+					X:                x,
+					Y:                y,
+					Width:            width,
+					Height:           height,
+					BorderWidth:      borderWidth,
+					OverrideRedirect: w.attributes.OverrideRedirect,
+				})
+			}
+		}
 	}
 }
 
@@ -1725,6 +1929,24 @@ func (s *x11Server) sendEvent(client *x11Client, event messageEncoder) {
 		s.keyboardEventQueue = append(s.keyboardEventQueue, queuedEvent{client: client, event: event})
 		return
 	}
+
+	switch e := event.(type) {
+	case *wire.DeviceKeyPressEvent:
+		e.BaseEventCode = s.xinputFirstEvent
+	case *wire.DeviceKeyReleaseEvent:
+		e.BaseEventCode = s.xinputFirstEvent
+	case *wire.DeviceButtonPressEvent:
+		e.BaseEventCode = s.xinputFirstEvent
+	case *wire.DeviceButtonReleaseEvent:
+		e.BaseEventCode = s.xinputFirstEvent
+	case *wire.DeviceMotionNotifyEvent:
+		e.BaseEventCode = s.xinputFirstEvent
+	case *wire.ProximityInEvent:
+		e.BaseEventCode = s.xinputFirstEvent
+	case *wire.ProximityOutEvent:
+		e.BaseEventCode = s.xinputFirstEvent
+	}
+
 	if err := client.send(event); err != nil {
 		s.logger.Errorf("Failed to write event: %v", err)
 	}
@@ -2086,7 +2308,6 @@ func (s *x11Server) cleanupClient(client *x11Client) {
 				}
 			}
 			delete(s.windows, xid)
-			s.removeWindowFromStack(xid)
 		}
 	}
 
@@ -2270,14 +2491,13 @@ func HandleX11Forwarding(logger Logger, client *ssh.Client, authProtocol string,
 
 			once.Do(func() {
 				x11ServerInstance = &x11Server{
-					logger:      logger,
-					windows:     make(map[xID]*window),
-					windowStack: make([]xID, 0),
-					gcs:         make(map[xID]wire.GC),
-					pixmaps:     make(map[xID]*pixmap),
-					cursors:     make(map[xID]bool),
-					selections:  make(map[uint32]*selectionOwner),
-					properties:  make(map[xID]map[uint32]*property),
+					logger:     logger,
+					windows:    make(map[xID]*window),
+					gcs:        make(map[xID]wire.GC),
+					pixmaps:    make(map[xID]*pixmap),
+					cursors:    make(map[xID]bool),
+					selections: make(map[uint32]*selectionOwner),
+					properties: make(map[xID]map[uint32]*property),
 					colormaps: map[xID]*colormap{
 						xID(1): {
 							pixels: map[uint32]wire.XColorItem{
@@ -2290,6 +2510,8 @@ func HandleX11Forwarding(logger Logger, client *ssh.Client, authProtocol string,
 					defaultColormap:    1,
 					clients:            make(map[uint32]*x11Client),
 					nextClientID:       1,
+					xinputFirstEvent:   64,
+					xinputFirstError:   64,
 					passiveGrabs:       make(map[xID][]*passiveGrab),
 					passiveDeviceGrabs: make(map[xID][]*passiveDeviceGrab),
 					deviceGrabs:        make(map[byte]*deviceGrab),
@@ -2301,7 +2523,27 @@ func HandleX11Forwarding(logger Logger, client *ssh.Client, authProtocol string,
 					motionEvents:       make([]motionEvent, 0, 1024),
 					pressedKeys:        make(map[byte]bool),
 					dirtyDrawables:     make(map[xID]bool),
+					visualID:           1,
 					visuals:            make(map[uint32]wire.VisualType),
+				}
+				width := x11ServerInstance.config.ScreenWidth
+				if width == 0 {
+					width = 1024
+				}
+				height := x11ServerInstance.config.ScreenHeight
+				if height == 0 {
+					height = 768
+				}
+				x11ServerInstance.windows[xID(0)] = &window{
+					xid:    xID(0),
+					width:  width,
+					height: height,
+					depth:  24,
+					visual: 1,
+					attributes: wire.WindowAttributes{
+						Class: wire.InputOutput,
+					},
+					children: make([]xID, 0),
 				}
 				x11ServerInstance.initAtoms()
 				x11ServerInstance.initRequestHandlers()

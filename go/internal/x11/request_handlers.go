@@ -23,20 +23,30 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 		return wire.NewGenericError(seq, uint32(p.Drawable), 0, wire.CreateWindow, wire.IDChoiceErrorCode)
 	}
 
-	parent, ok := s.windows[parentXID]
-	if !ok && uint32(parentXID) != s.rootWindowID() {
+	if _, ok := s.windows[parentXID]; !ok && uint32(parentXID) != s.rootWindowID() {
 		return wire.NewGenericError(seq, uint32(p.Parent), 0, wire.CreateWindow, wire.WindowErrorCode)
+	}
+
+	if p.Width == 0 || p.Height == 0 {
+		return wire.NewGenericError(seq, 0, 0, wire.CreateWindow, wire.ValueErrorCode)
 	}
 
 	effectiveClass := uint32(p.Class)
 	if effectiveClass == 0 { // CopyFromParent
-		if parent != nil {
-			effectiveClass = parent.attributes.Class
+		if parentWindow, ok := s.windows[parentXID]; ok {
+			effectiveClass = parentWindow.attributes.Class
 		} else {
 			effectiveClass = wire.InputOutput
 		}
 	}
 
+	if effectiveClass == uint32(wire.InputOnly) {
+		if p.Depth != 0 || p.BorderWidth != 0 {
+			return wire.NewGenericError(seq, 0, 0, wire.CreateWindow, wire.MatchErrorCode)
+		}
+	}
+
+	parent, _ := s.windows[parentXID]
 	if parent != nil && parent.attributes.Class == wire.InputOnly && effectiveClass == wire.InputOutput {
 		return wire.NewGenericError(seq, 0, 0, wire.CreateWindow, wire.MatchErrorCode)
 	}
@@ -80,13 +90,13 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 		newWindow.attributes.Colormap = wire.Colormap(s.defaultColormap)
 	}
 	s.windows[xid] = newWindow
-	s.windowStack = append(s.windowStack, xid)
 
 	// Add to parent's children list
 	if parent != nil {
 		parent.children = append(parent.children, xid)
 	}
 	s.frontend.CreateWindow(xid, parentXID, int32(p.X), int32(p.Y), uint32(p.Width), uint32(p.Height), uint32(p.Depth), p.ValueMask, p.Values)
+	s.sendCreateNotifyEvent(xid)
 	return nil
 }
 
@@ -308,9 +318,8 @@ func (s *x11Server) handleReparentWindow(client *x11Client, req wire.Request, se
 	window.x = p.X
 	window.y = p.Y
 
-	// Note: Reparenting does not change the global stacking order (z-index),
-	// so we don't need to modify s.windowStack here. The window remains in its
-	// current position in the stack.
+	// Note: Reparenting adds the window to the top of the new parent's stacking
+	// order. The `children` slice in the new parent now maintains this order.
 
 	s.frontend.ReparentWindow(windowXID, parentXID, p.X, p.Y)
 	return nil
@@ -328,10 +337,10 @@ func (s *x11Server) handleMapWindow(client *x11Client, req wire.Request, seq uin
 	if w, ok := s.windows[xid]; ok {
 		w.mapped = true
 		// Move to top of stack on map
-		s.removeWindowFromStack(xid)
-		s.windowStack = append(s.windowStack, xid)
+		s.moveWindowToTop(xid)
 		s.frontend.MapWindow(xid)
 		s.sendExposeEvent(xid, 0, 0, w.width, w.height)
+		s.sendMapNotifyEvent(xid)
 	}
 	return nil
 }
@@ -369,8 +378,9 @@ func (s *x11Server) handleUnmapWindow(client *x11Client, req wire.Request, seq u
 	}
 	if w, ok := s.windows[xid]; ok {
 		w.mapped = false
+		s.frontend.UnmapWindow(xid)
+		s.sendUnmapNotifyEvent(xid, false)
 	}
-	s.frontend.UnmapWindow(xid)
 	return nil
 }
 
@@ -431,10 +441,16 @@ func (s *x11Server) handleConfigureWindow(client *x11Client, req wire.Request, s
 		}
 		if (p.ValueMask & (1 << 2)) != 0 { // width
 			w.width = uint16(p.Values[valueIndex])
+			if w.width == 0 {
+				return wire.NewGenericError(seq, 0, 0, wire.ConfigureWindow, wire.ValueErrorCode)
+			}
 			valueIndex++
 		}
 		if (p.ValueMask & (1 << 3)) != 0 { // height
 			w.height = uint16(p.Values[valueIndex])
+			if w.height == 0 {
+				return wire.NewGenericError(seq, 0, 0, wire.ConfigureWindow, wire.ValueErrorCode)
+			}
 			valueIndex++
 		}
 		if (p.ValueMask & (1 << 4)) != 0 { // border-width
@@ -474,47 +490,13 @@ func (s *x11Server) handleConfigureWindow(client *x11Client, req wire.Request, s
 			return wire.NewGenericError(seq, stackMode, 0, wire.ConfigureWindow, wire.ValueErrorCode)
 		}
 
-		s.removeWindowFromStack(xid)
-		done := false
-		switch stackMode {
-		case 0: // Above
-			if p.ValueMask&wire.CWSibling != 0 {
-				siblingID := xID(sibling)
-				for i, id := range s.windowStack {
-					if id == siblingID {
-						s.windowStack = append(s.windowStack[:i+1], append([]xID{xid}, s.windowStack[i+1:]...)...)
-						done = true
-						break
-					}
-				}
-			}
-			if !done {
-				s.windowStack = append(s.windowStack, xid) // Default to top
-			}
-		case 1: // Below
-			if p.ValueMask&wire.CWSibling != 0 {
-				siblingID := xID(sibling)
-				for i, id := range s.windowStack {
-					if id == siblingID {
-						s.windowStack = append(s.windowStack[:i], append([]xID{xid}, s.windowStack[i:]...)...)
-						done = true
-						break
-					}
-				}
-			}
-			if !done {
-				s.windowStack = append([]xID{xid}, s.windowStack...) // Default to bottom
-			}
-		case 2: // TopIf
-			s.windowStack = append(s.windowStack, xid)
-		case 3: // BottomIf
-			s.windowStack = append([]xID{xid}, s.windowStack...)
-		case 4: // Opposite
-			s.windowStack = append(s.windowStack, xid) // Treat as Top for simplicity
-		}
+		s.reconfigureStacking(xid, stackMode, xID(sibling))
 	}
 
 	s.frontend.ConfigureWindow(xid, p.ValueMask, p.Values)
+	if w, ok := s.windows[xid]; ok {
+		s.sendConfigureNotifyEvent(xid, w.x, w.y, w.width, w.height, w.borderWidth, 0)
+	}
 	return nil
 }
 
@@ -527,52 +509,13 @@ func (s *x11Server) handleCirculateWindow(client *x11Client, req wire.Request, s
 	if err := s.checkClientID(xid, client, seq, wire.CirculateWindow, 0); err != nil {
 		return err
 	}
-	window, ok := s.windows[xid]
-	if !ok {
+	if _, ok := s.windows[xid]; !ok {
 		return wire.NewGenericError(seq, uint32(p.Window), 0, wire.CirculateWindow, wire.WindowErrorCode)
 	}
-	parent, ok := s.windows[window.parent]
-	if ok {
-		// Find index of window in parent's children
-		idx := -1
-		for i, childID := range parent.children {
-			if childID == xid {
-				idx = i
-				break
-			}
-		}
-
-		if idx != -1 {
-			// Remove window from children slice
-			children := append(parent.children[:idx], parent.children[idx+1:]...)
-
-			if p.Direction == 0 { // RaiseLowest
-				// Add to end of slice
-				parent.children = append(children, xid)
-			} else { // LowerHighest
-				// Add to beginning of slice
-				parent.children = append([]xID{xid}, children...)
-			}
-		}
-	} else if uint32(window.parent) != s.rootWindowID() {
-		return wire.NewGenericError(seq, uint32(window.parent), 0, wire.CirculateWindow, wire.WindowErrorCode)
-	}
-
-	// Also update the global window stack
-	idx := -1
-	for i, id := range s.windowStack {
-		if id == xid {
-			idx = i
-			break
-		}
-	}
-	if idx != -1 {
-		stack := append(s.windowStack[:idx], s.windowStack[idx+1:]...)
-		if p.Direction == 0 { // RaiseLowest - move to end (top)
-			s.windowStack = append(stack, xid)
-		} else { // LowerHighest - move to beginning (bottom)
-			s.windowStack = append([]xID{xid}, stack...)
-		}
+	if p.Direction == 0 { // RaiseLowest
+		s.moveWindowToTop(xid)
+	} else { // LowerHighest
+		s.moveWindowToBottom(xid)
 	}
 
 	s.frontend.CirculateWindow(xid, p.Direction)
@@ -632,19 +575,11 @@ func (s *x11Server) handleQueryTree(client *x11Client, req wire.Request, seq uin
 		return err
 	}
 	window, ok := s.windows[xid]
-	if !ok { // This implies root window, which is not in the map
-		var children []uint32
-		for _, w := range s.windows {
-			if uint32(w.parent) == s.rootWindowID() {
-				children = append(children, uint32(w.xid))
-			}
-		}
+	if !ok {
+		// Should not happen as checkWindow passed, but handles root if not in map
 		return &wire.QueryTreeReply{
-			Sequence:    seq,
-			Root:        s.rootWindowID(),
-			Parent:      0, // No parent for root
-			NumChildren: uint16(len(children)),
-			Children:    children,
+			Sequence: seq,
+			Root:     s.rootWindowID(),
 		}
 	}
 
@@ -1364,12 +1299,12 @@ func (s *x11Server) handleTranslateCoords(client *x11Client, req wire.Request, s
 	}
 
 	// Calculate the absolute coordinates of the point
-	absPointX := srcAbsX + p.SrcX
-	absPointY := srcAbsY + p.SrcY
+	absPointX := int32(srcAbsX) + int32(p.SrcX)
+	absPointY := int32(srcAbsY) + int32(p.SrcY)
 
 	// Translate to be relative to the destination window
-	dstX := absPointX - dstAbsX
-	dstY := absPointY - dstAbsY
+	dstX := int16(absPointX - int32(dstAbsX))
+	dstY := int16(absPointY - int32(dstAbsY))
 
 	var childID xID
 	if uint32(dstWindow) == s.rootWindowID() {
@@ -1969,6 +1904,23 @@ func (s *x11Server) handlePutImage(client *x11Client, req wire.Request, seq uint
 	}
 	if err := s.checkDrawable(drawable, seq, wire.PutImage, 0); err != nil {
 		return err
+	}
+
+	var targetDepth byte
+	if w, ok := s.windows[drawable]; ok {
+		targetDepth = w.depth
+	} else if pm, ok := s.pixmaps[drawable]; ok {
+		targetDepth = pm.depth
+	} else if uint32(drawable) == s.rootWindowID() {
+		targetDepth = s.rootVisual.Depth
+	}
+
+	if p.Format == 0 { // XYBitmap
+		if p.Depth != 1 {
+			return wire.NewGenericError(seq, 0, 0, wire.PutImage, wire.MatchErrorCode)
+		}
+	} else if p.Depth != targetDepth {
+		return wire.NewGenericError(seq, 0, 0, wire.PutImage, wire.MatchErrorCode)
 	}
 	expectedLen := s.calculateImageSize(p.Width, p.Height, p.Format, p.Depth, p.LeftPad)
 	if len(p.Data) < expectedLen {
@@ -2716,8 +2668,8 @@ func (s *x11Server) handleQueryExtension(client *x11Client, req wire.Request, se
 			Sequence:    seq,
 			Present:     true,
 			MajorOpcode: byte(wire.XInputOpcode),
-			FirstEvent:  0,
-			FirstError:  0,
+			FirstEvent:  s.xinputFirstEvent,
+			FirstError:  s.xinputFirstError,
 		}
 	default:
 		return &wire.QueryExtensionReply{

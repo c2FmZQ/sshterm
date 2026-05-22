@@ -39,6 +39,8 @@ func setupTestServerWithClients(t *testing.T, numClients int) (*x11Server, []*x1
 		keymap:             make(map[byte][]uint32),
 		fonts:              make(map[xID]bool),
 		defaultColormap:    1,
+		xinputFirstEvent:   64,
+		xinputFirstError:   64,
 		startTime:          time.Now(),
 		pressedKeys:        make(map[byte]bool),
 		dirtyDrawables:     make(map[xID]bool),
@@ -47,6 +49,17 @@ func setupTestServerWithClients(t *testing.T, numClients int) (*x11Server, []*x1
 		visualID:           1,
 	}
 	server.visuals = map[uint32]wire.VisualType{1: server.rootVisual}
+	server.windows[xID(0)] = &window{
+		xid:    xID(0),
+		width:  1024,
+		height: 768,
+		depth:  24,
+		visual: 1,
+		attributes: wire.WindowAttributes{
+			Class: wire.InputOutput,
+		},
+		children: make([]xID, 0),
+	}
 	server.initAtoms()
 	server.initRequestHandlers()
 	server.colormaps[xID(server.defaultColormap)] = &colormap{

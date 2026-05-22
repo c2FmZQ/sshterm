@@ -45,23 +45,6 @@ func (rt *ReplyTracker) pop(sequence uint16) (Opcodes, bool) {
 	return opcodes, ok
 }
 
-var (
-	defaultReplyTracker = NewReplyTracker()
-)
-
-// ExpectReply registers an expected reply opcode for a given sequence number on the default tracker.
-// Deprecated: Use ReplyTracker.Expect instead.
-func ExpectReply(sequence uint16, opcodes Opcodes) {
-	defaultReplyTracker.Expect(sequence, opcodes)
-}
-
-// ReadServerMessages reads messages from the X server connection and sends them to a channel.
-// It uses the default tracker for replies.
-// Deprecated: Use ReadServerMessagesWithTracker instead.
-func ReadServerMessages(conn io.Reader, order binary.ByteOrder) <-chan ServerMessage {
-	return ReadServerMessagesWithTracker(conn, order, defaultReplyTracker)
-}
-
 // ReadServerMessagesWithTracker reads messages from the X server connection and sends them to a channel.
 // It uses the provided tracker to match replies with their request opcodes.
 func ReadServerMessagesWithTracker(conn io.Reader, order binary.ByteOrder, tracker *ReplyTracker) <-chan ServerMessage {

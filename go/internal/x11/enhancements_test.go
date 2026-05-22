@@ -186,7 +186,7 @@ func TestTranslateCoordsWithChild(t *testing.T) {
 		mapped: true,
 	}
 	// Put child on top of parent in the stacking order
-	server.windowStack = []xID{parentID, childID}
+	server.windows[xID(server.rootWindowID())].children = []xID{parentID}
 
 	req := &wire.TranslateCoordsRequest{
 		SrcWindow: wire.Window(server.rootWindowID()),
