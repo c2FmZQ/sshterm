@@ -1886,7 +1886,7 @@ func ParseGetKeyboardMappingReply(order binary.ByteOrder, b []byte) (*GetKeyboar
 	}
 	r := &GetKeyboardMappingReply{
 		Sequence:          order.Uint16(b[2:4]),
-		KeySymsPerKeycode: 1,
+		KeySymsPerKeycode: b[1],
 		KeySyms:           keySyms,
 	}
 	return r, nil

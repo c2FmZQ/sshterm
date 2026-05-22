@@ -2367,7 +2367,7 @@ func (s *x11Server) handleAllocColorCells(client *x11Client, req wire.Request, s
 	if !ok {
 		return wire.NewGenericError(seq, uint32(p.Cmap), 0, wire.AllocColorCells, wire.ColormapErrorCode)
 	}
-	if cm.visual.Class != wire.PseudoColor {
+	if class := cm.visual.Class; class == wire.StaticGray || class == wire.StaticColor || class == wire.TrueColor {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorCells, wire.AccessErrorCode)
 	}
 	if uint32(p.Colors) > 0xffffffff-uint32(p.Planes) {
@@ -2403,7 +2403,7 @@ func (s *x11Server) handleAllocColorPlanes(client *x11Client, req wire.Request, 
 	if !ok {
 		return wire.NewGenericError(seq, uint32(p.Cmap), 0, wire.AllocColorPlanes, wire.ColormapErrorCode)
 	}
-	if cm.visual.Class != wire.PseudoColor {
+	if cm.visual.Class != wire.DirectColor {
 		return wire.NewGenericError(seq, 0, 0, wire.AllocColorPlanes, wire.MatchErrorCode)
 	}
 	if uint32(p.Reds) > 0xffffffff-uint32(p.Greens) || uint32(p.Reds)+uint32(p.Greens) > 0xffffffff-uint32(p.Blues) {

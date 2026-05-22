@@ -357,6 +357,83 @@ func TestCopyColormapAndFree(t *testing.T) {
 	assert.True(t, dstCmap.allocated[1], "Color item should be marked as allocated in destination")
 }
 
+func TestAllocColorCells_WritableVisuals(t *testing.T) {
+	server, client, _, clientBuffer := setupTestServerWithClient(t)
+	colormapID := clientXID(client, 1)
+
+	for _, class := range []byte{wire.GrayScale, wire.DirectColor} {
+		server.colormaps[colormapID] = &colormap{
+			visual:    wire.VisualType{Class: class, ColormapEntries: 256},
+			pixels:    make(map[uint32]wire.XColorItem),
+			allocated: make([]bool, 256),
+			writable:  make([]bool, 256),
+			clientID:  make([]uint32, 256),
+		}
+		req := &wire.AllocColorCellsRequest{
+			Cmap:   wire.Colormap(colormapID),
+			Colors: 1,
+			Planes: 0,
+		}
+		reply := server.handleAllocColorCells(client, req, 1)
+		_, ok := reply.(*wire.AllocColorCellsReply)
+		assert.True(t, ok, "AllocColorCells should succeed for class %v", class)
+	}
+
+	for _, class := range []byte{wire.StaticGray, wire.StaticColor} {
+		server.colormaps[colormapID] = &colormap{
+			visual: wire.VisualType{Class: class},
+		}
+		req := &wire.AllocColorCellsRequest{
+			Cmap:   wire.Colormap(colormapID),
+			Colors: 1,
+			Planes: 0,
+		}
+		errReply := server.handleAllocColorCells(client, req, 1)
+		encoded := errReply.EncodeMessage(client.byteOrder)
+		clientBuffer.Reset()
+		clientBuffer.Write(encoded)
+		msg, err := wire.ParseError(clientBuffer.Bytes(), client.byteOrder)
+		require.NoError(t, err)
+		assert.Equal(t, wire.AccessErrorCode, msg.Code(), "AllocColorCells on class %v should return BadAccess", class)
+	}
+}
+
+func TestAllocColorPlanes_Visuals(t *testing.T) {
+	server, client, _, clientBuffer := setupTestServerWithClient(t)
+	colormapID := clientXID(client, 1)
+
+	// DirectColor should succeed
+	server.colormaps[colormapID] = &colormap{
+		visual:    wire.VisualType{Class: wire.DirectColor, ColormapEntries: 256},
+		pixels:    make(map[uint32]wire.XColorItem),
+		allocated: make([]bool, 256),
+		writable:  make([]bool, 256),
+		clientID:  make([]uint32, 256),
+	}
+	req := &wire.AllocColorPlanesRequest{
+		Cmap:   wire.Colormap(colormapID),
+		Colors: 2,
+		Reds:   1,
+		Greens: 1,
+		Blues:  1,
+	}
+	reply := server.handleAllocColorPlanes(client, req, 1)
+	_, ok := reply.(*wire.AllocColorPlanesReply)
+	assert.True(t, ok, "AllocColorPlanes should succeed for DirectColor")
+
+	// PseudoColor should fail with BadMatch
+	server.colormaps[colormapID] = &colormap{
+		visual: wire.VisualType{Class: wire.PseudoColor},
+	}
+	errReply := server.handleAllocColorPlanes(client, req, 1)
+	encoded := errReply.EncodeMessage(client.byteOrder)
+	clientBuffer.Reset()
+	clientBuffer.Write(encoded)
+	msg, err := wire.ParseError(clientBuffer.Bytes(), client.byteOrder)
+	require.NoError(t, err)
+	assert.Equal(t, wire.MatchErrorCode, msg.Code(), "AllocColorPlanes on PseudoColor should return BadMatch")
+}
+
 // Helper to decode a single message from a buffer for testing replies.
 func decodeSingleReply(t *testing.T, buffer *bytes.Buffer, order binary.ByteOrder, seq uint16, opcodes wire.Opcodes) (wire.ServerMessage, error) {
 	t.Helper()

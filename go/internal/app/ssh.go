@@ -139,7 +139,7 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 		// Request X11 forwarding.
 		// https://datatracker.ietf.org/doc/html/rfc4254#section-6.3.1
 		cookie := make([]byte, 16)
-		if _, err := rand.Read(cookie); err != nil {
+		if _, err := io.ReadFull(rand.Reader, cookie); err != nil {
 			return fmt.Errorf("failed to generate X11 cookie: %w", err)
 		}
 		payload := struct {
