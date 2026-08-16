@@ -1,5 +1,15 @@
 # SSH Term Release Notes
 
+## v0.8.4
+
+* Update go 1.26.6
+* Update go dependencies:
+  * github.com/fxamacker/cbor/v2 v2.9.1 => v2.9.2
+  * github.com/pkg/sftp v1.13.10 => v1.13.11
+  * golang.org/x/crypto v0.49.0 => v0.55.0
+  * golang.org/x/term v0.42.0 => v0.45.0
+  * golang.org/x/sys v0.43.0 => v0.47.0
+
 ## v0.8.3
 
 * Update go 1.26.2
