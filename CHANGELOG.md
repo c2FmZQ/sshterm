@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## v0.8.5
+
+* Update go 1.27.0
+* Update go dependencies:
+  * upgraded github.com/fxamacker/cbor/v2 v2.9.2 => v2.9.3
+
 ## v0.8.4
 
 * Update go 1.26.6
