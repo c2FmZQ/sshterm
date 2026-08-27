@@ -29,9 +29,25 @@ echo "Found ecdsa key: $KEY_ECDSA"
 sed "s|\"hosts\": \[\]|\"hosts\": [{\"name\": \"x11-apps\", \"key\": \"$KEY_ED25519\"}, {\"name\": \"x11-apps\", \"key\": \"$KEY_ECDSA\"}]|" config.json.template > standalone.config.json
 
 echo "Running tests..."
-docker compose up --build --abort-on-container-exit --exit-code-from tester
+# Prevent bash from exiting immediately if docker compose fails, so we can copy logs
+set +e
+timeout 180s docker compose up --build --abort-on-container-exit --exit-code-from tester
+TEST_EXIT_CODE=$?
+set -e
 
-echo "Test finished. Check tests/x11-standalone/x11-standalone-screenshot.png for results."
+if [ $TEST_EXIT_CODE -eq 124 ]; then
+    echo "Error: Standalone integration test timed out after 3 minutes"
+fi
+
+
+echo "Copying logs and state from containers..."
+docker compose cp x11-apps:/tmp/tkinter_ui.log ./tkinter_ui.log || true
+docker compose cp x11-apps:/tmp/tkinter_state.json ./tkinter_state.json || true
+
+echo "Test finished with exit code $TEST_EXIT_CODE. Check tests/x11-standalone/x11-standalone-screenshot.png for results."
 
 # Cleanup
 rm -f standalone.config.json
+
+exit $TEST_EXIT_CODE
+

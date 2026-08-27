@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y \
     x11-utils \
     xterm \
     xauth \
+    python3 \
+    python3-tk \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir /var/run/sshd
@@ -29,6 +31,9 @@ RUN sed 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so
 
 # Pre-generate host keys
 RUN ssh-keygen -A
+
+COPY test_ui.py /home/testuser/test_ui.py
+RUN chown testuser:testuser /home/testuser/test_ui.py
 
 EXPOSE 22
 

@@ -144,7 +144,7 @@ func TestRequestParsingErrors(t *testing.T) {
 		{SetClipRectangles, make([]byte, 7)},
 		{FreeGC, make([]byte, 3)},
 		{ClearArea, make([]byte, 11)},
-		{CopyArea, make([]byte, 27)},
+		{CopyArea, make([]byte, 23)},
 		{PolyPoint, make([]byte, 7)},
 		{PolyLine, make([]byte, 7)},
 		{PolySegment, make([]byte, 7)},
@@ -335,7 +335,7 @@ func TestParseGetMotionEventsRequest(t *testing.T) {
 
 func TestParseCopyAreaRequest(t *testing.T) {
 	order := binary.LittleEndian
-	reqBody := make([]byte, 28)
+	reqBody := make([]byte, 24)
 	order.PutUint32(reqBody[0:4], 1)     // srcDrawable
 	order.PutUint32(reqBody[4:8], 2)     // dstDrawable
 	order.PutUint32(reqBody[8:12], 3)    // gc

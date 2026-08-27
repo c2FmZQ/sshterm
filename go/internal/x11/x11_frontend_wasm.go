@@ -538,6 +538,7 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	focusEvent := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		debugf("X11: Window %d focused", xid)
 		w.focusedWindowID = xid
+		w.server.SetInputFocus(xid)
 		w.document.Call("addEventListener", "keydown", keyDownEvent)
 		w.document.Call("addEventListener", "keyup", keyUpEvent)
 		return nil
@@ -545,6 +546,7 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	blurEvent := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		debugf("X11: Window %d blurred", xid)
 		w.focusedWindowID = 0
+		w.server.SetInputFocus(0)
 		w.document.Call("removeEventListener", "keydown", keyDownEvent)
 		w.document.Call("removeEventListener", "keyup", keyUpEvent)
 		if isTopLevel {
@@ -1865,14 +1867,23 @@ func (w *wasmX11Frontend) CopyArea(srcDrawable, dstDrawable xID, gcID xID, srcX,
 	}
 
 	dstWinInfo, dstIsWindow := w.windows[dstDrawable]
-	if !dstIsWindow {
-		debugf("X11: CopyArea destination drawable %d not found or not a window", dstDrawable)
+	dstPixmapInfo, dstIsPixmap := w.pixmaps[dstDrawable]
+	var dstCtx js.Value
+
+	if dstIsWindow {
+		dstCtx = dstWinInfo.offscreenCtx
+	} else if dstIsPixmap {
+		dstCtx = dstPixmapInfo.context
+	} else {
+		debugf("X11: CopyArea destination drawable %d not found", dstDrawable)
 		return
 	}
 
-	if !srcCanvas.IsNull() && !dstWinInfo.canvas.IsNull() {
-		dstWinInfo.offscreenCtx.Call("drawImage", srcCanvas, srcX, srcY, width, height, dstX, dstY, width, height)
-		w.updateVisibleArea(dstDrawable, int(dstX), int(dstY), int(width), int(height))
+	if !srcCanvas.IsNull() && !dstCtx.IsNull() {
+		dstCtx.Call("drawImage", srcCanvas, srcX, srcY, width, height, dstX, dstY, width, height)
+		if dstIsWindow {
+			w.updateVisibleArea(dstDrawable, int(dstX), int(dstY), int(width), int(height))
+		}
 	}
 	w.recordOperation(CanvasOperation{
 		Type: "copyArea",
@@ -1978,8 +1989,16 @@ func (w *wasmX11Frontend) GetImage(drawable xID, x, y, width, height int32, form
 			js.CopyBytesToGo(byteSlice, data)
 			return byteSlice, nil
 		}
+	} else if pmInfo, ok := w.pixmaps[drawable]; ok {
+		if !pmInfo.canvas.IsNull() {
+			imageData := pmInfo.context.Call("getImageData", x, y, width, height)
+			data := imageData.Get("data") // Uint8ClampedArray
+			byteSlice := make([]byte, data.Length())
+			js.CopyBytesToGo(byteSlice, data)
+			return byteSlice, nil
+		}
 	}
-	return nil, fmt.Errorf("window or canvas not found for drawable %d", drawable)
+	return nil, fmt.Errorf("window or pixmap or canvas not found for drawable %d", drawable)
 }
 
 func (w *wasmX11Frontend) ImageText8(drawable xID, gcID xID, x, y int32, text []byte) {
@@ -3268,6 +3287,17 @@ func (w *wasmX11Frontend) mouseEventHandler(xid xID, eventType string) js.Func {
 					state &^= 0x0200
 				case 3:
 					state &^= 0x0400
+				}
+			}
+			if eventType == "mouseup" {
+				// For mouseup, the state should include the button that was just released
+				switch button {
+				case 1:
+					state |= 0x0100
+				case 2:
+					state |= 0x0200
+				case 3:
+					state |= 0x0400
 				}
 			}
 		}

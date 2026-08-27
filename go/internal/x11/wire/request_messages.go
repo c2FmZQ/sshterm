@@ -2992,7 +2992,7 @@ type CopyAreaRequest struct {
 func (CopyAreaRequest) OpCode() ReqCode { return CopyArea }
 
 func ParseCopyAreaRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*CopyAreaRequest, error) {
-	if len(requestBody) != 28 {
+	if len(requestBody) != 24 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: CopyArea, Minor: 0})
 	}
 	req := &CopyAreaRequest{}

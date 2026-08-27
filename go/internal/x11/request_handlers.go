@@ -76,6 +76,7 @@ func (s *x11Server) handleCreateWindow(client *x11Client, req wire.Request, seq 
 	}
 	if p.ValueMask&wire.CWEventMask != 0 {
 		newWindow.eventMasks[client.id] = p.Values.EventMask
+		newWindow.attributes.EventMask = newWindow.allEventMasks()
 	}
 	newWindow.attributes.Class = effectiveClass
 
@@ -149,6 +150,7 @@ func (s *x11Server) handleChangeWindowAttributes(client *x11Client, req wire.Req
 		}
 		if p.ValueMask&wire.CWEventMask != 0 {
 			w.eventMasks[client.id] = p.Values.EventMask
+			w.attributes.EventMask = w.allEventMasks()
 		}
 		if p.ValueMask&wire.CWDontPropagate != 0 {
 			w.attributes.DontPropagateMask = p.Values.DontPropagateMask
@@ -213,8 +215,8 @@ func (s *x11Server) handleGetWindowAttributes(client *x11Client, req wire.Reques
 		MapState:           w.mapState(),
 		OverrideRedirect:   wire.BoolToByte(w.attributes.OverrideRedirect),
 		Colormap:           uint32(w.attributes.Colormap),
-		AllEventMasks:      w.attributes.EventMask,
-		YourEventMask:      w.attributes.EventMask,
+		AllEventMasks:      w.allEventMasks(),
+		YourEventMask:      w.eventMasks[client.id],
 		DoNotPropagateMask: uint16(w.attributes.DontPropagateMask),
 	}
 }
@@ -287,7 +289,7 @@ func (s *x11Server) handleReparentWindow(client *x11Client, req wire.Request, se
 		return err
 	}
 
-	if s.isDescendant(windowXID, parentXID) {
+	if parentXID == windowXID || s.isDescendant(parentXID, windowXID) {
 		return wire.NewGenericError(seq, uint32(p.Parent), 0, wire.ReparentWindow, wire.MatchErrorCode)
 	}
 
@@ -920,7 +922,7 @@ func (s *x11Server) handleSendEvent(client *x11Client, req wire.Request, seq uin
 		eventMask = wire.PointerMotionMask
 	}
 
-	if p.Propagate || (destWindow.attributes.EventMask&eventMask) != 0 {
+	if p.Propagate || (destWindow.allEventMasks()&eventMask) != 0 {
 		s.sendEvent(targetClient, &wire.X11RawEvent{Data: p.EventData})
 	}
 
@@ -968,6 +970,7 @@ func (s *x11Server) handleGrabPointer(client *x11Client, req wire.Request, seq u
 	s.pointerGrabMode = p.PointerMode
 	s.keyboardGrabMode = p.KeyboardMode
 	s.pointerGrabConfineTo = xID(p.ConfineTo)
+	s.pointerGrabPassive = false
 	s.pointerGrabCursor = xID(p.Cursor)
 
 	if p.PointerMode == wire.GrabModeSync {
@@ -1024,6 +1027,7 @@ func (s *x11Server) handleUngrabPointer(client *x11Client, req wire.Request, seq
 	s.keyboardGrabMode = 0
 	s.pointerGrabConfineTo = 0
 	s.pointerGrabCursor = 0
+	s.pointerGrabPassive = false
 	s.flushPointerEvents()
 	s.frontend.UngrabPointer(uint32(p.Time))
 	return nil
@@ -1369,59 +1373,7 @@ func (s *x11Server) handleSetInputFocus(client *x11Client, req wire.Request, seq
 		}
 	}
 
-	if s.inputFocus != xid {
-		oldFocus := s.inputFocus
-		s.inputFocus = xid
-
-		// Send FocusOut to the old focus window
-		if oldFocus != 0 && uint32(oldFocus) != 1 {
-			if w, ok := s.windows[oldFocus]; ok {
-				for clientID, mask := range w.eventMasks {
-					if mask&wire.FocusChangeMask != 0 {
-						if c, ok := s.clients[clientID]; ok {
-							var eventSeq uint16
-							if c == client {
-								eventSeq = seq
-							} else {
-								eventSeq = c.sequence - 1
-							}
-							s.sendEvent(c, &wire.FocusOutEvent{
-								Sequence: eventSeq,
-								Window:   uint32(oldFocus),
-								Mode:     0, // Normal
-								Detail:   0, // NotifyAncestor
-							})
-						}
-					}
-				}
-			}
-		}
-
-		// Send FocusIn to the new focus window
-		if xid != 0 && uint32(xid) != 1 {
-			if w, ok := s.windows[xid]; ok {
-				for clientID, mask := range w.eventMasks {
-					if mask&wire.FocusChangeMask != 0 {
-						if c, ok := s.clients[clientID]; ok {
-							var eventSeq uint16
-							if c == client {
-								eventSeq = seq
-							} else {
-								eventSeq = c.sequence - 1
-							}
-							s.sendEvent(c, &wire.FocusInEvent{
-								Sequence: eventSeq,
-								Window:   uint32(xid),
-								Mode:     0, // Normal
-								Detail:   0, // NotifyAncestor
-							})
-						}
-					}
-				}
-			}
-		}
-	}
-
+	s.setInputFocus(xid, client, seq)
 	s.frontend.SetInputFocus(xid, p.RevertTo)
 	return nil
 }

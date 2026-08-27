@@ -187,6 +187,15 @@ func (w *window) mapState() byte {
 	return 2 // Viewable
 }
 
+func (w *window) allEventMasks() uint32 {
+	var mask uint32
+	for _, m := range w.eventMasks {
+		mask |= m
+	}
+	return mask
+}
+
+
 type colormap struct {
 	visual    wire.VisualType
 	pixels    map[uint32]wire.XColorItem
@@ -269,6 +278,7 @@ type x11Server struct {
 	keyboardGrabOwner        bool
 	pointerGrabEventMask     uint16
 	keyboardGrabEventMask    uint32
+	pointerGrabPassive       bool
 	inputFocus               xID
 	passiveGrabs             map[xID][]*passiveGrab
 	passiveDeviceGrabs       map[xID][]*passiveDeviceGrab
@@ -533,6 +543,37 @@ func (s *x11Server) getAbsoluteWindowCoords(xid xID) (int16, int16, bool) {
 	return int16(absX), int16(absY), true
 }
 
+func (s *x11Server) translateToRoot(xid xID, x, y int32) (int32, int32) {
+	rx, ry := x, y
+	curr := xid
+	for curr != 0 && uint32(curr) != s.rootWindowID() {
+		w, ok := s.windows[curr]
+		if !ok {
+			break
+		}
+		rx += int32(w.x)
+		ry += int32(w.y)
+		curr = w.parent
+	}
+	return rx, ry
+}
+
+func (s *x11Server) translateFromRoot(xid xID, rx, ry int32) (int32, int32) {
+	lx, ly := rx, ry
+	curr := xid
+	for curr != 0 && uint32(curr) != s.rootWindowID() {
+		w, ok := s.windows[curr]
+		if !ok {
+			break
+		}
+		lx -= int32(w.x)
+		ly -= int32(w.y)
+		curr = w.parent
+	}
+	return lx, ly
+}
+
+
 func (s *x11Server) findChildWindowAt(parentXID xID, x, y int16) xID {
 	parent, ok := s.windows[parentXID]
 	if !ok || (uint32(parentXID) != s.rootWindowID() && !parent.mapped) {
@@ -741,6 +782,9 @@ func (s *x11Server) checkWindow(xid xID, seq uint16, majorReq wire.ReqCode, mino
 }
 
 func (s *x11Server) checkClientID(xid xID, client *x11Client, seq uint16, majorReq wire.ReqCode, minorReq byte) wire.Error {
+	if uint32(xid) == s.rootWindowID() {
+		return nil
+	}
 	if (uint32(xid)>>resourceIDShift)&clientIDMask != client.id {
 		return wire.NewGenericError(seq, uint32(xid), minorReq, majorReq, wire.AccessErrorCode)
 	}
@@ -1003,23 +1047,37 @@ func (s *x11Server) SendMouseEvent(xid xID, eventType string, x, y, detail int32
 	}
 
 	if !grabActive && eventType == "mousedown" {
-		if grabs, ok := s.passiveGrabs[originalXID]; ok {
-			for _, grab := range grabs {
-				if grab.button == button && (grab.modifiers == wire.AnyModifier || grab.modifiers == state) {
-					s.pointerGrabWindow = originalXID
-					s.pointerGrabClientID = grab.clientID
-					s.pointerGrabOwner = grab.owner
-					s.pointerGrabEventMask = grab.eventMask
-					s.pointerGrabMode = grab.pointerMode
-					s.keyboardGrabMode = grab.keyboardMode
-					s.pointerGrabConfineTo = grab.confineTo
-					s.pointerGrabCursor = grab.cursor
+		curr := originalXID
+		for {
+			if grabs, ok := s.passiveGrabs[curr]; ok {
+				var matchingGrab *passiveGrab
+				for _, grab := range grabs {
+					if grab.button == button && (grab.modifiers == wire.AnyModifier || grab.modifiers == state) {
+						matchingGrab = grab
+						break
+					}
+				}
+				if matchingGrab != nil {
+					s.pointerGrabWindow = curr
+					s.pointerGrabClientID = matchingGrab.clientID
+					s.pointerGrabOwner = matchingGrab.owner
+					s.pointerGrabEventMask = matchingGrab.eventMask
+					s.pointerGrabMode = matchingGrab.pointerMode
+					s.keyboardGrabMode = matchingGrab.keyboardMode
+					s.pointerGrabConfineTo = matchingGrab.confineTo
+					s.pointerGrabCursor = matchingGrab.cursor
 					s.pointerGrabTime = s.serverTime()
+					s.pointerGrabPassive = true
 					grabActive = true
-					s.frontend.SetWindowCursor(originalXID, grab.cursor)
+					s.frontend.SetWindowCursor(originalXID, matchingGrab.cursor)
 					break
 				}
 			}
+			w, ok := s.windows[curr]
+			if !ok || uint32(w.parent) == s.rootWindowID() {
+				break
+			}
+			curr = w.parent
 		}
 	}
 
@@ -1028,17 +1086,20 @@ func (s *x11Server) SendMouseEvent(xid xID, eventType string, x, y, detail int32
 		grabbingClient, grabberOk := s.clients[s.pointerGrabClientID]
 		if grabberOk && (uint32(s.pointerGrabEventMask)&eventMask) != 0 {
 			eventWindowID := uint32(originalXID)
+			eventX, eventY := x, y
 			if !s.pointerGrabOwner {
 				eventWindowID = uint32(s.pointerGrabWindow)
+				rx, ry := s.translateToRoot(originalXID, x, y)
+				eventX, eventY = s.translateFromRoot(s.pointerGrabWindow, rx, ry)
 			}
-			s.sendCoreMouseEvent(grabbingClient, eventType, button, eventWindowID, x, y, state)
+			s.sendCoreMouseEvent(grabbingClient, eventType, button, eventWindowID, eventX, eventY, state)
 		}
 
 		if s.pointerGrabOwner {
 			ownerClient, ownerOk := s.clients[((uint32(originalXID) >> resourceIDShift) & clientIDMask)]
 			if ownerOk && (!grabberOk || ownerClient.id != grabbingClient.id) {
 				if w, ok := s.windows[originalXID]; ok {
-					if w.attributes.EventMask&eventMask != 0 {
+					if w.allEventMasks()&eventMask != 0 {
 						s.sendCoreMouseEvent(ownerClient, eventType, button, uint32(originalXID), x, y, state)
 					}
 				}
@@ -1054,6 +1115,20 @@ func (s *x11Server) SendMouseEvent(xid xID, eventType string, x, y, detail int32
 				}
 			}
 		}
+	}
+
+	if s.pointerGrabPassive && eventType == "mouseup" {
+		s.pointerGrabWindow = 0
+		s.pointerGrabClientID = 0
+		s.pointerGrabOwner = false
+		s.pointerGrabEventMask = 0
+		s.pointerGrabTime = 0
+		s.pointerGrabMode = 0
+		s.keyboardGrabMode = 0
+		s.pointerGrabConfineTo = 0
+		s.pointerGrabCursor = 0
+		s.pointerGrabPassive = false
+		s.frontend.UngrabPointer(s.serverTime())
 	}
 
 	// 3. Send XInput events (non-grabbed)
@@ -1170,9 +1245,11 @@ func (s *x11Server) sendXInput2MouseEvent(client *x11Client, evType uint16, devi
 
 	buttons := []uint32{buttonMask}
 
+	rx, ry := s.translateToRoot(xID(eventWindowID), x, y)
+
 	// FP1616 coordinates
-	rootX := x << 16
-	rootY := y << 16
+	rootX := rx << 16
+	rootY := ry << 16
 	eventX := x << 16
 	eventY := y << 16
 
@@ -1230,6 +1307,8 @@ func (s *x11Server) sendXInput2KeyboardEvent(client *x11Client, evType uint16, d
 
 	buttons := []uint32{buttonMask}
 
+	rx, ry := s.translateToRoot(xID(eventWindowID), int32(s.pointerX), int32(s.pointerY))
+
 	event := &wire.XIDeviceEvent{
 		Sequence:  client.sequence - 1,
 		EventType: evType,
@@ -1239,8 +1318,8 @@ func (s *x11Server) sendXInput2KeyboardEvent(client *x11Client, evType uint16, d
 		Root:      s.rootWindowID(),
 		Event:     eventWindowID,
 		Child:     0,
-		RootX:     int32(s.pointerX) << 16,
-		RootY:     int32(s.pointerY) << 16,
+		RootX:     rx << 16,
+		RootY:     ry << 16,
 		EventX:    int32(s.pointerX) << 16,
 		EventY:    int32(s.pointerY) << 16,
 		Buttons:   buttons,
@@ -1254,6 +1333,7 @@ func (s *x11Server) sendXInput2KeyboardEvent(client *x11Client, evType uint16, d
 }
 
 func (s *x11Server) sendCoreMouseEvent(client *x11Client, eventType string, button byte, eventWindowID uint32, x, y int32, state uint16) {
+	rx, ry := s.translateToRoot(xID(eventWindowID), x, y)
 	var event messageEncoder
 	switch eventType {
 	case "mousedown":
@@ -1264,8 +1344,8 @@ func (s *x11Server) sendCoreMouseEvent(client *x11Client, eventType string, butt
 			Root:       s.rootWindowID(),
 			Event:      eventWindowID,
 			Child:      0, // 0 for now
-			RootX:      int16(x),
-			RootY:      int16(y),
+			RootX:      int16(rx),
+			RootY:      int16(ry),
 			EventX:     int16(x),
 			EventY:     int16(y),
 			State:      state,
@@ -1279,8 +1359,8 @@ func (s *x11Server) sendCoreMouseEvent(client *x11Client, eventType string, butt
 			Root:       s.rootWindowID(),
 			Event:      eventWindowID,
 			Child:      0, // 0 for now
-			RootX:      int16(x),
-			RootY:      int16(y),
+			RootX:      int16(rx),
+			RootY:      int16(ry),
 			EventX:     int16(x),
 			EventY:     int16(y),
 			State:      state,
@@ -1294,8 +1374,8 @@ func (s *x11Server) sendCoreMouseEvent(client *x11Client, eventType string, butt
 			Root:       s.rootWindowID(),
 			Event:      eventWindowID,
 			Child:      0, // 0 for now
-			RootX:      int16(x),
-			RootY:      int16(y),
+			RootX:      int16(rx),
+			RootY:      int16(ry),
 			EventX:     int16(x),
 			EventY:     int16(y),
 			State:      state,
@@ -1309,6 +1389,7 @@ func (s *x11Server) sendCoreMouseEvent(client *x11Client, eventType string, butt
 }
 
 func (s *x11Server) sendXInputMouseEvent(client *x11Client, eventType string, deviceID, button byte, eventWindowID uint32, x, y int32, state uint16) {
+	rx, ry := s.translateToRoot(xID(eventWindowID), x, y)
 	var xiEvent messageEncoder
 	switch eventType {
 	case "mousedown":
@@ -1320,8 +1401,8 @@ func (s *x11Server) sendXInputMouseEvent(client *x11Client, eventType string, de
 			Root:       s.rootWindowID(),
 			Event:      eventWindowID,
 			Child:      0, // Or a child window ID if applicable
-			RootX:      int16(x),
-			RootY:      int16(y),
+			RootX:      int16(rx),
+			RootY:      int16(ry),
 			EventX:     int16(x),
 			EventY:     int16(y),
 			State:      state,
@@ -1336,8 +1417,8 @@ func (s *x11Server) sendXInputMouseEvent(client *x11Client, eventType string, de
 			Root:       s.rootWindowID(),
 			Event:      eventWindowID,
 			Child:      0, // Or a child window ID if applicable
-			RootX:      int16(x),
-			RootY:      int16(y),
+			RootX:      int16(rx),
+			RootY:      int16(ry),
 			EventX:     int16(x),
 			EventY:     int16(y),
 			State:      state,
@@ -1349,6 +1430,64 @@ func (s *x11Server) sendXInputMouseEvent(client *x11Client, eventType string, de
 		s.sendEvent(client, xiEvent)
 	}
 }
+
+func (s *x11Server) setInputFocus(xid xID, reqClient *x11Client, seq uint16) {
+	if s.inputFocus != xid {
+		oldFocus := s.inputFocus
+		s.inputFocus = xid
+
+		// Send FocusOut to the old focus window
+		if oldFocus != 0 && uint32(oldFocus) != 1 {
+			if w, ok := s.windows[oldFocus]; ok {
+				for clientID, mask := range w.eventMasks {
+					if mask&wire.FocusChangeMask != 0 {
+						if c, ok := s.clients[clientID]; ok {
+							eventSeq := c.sequence - 1
+							if reqClient != nil && c == reqClient {
+								eventSeq = seq
+							}
+							s.sendEvent(c, &wire.FocusOutEvent{
+								Sequence: eventSeq,
+								Window:   uint32(oldFocus),
+								Mode:     0, // Normal
+								Detail:   0, // NotifyAncestor
+							})
+						}
+					}
+				}
+			}
+		}
+
+		// Send FocusIn to the new focus window
+		if xid != 0 && uint32(xid) != 1 {
+			if w, ok := s.windows[xid]; ok {
+				for clientID, mask := range w.eventMasks {
+					if mask&wire.FocusChangeMask != 0 {
+						if c, ok := s.clients[clientID]; ok {
+							eventSeq := c.sequence - 1
+							if reqClient != nil && c == reqClient {
+								eventSeq = seq
+							}
+							s.sendEvent(c, &wire.FocusInEvent{
+								Sequence: eventSeq,
+								Window:   uint32(xid),
+								Mode:     0, // Normal
+								Detail:   0, // NotifyAncestor
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func (s *x11Server) SetInputFocus(xid xID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setInputFocus(xid, nil, 0)
+}
+
 func (s *x11Server) SendKeyboardEvent(xid xID, eventType string, code string, altKey, ctrlKey, shiftKey, metaKey bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1519,7 +1658,7 @@ func (s *x11Server) SendKeyboardEvent(xid xID, eventType string, code string, al
 			ownerClient, ownerOk := s.clients[((uint32(xid) >> resourceIDShift) & clientIDMask)]
 			if ownerOk && (!grabberOk || ownerClient.id != grabbingClient.id) {
 				if w, ok := s.windows[xid]; ok {
-					if w.attributes.EventMask&eventMask != 0 {
+					if w.allEventMasks()&eventMask != 0 {
 						s.sendCoreKeyboardEvent(ownerClient, eventType, keycode, uint32(xid), state)
 					}
 				}
@@ -1530,7 +1669,7 @@ func (s *x11Server) SendKeyboardEvent(xid xID, eventType string, code string, al
 
 	// No active grab, send to interested clients
 	focusID := s.inputFocus
-	if focusID == 1 { // PointerRoot
+	if focusID == 0 || focusID == 1 { // None or PointerRoot
 		focusID = xid
 	}
 
@@ -1559,6 +1698,7 @@ func (s *x11Server) SendKeyboardEvent(xid xID, eventType string, code string, al
 }
 
 func (s *x11Server) sendCoreKeyboardEvent(client *x11Client, eventType string, keycode byte, eventWindowID uint32, state uint16) {
+	rx, ry := s.translateToRoot(xID(eventWindowID), int32(s.pointerX), int32(s.pointerY))
 	event := &wire.KeyEvent{
 		Sequence:   client.sequence - 1,
 		Detail:     keycode,
@@ -1566,8 +1706,8 @@ func (s *x11Server) sendCoreKeyboardEvent(client *x11Client, eventType string, k
 		Root:       s.rootWindowID(),
 		Event:      eventWindowID,
 		Child:      0, // No child for now
-		RootX:      s.pointerX,
-		RootY:      s.pointerY,
+		RootX:      int16(rx),
+		RootY:      int16(ry),
 		EventX:     s.pointerX,
 		EventY:     s.pointerY,
 		State:      state,
@@ -1587,6 +1727,7 @@ func (s *x11Server) sendCoreKeyboardEvent(client *x11Client, eventType string, k
 }
 
 func (s *x11Server) sendXInputKeyboardEvent(client *x11Client, eventType string, keycode byte, eventWindowID uint32, state uint16) {
+	rx, ry := s.translateToRoot(xID(eventWindowID), int32(s.pointerX), int32(s.pointerY))
 	var xiEvent messageEncoder
 	switch eventType {
 	case "keydown":
@@ -1598,8 +1739,8 @@ func (s *x11Server) sendXInputKeyboardEvent(client *x11Client, eventType string,
 			Root:       s.rootWindowID(),
 			Event:      eventWindowID,
 			Child:      0, // Or a child window ID if applicable
-			RootX:      s.pointerX,
-			RootY:      s.pointerY,
+			RootX:      int16(rx),
+			RootY:      int16(ry),
 			EventX:     s.pointerX,
 			EventY:     s.pointerY,
 			State:      state,
@@ -1614,8 +1755,8 @@ func (s *x11Server) sendXInputKeyboardEvent(client *x11Client, eventType string,
 			Root:       s.rootWindowID(),
 			Event:      eventWindowID,
 			Child:      0, // Or a child window ID if applicable
-			RootX:      s.pointerX,
-			RootY:      s.pointerY,
+			RootX:      int16(rx),
+			RootY:      int16(ry),
 			EventX:     s.pointerX,
 			EventY:     s.pointerY,
 			State:      state,
@@ -2181,17 +2322,19 @@ func (s *x11Server) DeleteProperty(xid xID, propertyID uint32) {
 }
 
 func (s *x11Server) sendPropertyNotify(windowID xID, atom uint32, state byte) {
-	if client, ok := s.clients[((uint32(windowID) >> resourceIDShift) & clientIDMask)]; ok {
-		if w, ok := s.windows[windowID]; ok {
-			if w.attributes.EventMask&wire.PropertyChangeMask != 0 {
-				event := &wire.PropertyNotifyEvent{
-					Sequence: client.sequence - 1,
-					Window:   uint32(windowID),
-					Atom:     atom,
-					Time:     s.serverTime(),
-					State:    state,
+	if w, ok := s.windows[windowID]; ok {
+		for clientID, mask := range w.eventMasks {
+			if mask&wire.PropertyChangeMask != 0 {
+				if client, ok := s.clients[clientID]; ok {
+					event := &wire.PropertyNotifyEvent{
+						Sequence: client.sequence - 1,
+						Window:   uint32(windowID),
+						Atom:     atom,
+						Time:     s.serverTime(),
+						State:    state,
+					}
+					s.sendEvent(client, event)
 				}
-				s.sendEvent(client, event)
 			}
 		}
 	}
@@ -2578,7 +2721,9 @@ func HandleX11Forwarding(logger Logger, client *ssh.Client, authProtocol string,
 					attributes: wire.WindowAttributes{
 						Class: wire.InputOutput,
 					},
-					children: make([]xID, 0),
+					children:                  make([]xID, 0),
+					eventMasks:                make(map[uint32]uint32),
+					dontPropagateDeviceEvents: make(map[uint32]bool),
 				}
 				x11ServerInstance.initAtoms()
 				x11ServerInstance.initRequestHandlers()
