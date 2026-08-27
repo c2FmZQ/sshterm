@@ -316,7 +316,7 @@ func (a *App) Run() error {
 					username, _ = t.Prompt("Username: ")
 				}
 				target := username + "@" + a.cfg.AutoConnect.Hostname
-				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent, a.cfg.AutoConnect.JumpHosts); err != nil {
+				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent, a.cfg.AutoConnect.JumpHosts, false); err != nil {
 					t.Errorf("%v", err)
 				}
 			},
