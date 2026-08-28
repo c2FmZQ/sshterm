@@ -78,6 +78,9 @@ func Send(rw io.ReadWriter, files []*File) error {
 
 		case ZRPOS:
 			// Receiver accepted ZFILE. Send ZDATA.
+			// TODO: h.Flags contains the requested file offset for resume.
+			// We currently always send from offset 0, which is safe over
+			// reliable transports like SSH.
 			if err := WriteBinaryHeader(rw, Header{Type: ZDATA}); err != nil {
 				return err
 			}

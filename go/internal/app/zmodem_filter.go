@@ -31,14 +31,14 @@ import (
 	"github.com/c2FmZQ/sshterm/internal/zmodem"
 )
 
-type TerminalPrinter interface {
+type terminalPrinter interface {
 	io.Reader
 	io.Writer
 	Printf(format string, args ...any)
 }
 
 type zmodemFilter struct {
-	term   TerminalPrinter
+	term   terminalPrinter
 	stdinW *io.PipeWriter
 
 	zmodemPipeR *io.PipeReader
@@ -52,7 +52,7 @@ type zmodemFilter struct {
 	startSend    func(f *zmodemFilter)
 }
 
-func newZmodemFilter(term TerminalPrinter, startReceive, startSend func(f *zmodemFilter)) (*zmodemFilter, io.Reader) {
+func newZmodemFilter(term terminalPrinter, startReceive, startSend func(f *zmodemFilter)) (*zmodemFilter, io.Reader) {
 	stdinR, stdinW := io.Pipe()
 	f := &zmodemFilter{
 		term:         term,
@@ -77,11 +77,12 @@ func newZmodemFilter(term TerminalPrinter, startReceive, startSend func(f *zmode
 					if bytes.Contains(buf[:n], []byte{'\x03'}) { // Ctrl-C
 						f.term.Printf("\x1b[31m[ZMODEM] Transfer aborted by user.\x1b[0m\r\n")
 						f.mu.Lock()
+						f.active = false
 						// Send 5 ZCANs to remote to abort
 						stdinW.Write([]byte{zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN})
-						// Close the local pipe to interrupt the parser
-						if f.zmodemPipeR != nil {
-							f.zmodemPipeR.Close()
+						// Close the write side of the pipe to interrupt the parser
+						if f.zmodemPipeW != nil {
+							f.zmodemPipeW.Close()
 						}
 						f.mu.Unlock()
 					} else if !warned {
@@ -116,8 +117,9 @@ func (f *zmodemFilter) resetPipe() {
 func (f *zmodemFilter) Write(p []byte) (n int, err error) {
 	f.mu.Lock()
 	if f.active {
+		w := f.zmodemPipeW
 		f.mu.Unlock()
-		n, err := f.zmodemPipeW.Write(p)
+		n, err := w.Write(p)
 		if err != nil {
 			// If the ZMODEM pipe is closed (e.g. session finished), the remaining data
 			// belongs to the terminal (e.g. the subsequent shell prompt).

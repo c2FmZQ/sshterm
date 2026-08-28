@@ -141,9 +141,25 @@ func (zr *Reader) ReadByteUnescaped() (byte, error) {
 			if next == ZRUB1 {
 				return 0xFF, nil
 			}
-			// Cancel sequence CAN CAN CAN CAN CAN
+			// Cancel sequence: ZDLE followed by CAN, then 4 more CANs (5 total).
 			if next == ZCAN {
-				return 0, ErrCanceled
+				canCount := 1
+				for canCount < 5 {
+					peek, err := zr.r.ReadByte()
+					if err != nil {
+						return 0, ErrCanceled
+					}
+					if peek == ZCAN || peek == ZDLE {
+						canCount++
+					} else {
+						break
+					}
+				}
+				if canCount >= 5 {
+					return 0, ErrCanceled
+				}
+				// Not a real cancel sequence; treat as escaped byte.
+				return next ^ 0x40, nil
 			}
 			return next ^ 0x40, nil
 		}

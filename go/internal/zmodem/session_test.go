@@ -28,7 +28,6 @@ import (
 	"io"
 	"sync"
 	"testing"
-	"time"
 )
 
 type readerFunc func(p []byte) (n int, err error)
@@ -140,17 +139,6 @@ func TestSessionSendReceive(t *testing.T) {
 	}
 	if receiveErr != nil {
 		t.Fatalf("Receiver failed: %v", receiveErr)
-	}
-
-	// Wait briefly for any pending async onFile callbacks to finish appending
-	for i := 0; i < 50; i++ {
-		mu.Lock()
-		count := len(receivedFiles)
-		mu.Unlock()
-		if count == len(originalFiles) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 
 	mu.Lock()

@@ -78,9 +78,9 @@ func Receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 			pr, pw := io.Pipe()
 
 			// Run callback in background to consume the reader
+			callbackErr := make(chan error, 1)
 			go func() {
-				// The consumer handles the streaming download
-				onFile(name, size, pr)
+				callbackErr <- onFile(name, size, pr)
 			}()
 
 			fileDone := false
@@ -102,7 +102,7 @@ func Receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 
 				case ZDATA:
 					useCrc32 = (h2.Format == FormatBin32)
-					offset := 0
+					var offset uint32
 					for {
 						chunk, endType, err := zr.ReadDataBlock(useCrc32)
 						if err != nil {
@@ -111,7 +111,7 @@ func Receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 						}
 
 						pw.Write(chunk)
-						offset += len(chunk)
+						offset += uint32(len(chunk))
 
 						if endType == ZCRCQ || endType == ZCRCW {
 							flags := [4]byte{byte(offset), byte(offset >> 8), byte(offset >> 16), byte(offset >> 24)}
@@ -133,6 +133,12 @@ func Receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 			}
 
 			pw.CloseWithError(fileErr)
+
+			// Wait for the onFile callback to finish processing.
+			if cbErr := <-callbackErr; cbErr != nil && fileErr == nil {
+				fileErr = cbErr
+			}
+
 			if fileErr != nil {
 				return fileErr
 			}
