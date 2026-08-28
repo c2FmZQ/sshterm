@@ -78,8 +78,9 @@ func newZmodemFilter(term terminalPrinter, startReceive, startSend func(f *zmode
 						f.term.Printf("\x1b[31m[ZMODEM] Transfer aborted by user.\x1b[0m\r\n")
 						f.mu.Lock()
 						f.active = false
-						// Send 5 ZCANs to remote to abort
-						stdinW.Write([]byte{zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN})
+						f.window = [6]byte{}
+						// Send standard ZMODEM cancel sequence to remote
+						stdinW.Write(zmodem.CancelSeq)
 						// Close the write side of the pipe to interrupt the parser
 						if f.zmodemPipeW != nil {
 							f.zmodemPipeW.Close()

@@ -100,10 +100,11 @@ func startSendAction(f *zmodemFilter) {
 
 		if len(files) == 0 {
 			f.term.Printf("\x1b[33m[ZMODEM] Send canceled (no files selected).\x1b[0m\r\n")
-			// We should abort the session
-			f.stdinW.Write([]byte{zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN})
+			// Send standard ZMODEM cancel sequence to abort remote rz
+			f.stdinW.Write(zmodem.CancelSeq)
 			f.mu.Lock()
 			f.active = false
+			f.window = [6]byte{}
 			f.mu.Unlock()
 			return
 		}

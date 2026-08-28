@@ -40,7 +40,14 @@ const (
 	ZBIN32 = 'C'
 	XON    = 0x11
 	XOFF   = 0x13
+	CAN    = 0x18 // ASCII CAN, same as ZDLE
 )
+
+// CancelSeq is the standard ZMODEM cancel sequence: 8 CAN bytes + 8 backspaces.
+var CancelSeq = []byte{
+	CAN, CAN, CAN, CAN, CAN, CAN, CAN, CAN,
+	0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+}
 
 // Zmodem frame types.
 const (
