@@ -1,7 +1,7 @@
 // MIT License
 //
-// Copyright (c) 2024 TTBT Enterprises LLC
-// Copyright (c) 2024 Robin Thellend <rthellend@rthellend.com>
+// Copyright (c) 2026 TTBT Enterprises LLC
+// Copyright (c) 2026 Robin Thellend <rthellend@rthellend.com>
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -26,87 +26,23 @@
 package app
 
 import (
-	"bytes"
 	"io"
-	"sync"
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 	"github.com/c2FmZQ/sshterm/internal/terminal"
 	"github.com/c2FmZQ/sshterm/internal/zmodem"
 )
 
-type zmodemFilter struct {
-	term   *terminal.Terminal
-	stdinW *io.PipeWriter
-
-	zmodemPipeR *io.PipeReader
-	zmodemPipeW *io.PipeWriter
-
-	active bool
-	mu     sync.Mutex
+func newZmodemFilterWasm(term *terminal.Terminal) (io.Writer, io.Reader) {
+	return newZmodemFilter(term, startReceiveAction, startSendAction)
 }
 
-func newZmodemFilter(term *terminal.Terminal) (*zmodemFilter, io.Reader) {
-	stdinR, stdinW := io.Pipe()
-	f := &zmodemFilter{
-		term:   term,
-		stdinW: stdinW,
-	}
-	f.resetPipe()
-
-	// Forward terminal input to the SSH session
-	go func() {
-		io.Copy(stdinW, term)
-	}()
-
-	return f, stdinR
-}
-
-func (f *zmodemFilter) resetPipe() {
-	if f.zmodemPipeR != nil {
-		f.zmodemPipeR.Close()
-	}
-	if f.zmodemPipeW != nil {
-		f.zmodemPipeW.Close()
-	}
-	f.zmodemPipeR, f.zmodemPipeW = io.Pipe()
-}
-
-func (f *zmodemFilter) Write(p []byte) (n int, err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	if f.active {
-		return f.zmodemPipeW.Write(p)
-	}
-
-	// Check for ZRQINIT (sz) or ZRINIT (rz)
-	// ZRQINIT: **\x18B00
-	// ZRINIT:  **\x18B01
-	if bytes.Contains(p, []byte{'*', '*', zmodem.ZDLE, zmodem.ZHEX, '0', '0'}) {
-		f.term.Printf("\r\n\x1b[33m[ZMODEM] Intercepted receive request...\x1b[0m\r\n")
-		f.startReceive(p)
-		return len(p), nil
-	}
-	if bytes.Contains(p, []byte{'*', '*', zmodem.ZDLE, zmodem.ZHEX, '0', '1'}) {
-		f.term.Printf("\r\n\x1b[33m[ZMODEM] Intercepted send request...\x1b[0m\r\n")
-		f.startSend(p)
-		return len(p), nil
-	}
-
-	return f.term.Write(p)
-}
-
-func (f *zmodemFilter) startReceive(p []byte) {
+func startReceiveAction(f *zmodemFilter) {
 	f.active = true
 	f.resetPipe()
 
 	go func() {
-		// Feed the initial buffer into the ZMODEM pipe
-		f.zmodemPipeW.Write(p)
-	}()
-
-	go func() {
+		defer f.zmodemPipeR.Close()
 		rw := struct {
 			io.Reader
 			io.Writer
@@ -139,15 +75,12 @@ func (f *zmodemFilter) startReceive(p []byte) {
 	}()
 }
 
-func (f *zmodemFilter) startSend(p []byte) {
+func startSendAction(f *zmodemFilter) {
 	f.active = true
 	f.resetPipe()
 
 	go func() {
-		f.zmodemPipeW.Write(p)
-	}()
-
-	go func() {
+		defer f.zmodemPipeR.Close()
 		imported := jsutil.ImportFiles("", true)
 		var files []*zmodem.File
 		for _, imp := range imported {
