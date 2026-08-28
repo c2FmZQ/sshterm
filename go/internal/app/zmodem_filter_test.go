@@ -29,7 +29,7 @@ func TestZmodemFilterSplitSignature(t *testing.T) {
 
 	receiveCalled := false
 	sendCalled := false
-	
+
 	startRecv := func(f *zmodemFilter) {
 		f.active = true
 		f.resetPipe()
@@ -49,17 +49,17 @@ func TestZmodemFilterSplitSignature(t *testing.T) {
 
 	// Write signature in tiny chunks to test sliding window
 	sig := []byte{'*', '*', zmodem.ZDLE, zmodem.ZHEX, '0', '0'}
-	
+
 	prefix := []byte("hello ")
 	filter.Write(prefix)
-	
+
 	for _, b := range sig {
 		filter.Write([]byte{b})
 	}
-	
+
 	suffix := []byte("world")
 	filter.Write(suffix)
-	
+
 	// Wait a moment for async pipe copies
 	time.Sleep(50 * time.Millisecond)
 
@@ -96,13 +96,13 @@ func TestZmodemFilterFallback(t *testing.T) {
 	filter, _ := newZmodemFilter(term, startRecv, nil)
 
 	sig := []byte{'*', '*', zmodem.ZDLE, zmodem.ZHEX, '0', '0'}
-	
+
 	// Write signature followed by shell prompt in a single burst
 	burst := append(sig, []byte("\r\nuser@host:~$")...)
 	filter.Write(burst)
-	
+
 	time.Sleep(50 * time.Millisecond)
-	
+
 	out := term.out.String()
 	if !strings.Contains(out, "user@host:~$") {
 		t.Fatalf("Expected shell prompt to fallback to terminal output. Got: %q", out)

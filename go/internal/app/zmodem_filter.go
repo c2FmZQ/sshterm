@@ -47,7 +47,7 @@ type zmodemFilter struct {
 	active bool
 	mu     sync.Mutex
 	window [6]byte
-	
+
 	startReceive func(f *zmodemFilter)
 	startSend    func(f *zmodemFilter)
 }
