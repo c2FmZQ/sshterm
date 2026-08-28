@@ -72,7 +72,7 @@ func TestZmodemFilterSplitSignature(t *testing.T) {
 
 	out := term.out.String()
 	// The prefix AND the signature itself should have been written to the terminal
-	expectedTermOut := "hello **\x18B00\r\n\x1b[33m[ZMODEM] Intercepted receive request...\x1b[0m\r\n"
+	expectedTermOut := "hello **\x18B00\x1b[33m[ZMODEM] Intercepted receive request...\x1b[0m\r\n"
 	if out != expectedTermOut {
 		t.Fatalf("Terminal output mismatch.\nGot: %q\nExp: %q", out, expectedTermOut)
 	}

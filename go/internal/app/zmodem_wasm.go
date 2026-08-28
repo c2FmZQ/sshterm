@@ -52,7 +52,11 @@ func startReceiveAction(f *zmodemFilter) {
 		var numFiles int
 		err := zmodem.Receive(rw, func(name string, size int64, rc io.Reader) error {
 			numFiles++
-			f.term.Printf("\r\n\x1b[36m[ZMODEM] Receiving %s (%d bytes)...\x1b[0m\r\n", name, size)
+			s := "s"
+			if size == 1 {
+				s = ""
+			}
+			f.term.Printf("\x1b[36m[ZMODEM] Receiving %s (%d byte%s)...\x1b[0m\r\n", name, size, s)
 			if helper == nil {
 				data, err := io.ReadAll(rc)
 				if err == nil {
@@ -67,10 +71,14 @@ func startReceiveAction(f *zmodemFilter) {
 		f.active = false
 		f.mu.Unlock()
 
+		s := "s"
+		if numFiles == 1 {
+			s = ""
+		}
 		if err == nil {
-			f.term.Printf("\r\n\x1b[32m[ZMODEM] Received %d files successfully.\x1b[0m\r\n", numFiles)
+			f.term.Printf("\x1b[32m[ZMODEM] Received %d file%s successfully.\x1b[0m\r\n", numFiles, s)
 		} else {
-			f.term.Printf("\r\n\x1b[31m[ZMODEM] Receive Error: %v\x1b[0m\r\n", err)
+			f.term.Printf("\x1b[31m[ZMODEM] Receive Error: %v\x1b[0m\r\n", err)
 		}
 	}()
 }
@@ -91,7 +99,7 @@ func startSendAction(f *zmodemFilter) {
 		}
 
 		if len(files) == 0 {
-			f.term.Printf("\r\n\x1b[33m[ZMODEM] Send canceled (no files selected).\x1b[0m\r\n")
+			f.term.Printf("\x1b[33m[ZMODEM] Send canceled (no files selected).\x1b[0m\r\n")
 			// We should abort the session
 			f.stdinW.Write([]byte{zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN})
 			f.mu.Lock()
@@ -100,7 +108,11 @@ func startSendAction(f *zmodemFilter) {
 			return
 		}
 
-		f.term.Printf("\r\n\x1b[33m[ZMODEM] Sending %d files...\x1b[0m\r\n", len(files))
+		s := "s"
+		if len(files) == 1 {
+			s = ""
+		}
+		f.term.Printf("\x1b[33m[ZMODEM] Sending %d file%s...\x1b[0m\r\n", len(files), s)
 
 		rw := struct {
 			io.Reader
@@ -114,9 +126,9 @@ func startSendAction(f *zmodemFilter) {
 		f.mu.Unlock()
 
 		if err != nil {
-			f.term.Printf("\r\n\x1b[31m[ZMODEM] Send Error: %v\x1b[0m\r\n", err)
+			f.term.Printf("\x1b[31m[ZMODEM] Send Error: %v\x1b[0m\r\n", err)
 		} else {
-			f.term.Printf("\r\n\x1b[32m[ZMODEM] Send completed successfully.\x1b[0m\r\n")
+			f.term.Printf("\x1b[32m[ZMODEM] Send completed successfully.\x1b[0m\r\n")
 		}
 	}()
 }

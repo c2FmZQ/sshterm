@@ -75,7 +75,7 @@ func newZmodemFilter(term TerminalPrinter, startReceive, startSend func(f *zmode
 
 				if active {
 					if bytes.Contains(buf[:n], []byte{'\x03'}) { // Ctrl-C
-						f.term.Printf("\r\n\x1b[31m[ZMODEM] Transfer aborted by user.\x1b[0m\r\n")
+						f.term.Printf("\x1b[31m[ZMODEM] Transfer aborted by user.\x1b[0m\r\n")
 						f.mu.Lock()
 						// Send 5 ZCANs to remote to abort
 						stdinW.Write([]byte{zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN, zmodem.ZCAN})
@@ -85,7 +85,7 @@ func newZmodemFilter(term TerminalPrinter, startReceive, startSend func(f *zmode
 						}
 						f.mu.Unlock()
 					} else if !warned {
-						f.term.Printf("\r\n\x1b[33m[ZMODEM] Keyboard input is ignored during file transfers. Press Ctrl-C to abort.\x1b[0m\r\n")
+						f.term.Printf("\x1b[33m[ZMODEM] Keyboard input is ignored during file transfers. Press Ctrl-C to abort.\x1b[0m\r\n")
 						warned = true
 					}
 				} else {
@@ -135,7 +135,7 @@ func (f *zmodemFilter) Write(p []byte) (n int, err error) {
 
 		if bytes.Equal(f.window[:], sigReceive) {
 			f.term.Write(p[:i+1])
-			f.term.Printf("\r\n\x1b[33m[ZMODEM] Intercepted receive request...\x1b[0m\r\n")
+			f.term.Printf("\x1b[33m[ZMODEM] Intercepted receive request...\x1b[0m\r\n")
 			f.startReceive(f)
 			f.mu.Unlock()
 
@@ -150,7 +150,7 @@ func (f *zmodemFilter) Write(p []byte) (n int, err error) {
 		}
 		if bytes.Equal(f.window[:], sigSend) {
 			f.term.Write(p[:i+1])
-			f.term.Printf("\r\n\x1b[33m[ZMODEM] Intercepted send request...\x1b[0m\r\n")
+			f.term.Printf("\x1b[33m[ZMODEM] Intercepted send request...\x1b[0m\r\n")
 			f.startSend(f)
 			f.mu.Unlock()
 
