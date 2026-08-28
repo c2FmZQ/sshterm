@@ -28,6 +28,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 )
 
 type readerFunc func(p []byte) (n int, err error)
@@ -98,6 +99,7 @@ func TestSessionSendReceive(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	var mu sync.Mutex
 	var receivedFiles []*File
 	var receiveErr error
 
@@ -109,7 +111,9 @@ func TestSessionSendReceive(t *testing.T) {
 			if err != nil {
 				return err
 			}
+			mu.Lock()
 			receivedFiles = append(receivedFiles, &File{Name: name, Data: data})
+			mu.Unlock()
 			return nil
 		})
 		serverToClient.mu.Lock()
@@ -137,6 +141,20 @@ func TestSessionSendReceive(t *testing.T) {
 	if receiveErr != nil {
 		t.Fatalf("Receiver failed: %v", receiveErr)
 	}
+
+	// Wait briefly for any pending async onFile callbacks to finish appending
+	for i := 0; i < 50; i++ {
+		mu.Lock()
+		count := len(receivedFiles)
+		mu.Unlock()
+		if count == len(originalFiles) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
 
 	if len(receivedFiles) != len(originalFiles) {
 		t.Fatalf("Expected %d files, got %d", len(originalFiles), len(receivedFiles))
