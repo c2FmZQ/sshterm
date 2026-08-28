@@ -33,11 +33,6 @@ import (
 func Send(rw io.ReadWriter, files []*File) error {
 	zr := NewReader(rw)
 
-	// 1. Send ZRQINIT
-	if err := WriteHexHeader(rw, Header{Type: ZRQINIT}); err != nil {
-		return err
-	}
-
 	var currentFile *File
 
 	for {
@@ -48,6 +43,12 @@ func Send(rw io.ReadWriter, files []*File) error {
 
 		switch h.Type {
 		case ZRINIT:
+			if currentFile != nil {
+				// We already sent ZFILE and are waiting for ZRPOS.
+				// This is a duplicate ZRINIT from the receiver, ignore it.
+				continue
+			}
+
 			if len(files) == 0 {
 				// 4. No more files, send ZFIN
 				if err := WriteHexHeader(rw, Header{Type: ZFIN}); err != nil {
@@ -92,6 +93,10 @@ func Send(rw io.ReadWriter, files []*File) error {
 			if err := WriteHexHeader(rw, Header{Type: ZEOF, Flags: flags}); err != nil {
 				return err
 			}
+			currentFile = nil // Reset state, waiting for next ZRINIT
+
+		case ZSKIP:
+			currentFile = nil // Receiver skipped this file, wait for next ZRINIT
 
 		case ZABORT, ZCAN, ZFERR:
 			return fmt.Errorf("transfer aborted by receiver")
