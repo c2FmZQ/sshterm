@@ -130,7 +130,7 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	var sessionStdin io.Reader = t
 	var sessionStdout io.Writer = t
 	if enableZmodem {
-		filter, stdinR := newZmodemFilter(t)
+		filter, stdinR := newZmodemFilterWasm(t)
 		sessionStdin = stdinR
 		sessionStdout = filter
 	}
