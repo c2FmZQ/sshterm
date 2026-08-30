@@ -33,7 +33,7 @@ import (
 type File struct {
 	Name string
 	Size int64
-	R    io.Reader
+	R    io.ReadCloser
 }
 
 // receive performs a ZMODEM receive session, downloading all sent files.

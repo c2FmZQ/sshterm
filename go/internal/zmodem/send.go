@@ -43,6 +43,17 @@ func send(rw io.ReadWriter, files []*File) error {
 
 	var currentFile *File
 
+	defer func() {
+		if currentFile != nil && currentFile.R != nil {
+			currentFile.R.Close()
+		}
+		for _, f := range files {
+			if f != nil && f.R != nil {
+				f.R.Close()
+			}
+		}
+	}()
+
 	for {
 		h, err := zr.readHeader()
 		if err != nil {
@@ -132,9 +143,15 @@ func send(rw io.ReadWriter, files []*File) error {
 			if err := writeHexHeader(rw, header{Type: zEOF, Flags: flags}); err != nil {
 				return err
 			}
+			if currentFile.R != nil {
+				currentFile.R.Close()
+			}
 			currentFile = nil // Reset state, waiting for next ZRINIT
 
 		case zSKIP:
+			if currentFile != nil && currentFile.R != nil {
+				currentFile.R.Close()
+			}
 			currentFile = nil // Receiver skipped this file, wait for next ZRINIT
 
 		case zABORT, zCAN, zFERR:

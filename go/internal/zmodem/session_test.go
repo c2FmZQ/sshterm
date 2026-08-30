@@ -95,8 +95,8 @@ func TestSessionSendReceive(t *testing.T) {
 		{0x00, 0x18, 0x11, 0x13, 0xFF},
 	}
 	originalFiles := []*File{
-		{Name: "test1.txt", Size: int64(len(originalData[0])), R: bytes.NewReader(originalData[0])},
-		{Name: "test2.bin", Size: int64(len(originalData[1])), R: bytes.NewReader(originalData[1])},
+		{Name: "test1.txt", Size: int64(len(originalData[0])), R: io.NopCloser(bytes.NewReader(originalData[0]))},
+		{Name: "test2.bin", Size: int64(len(originalData[1])), R: io.NopCloser(bytes.NewReader(originalData[1]))},
 	}
 
 	type receivedFile struct {
