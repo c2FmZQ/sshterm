@@ -72,76 +72,69 @@ func receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 				fmt.Sscanf(string(parts[1]), "%d", &size)
 			}
 
+			// We received ZFILE. We send ZRPOS to accept it.
 			if err := writeHexHeader(rw, header{Type: zRPOS}); err != nil {
 				return err
 			}
 
-			pr, pw := io.Pipe()
-
-			// Run callback in background to consume the reader
-			callbackErr := make(chan error, 1)
-			go func() {
-				callbackErr <- onFile(name, size, pr)
-			}()
-
-			fileDone := false
-			var fileErr error
-
-			for !fileDone {
+			// Wait for ZDATA header
+			dataStarted := false
+			for !dataStarted {
 				h2, err := zr.readHeader()
 				if err != nil {
-					fileErr = err
-					break
+					return err
 				}
-
 				switch h2.Type {
-				case zEOF:
-					if err := writeHexHeader(rw, header{Type: zRINIT}); err != nil {
-						fileErr = err
-					}
-					fileDone = true
-
 				case zDATA:
+					dataStarted = true
 					useCrc32 = (h2.Format == formatBin32)
-					var offset uint32
-					for {
-						chunk, endType, err := zr.readDataBlock(useCrc32)
-						if err != nil {
-							fileErr = err
-							break
-						}
-
-						pw.Write(chunk)
-						offset += uint32(len(chunk))
-
-						if endType == zCRCQ || endType == zCRCW {
-							flags := [4]byte{byte(offset), byte(offset >> 8), byte(offset >> 16), byte(offset >> 24)}
-							writeHexHeader(rw, header{Type: zACK, Flags: flags})
-						}
-
-						if endType == zCRCE || endType == zCRCW {
-							break
-						}
+				case zEOF:
+					// Empty file or sender skipped data
+					if err := writeHexHeader(rw, header{Type: zRINIT}); err != nil {
+						return err
 					}
+					// Return empty reader
+					if err := onFile(name, size, bytes.NewReader(nil)); err != nil {
+						return err
+					}
+					continue // wait for next file or ZFIN
 				default:
-					fileErr = fmt.Errorf("unexpected header during ZDATA: %d", h2.Type)
-					fileDone = true
-				}
-
-				if fileErr != nil {
-					break
+					return fmt.Errorf("unexpected header before ZDATA: %d", h2.Type)
 				}
 			}
 
-			pw.CloseWithError(fileErr)
-
-			// Wait for the onFile callback to finish processing.
-			if cbErr := <-callbackErr; cbErr != nil && fileErr == nil {
-				fileErr = cbErr
+			// We are now at the start of ZDATA.
+			// Pass a custom io.Reader to onFile that pulls chunks directly from the network.
+			r := &dataReader{
+				zr:       zr,
+				rw:       rw,
+				useCrc32: useCrc32,
 			}
 
-			if fileErr != nil {
-				return fileErr
+			if err := onFile(name, size, r); err != nil {
+				return err
+			}
+
+			// If the reader didn't consume until EOF, we must drain it to stay in sync
+			if !r.eof && r.err == nil {
+				io.Copy(io.Discard, r)
+			}
+
+			if r.err != nil && r.err != io.EOF {
+				return r.err
+			}
+
+			// Wait for ZEOF header (might have already been read if readDataBlock returned it,
+			// but ZMODEM sends ZEOF as a separate header after the last data block)
+			h2, err := zr.readHeader()
+			if err != nil {
+				return err
+			}
+			if h2.Type != zEOF {
+				return fmt.Errorf("expected ZEOF after data, got %d", h2.Type)
+			}
+			if err := writeHexHeader(rw, header{Type: zRINIT}); err != nil {
+				return err
 			}
 
 		case zFIN:
@@ -152,4 +145,56 @@ func receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 			return fmt.Errorf("transfer aborted by sender")
 		}
 	}
+}
+
+type dataReader struct {
+	zr       *reader
+	rw       io.ReadWriter
+	useCrc32 bool
+	buf      []byte
+	offset   uint32
+	eof      bool
+	err      error
+}
+
+func (r *dataReader) Read(p []byte) (n int, err error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	if len(r.buf) > 0 {
+		n = copy(p, r.buf)
+		r.buf = r.buf[n:]
+		return n, nil
+	}
+	if r.eof {
+		return 0, io.EOF
+	}
+
+	chunk, endType, err := r.zr.readDataBlock(r.useCrc32)
+	if err != nil {
+		r.err = err
+		return 0, err
+	}
+
+	r.offset += uint32(len(chunk))
+
+	if endType == zCRCQ || endType == zCRCW {
+		flags := [4]byte{byte(r.offset), byte(r.offset >> 8), byte(r.offset >> 16), byte(r.offset >> 24)}
+		writeHexHeader(r.rw, header{Type: zACK, Flags: flags})
+	}
+
+	if endType == zCRCE || endType == zCRCW {
+		r.eof = true
+	}
+
+	if len(chunk) > 0 {
+		n = copy(p, chunk)
+		if n < len(chunk) {
+			r.buf = chunk[n:]
+		}
+	} else if r.eof {
+		return 0, io.EOF
+	}
+
+	return n, nil
 }
