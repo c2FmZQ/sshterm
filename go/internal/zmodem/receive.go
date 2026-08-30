@@ -29,34 +29,35 @@ import (
 	"io"
 )
 
-// File represents a ZMODEM transmitted file.
+// File represents a file for ZMODEM transfer.
 type File struct {
 	Name string
-	Data []byte
+	Size int64
+	R    io.Reader
 }
 
-// Receive performs a ZMODEM receive session, downloading all sent files.
+// receive performs a ZMODEM receive session, downloading all sent files.
 // For each file, onFile is called with the filename, size, and an io.Reader
 // that will stream the file contents.
-func Receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader) error) error {
-	zr := NewReader(rw)
+func receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader) error) error {
+	zr := newReader(rw)
 
 	// 1. Send ZRINIT to start
-	err := WriteHexHeader(rw, Header{Type: ZRINIT})
+	err := writeHexHeader(rw, header{Type: zRINIT})
 	if err != nil {
 		return err
 	}
 
 	for {
-		h, err := zr.ReadHeader()
+		h, err := zr.readHeader()
 		if err != nil {
 			return err
 		}
 
 		switch h.Type {
-		case ZFILE:
-			useCrc32 := (h.Format == FormatBin32)
-			data, _, err := zr.ReadDataBlock(useCrc32)
+		case zFILE:
+			useCrc32 := (h.Format == formatBin32)
+			data, _, err := zr.readDataBlock(useCrc32)
 			if err != nil {
 				return err
 			}
@@ -71,7 +72,7 @@ func Receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 				fmt.Sscanf(string(parts[1]), "%d", &size)
 			}
 
-			if err := WriteHexHeader(rw, Header{Type: ZRPOS}); err != nil {
+			if err := writeHexHeader(rw, header{Type: zRPOS}); err != nil {
 				return err
 			}
 
@@ -87,24 +88,24 @@ func Receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 			var fileErr error
 
 			for !fileDone {
-				h2, err := zr.ReadHeader()
+				h2, err := zr.readHeader()
 				if err != nil {
 					fileErr = err
 					break
 				}
 
 				switch h2.Type {
-				case ZEOF:
-					if err := WriteHexHeader(rw, Header{Type: ZRINIT}); err != nil {
+				case zEOF:
+					if err := writeHexHeader(rw, header{Type: zRINIT}); err != nil {
 						fileErr = err
 					}
 					fileDone = true
 
-				case ZDATA:
-					useCrc32 = (h2.Format == FormatBin32)
+				case zDATA:
+					useCrc32 = (h2.Format == formatBin32)
 					var offset uint32
 					for {
-						chunk, endType, err := zr.ReadDataBlock(useCrc32)
+						chunk, endType, err := zr.readDataBlock(useCrc32)
 						if err != nil {
 							fileErr = err
 							break
@@ -113,12 +114,12 @@ func Receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 						pw.Write(chunk)
 						offset += uint32(len(chunk))
 
-						if endType == ZCRCQ || endType == ZCRCW {
+						if endType == zCRCQ || endType == zCRCW {
 							flags := [4]byte{byte(offset), byte(offset >> 8), byte(offset >> 16), byte(offset >> 24)}
-							WriteHexHeader(rw, Header{Type: ZACK, Flags: flags})
+							writeHexHeader(rw, header{Type: zACK, Flags: flags})
 						}
 
-						if endType == ZCRCE || endType == ZCRCW {
+						if endType == zCRCE || endType == zCRCW {
 							break
 						}
 					}
@@ -143,11 +144,11 @@ func Receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 				return fileErr
 			}
 
-		case ZFIN:
-			WriteHexHeader(rw, Header{Type: ZFIN})
+		case zFIN:
+			writeHexHeader(rw, header{Type: zFIN})
 			return nil
 
-		case ZABORT, ZCAN, ZFERR:
+		case zABORT, zCAN, zFERR:
 			return fmt.Errorf("transfer aborted by sender")
 		}
 	}

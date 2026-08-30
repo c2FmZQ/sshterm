@@ -29,9 +29,9 @@ import (
 	"io"
 )
 
-// ReadDataBlock reads a single subpacket of data up to a ZDLE frame-end marker.
-// Returns the unescaped data, the frame end type (e.g., ZCRCE, ZCRCG, ZCRCQ, ZCRCW), and any error.
-func (zr *Reader) ReadDataBlock(useCrc32 bool) ([]byte, byte, error) {
+// readDataBlock reads a single subpacket of data up to a zDLE frame-end marker.
+// Returns the unescaped data, the frame end type (e.g., zCRCE, zCRCG, zCRCQ, zCRCW), and any error.
+func (zr *reader) readDataBlock(useCrc32 bool) ([]byte, byte, error) {
 	var buf bytes.Buffer
 	var endType byte
 
@@ -45,19 +45,19 @@ func (zr *Reader) ReadDataBlock(useCrc32 bool) ([]byte, byte, error) {
 			return nil, 0, err
 		}
 
-		// Handle escaping manually inline for performance and to catch ZDLE frame endings
-		if b == XON || b == XOFF || b == XON|0x80 || b == XOFF|0x80 {
+		// Handle escaping manually inline for performance and to catch zDLE frame endings
+		if b == xON || b == xOFF || b == xON|0x80 || b == xOFF|0x80 {
 			continue // ignore flow control
 		}
 
-		if b == ZDLE {
+		if b == zDLE {
 			next, err := zr.r.ReadByte()
 			if err != nil {
 				return nil, 0, err
 			}
 
 			switch next {
-			case ZCRCE, ZCRCG, ZCRCQ, ZCRCW:
+			case zCRCE, zCRCG, zCRCQ, zCRCW:
 				endType = next
 				if useCrc32 {
 					crc32Val = updcrc32(next, crc32Val)
@@ -65,12 +65,12 @@ func (zr *Reader) ReadDataBlock(useCrc32 bool) ([]byte, byte, error) {
 					crc16 = updcrc16(next, crc16)
 				}
 				goto ReadCRC
-			case ZRUB0:
+			case zRUB0:
 				b = 0x7F
-			case ZRUB1:
+			case zRUB1:
 				b = 0xFF
-			case ZCAN:
-				return nil, 0, ErrCanceled
+			case zCAN:
+				return nil, 0, errCanceled
 			default:
 				b = next ^ 0x40
 			}
@@ -88,7 +88,7 @@ ReadCRC:
 	if useCrc32 {
 		crcBytes := make([]byte, 4)
 		for i := 0; i < 4; i++ {
-			b, err := zr.ReadByteUnescaped()
+			b, err := zr.readByteUnescaped()
 			if err != nil {
 				return nil, 0, err
 			}
@@ -96,28 +96,28 @@ ReadCRC:
 		}
 		expectedCRC := uint32(crcBytes[0]) | (uint32(crcBytes[1]) << 8) | (uint32(crcBytes[2]) << 16) | (uint32(crcBytes[3]) << 24)
 		if ^crc32Val != expectedCRC {
-			return nil, 0, fmt.Errorf("%w: ZDATA CRC32 mismatch", ErrInvalidHeader)
+			return nil, 0, fmt.Errorf("%w: ZDATA CRC32 mismatch", errInvalidHeader)
 		}
 	} else {
-		crc1, err := zr.ReadByteUnescaped()
+		crc1, err := zr.readByteUnescaped()
 		if err != nil {
 			return nil, 0, err
 		}
-		crc2, err := zr.ReadByteUnescaped()
+		crc2, err := zr.readByteUnescaped()
 		if err != nil {
 			return nil, 0, err
 		}
 		expectedCRC := (uint16(crc1) << 8) | uint16(crc2)
 		if crc16 != expectedCRC {
-			return nil, 0, fmt.Errorf("%w: ZDATA CRC16 mismatch", ErrInvalidHeader)
+			return nil, 0, fmt.Errorf("%w: ZDATA CRC16 mismatch", errInvalidHeader)
 		}
 	}
 
 	return buf.Bytes(), endType, nil
 }
 
-// WriteDataBlock writes a ZMODEM data subpacket to the writer.
-func WriteDataBlock(w io.Writer, data []byte, endType byte, useCrc32 bool) error {
+// writeDataBlock writes a ZMODEM data subpacket to the writer.
+func writeDataBlock(w io.Writer, data []byte, endType byte, useCrc32 bool) error {
 	var buf bytes.Buffer
 
 	var crc16 uint16
@@ -133,8 +133,8 @@ func WriteDataBlock(w io.Writer, data []byte, endType byte, useCrc32 bool) error
 		escapeByte(b, &buf)
 	}
 
-	// The ZDLE frame end type is ALSO included in the CRC calculation
-	buf.WriteByte(ZDLE)
+	// The zDLE frame end type is ALSO included in the CRC calculation
+	buf.WriteByte(zDLE)
 	buf.WriteByte(endType)
 
 	if useCrc32 {

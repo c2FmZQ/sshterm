@@ -31,26 +31,26 @@ import (
 func TestHexHeaderWriteParse(t *testing.T) {
 	tests := []struct {
 		name   string
-		header Header
+		header header
 	}{
 		{
 			name: "ZRQINIT",
-			header: Header{
-				Type:  ZRQINIT,
+			header: header{
+				Type:  zRQINIT,
 				Flags: [4]byte{0, 0, 0, 0},
 			},
 		},
 		{
 			name: "ZFILE",
-			header: Header{
-				Type:  ZFILE,
+			header: header{
+				Type:  zFILE,
 				Flags: [4]byte{0, 0, 0, 1}, // Conversion options
 			},
 		},
 		{
 			name: "ZFIN",
-			header: Header{
-				Type:  ZFIN,
+			header: header{
+				Type:  zFIN,
 				Flags: [4]byte{0, 0, 0, 0},
 			},
 		},
@@ -59,19 +59,19 @@ func TestHexHeaderWriteParse(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			if err := WriteHexHeader(&buf, tc.header); err != nil {
+			if err := writeHexHeader(&buf, tc.header); err != nil {
 				t.Fatalf("WriteHexHeader failed: %v", err)
 			}
 
 			out := buf.Bytes()
 			// Must start with **\x18B
-			if !bytes.HasPrefix(out, []byte{ZPAD, ZPAD, ZDLE, ZHEX}) {
+			if !bytes.HasPrefix(out, []byte{zPAD, zPAD, zDLE, zHEX}) {
 				t.Fatalf("Missing hex header prefix: %x", out)
 			}
 
 			// Extract the 14 hex bytes
 			hexData := out[4 : 4+14]
-			parsed, err := ParseHexHeader(hexData)
+			parsed, err := parseHexHeader(hexData)
 			if err != nil {
 				t.Fatalf("ParseHexHeader failed: %v", err)
 			}
@@ -90,14 +90,14 @@ func TestParseHexHeader_InvalidCRC(t *testing.T) {
 	// A valid hex string but we will flip a byte to invalidate the CRC
 	hexData := []byte("00000000000000")
 	// The CRC for 5 zeros is 0000
-	_, err := ParseHexHeader(hexData)
+	_, err := parseHexHeader(hexData)
 	if err != nil {
 		t.Fatalf("Expected valid all zeros to parse, got %v", err)
 	}
 
 	// Invalidate the type byte but keep CRC the same
 	hexData[1] = '1'
-	_, err = ParseHexHeader(hexData)
+	_, err = parseHexHeader(hexData)
 	if err == nil {
 		t.Fatal("Expected error due to CRC mismatch")
 	}

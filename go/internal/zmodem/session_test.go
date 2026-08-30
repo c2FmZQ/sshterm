@@ -90,28 +90,37 @@ func TestSessionSendReceive(t *testing.T) {
 	clientConn := rw(serverToClient, clientToServer)
 	serverConn := rw(clientToServer, serverToClient)
 
+	originalData := [][]byte{
+		[]byte("Hello ZMODEM!"),
+		{0x00, 0x18, 0x11, 0x13, 0xFF},
+	}
 	originalFiles := []*File{
-		{Name: "test1.txt", Data: []byte("Hello ZMODEM!")},
-		{Name: "test2.bin", Data: []byte{0x00, 0x18, 0x11, 0x13, 0xFF}},
+		{Name: "test1.txt", Size: int64(len(originalData[0])), R: bytes.NewReader(originalData[0])},
+		{Name: "test2.bin", Size: int64(len(originalData[1])), R: bytes.NewReader(originalData[1])},
+	}
+
+	type receivedFile struct {
+		Name string
+		Data []byte
 	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	var mu sync.Mutex
-	var receivedFiles []*File
+	var receivedFiles []*receivedFile
 	var receiveErr error
 
 	// Run Receiver (Server side in this context)
 	go func() {
 		defer wg.Done()
-		receiveErr = Receive(serverConn, func(name string, size int64, rc io.Reader) error {
+		receiveErr = receive(serverConn, func(name string, size int64, rc io.Reader) error {
 			data, err := io.ReadAll(rc)
 			if err != nil {
 				return err
 			}
 			mu.Lock()
-			receivedFiles = append(receivedFiles, &File{Name: name, Data: data})
+			receivedFiles = append(receivedFiles, &receivedFile{Name: name, Data: data})
 			mu.Unlock()
 			return nil
 		})
@@ -125,7 +134,7 @@ func TestSessionSendReceive(t *testing.T) {
 	// Run Sender (Client side in this context)
 	go func() {
 		defer wg.Done()
-		sendErr = Send(clientConn, originalFiles)
+		sendErr = send(clientConn, originalFiles)
 		clientToServer.mu.Lock()
 		clientToServer.closed = true
 		clientToServer.cond.Broadcast()
@@ -148,13 +157,12 @@ func TestSessionSendReceive(t *testing.T) {
 		t.Fatalf("Expected %d files, got %d", len(originalFiles), len(receivedFiles))
 	}
 
-	for i, orig := range originalFiles {
-		recv := receivedFiles[i]
-		if orig.Name != recv.Name {
-			t.Errorf("File %d name mismatch: %q != %q", i, orig.Name, recv.Name)
+	for i, recv := range receivedFiles {
+		if originalFiles[i].Name != recv.Name {
+			t.Errorf("File %d name mismatch: %q != %q", i, originalFiles[i].Name, recv.Name)
 		}
-		if !bytes.Equal(orig.Data, recv.Data) {
-			t.Errorf("File %d data mismatch: expected %x, got %x", i, orig.Data, recv.Data)
+		if !bytes.Equal(originalData[i], recv.Data) {
+			t.Errorf("File %d data mismatch: expected %x, got %x", i, originalData[i], recv.Data)
 		}
 	}
 }

@@ -38,25 +38,25 @@ func TestDataBlockWriteParse(t *testing.T) {
 		{
 			name:     "Small Payload CRC16 ZCRCE",
 			data:     []byte("hello world"),
-			endType:  ZCRCE,
+			endType:  zCRCE,
 			useCrc32: false,
 		},
 		{
 			name:     "Small Payload CRC32 ZCRCG",
 			data:     []byte("hello world with more text"),
-			endType:  ZCRCG,
+			endType:  zCRCG,
 			useCrc32: true,
 		},
 		{
 			name:     "Escaped Payload CRC16 ZCRCW",
 			data:     []byte{0x0D, 0x18, 0x11, 0x13, 0x18, 'A', 'B', 'C'}, // Needs escaping
-			endType:  ZCRCW,
+			endType:  zCRCW,
 			useCrc32: false,
 		},
 		{
 			name:     "Empty Payload CRC32 ZCRCQ",
 			data:     []byte{},
-			endType:  ZCRCQ,
+			endType:  zCRCQ,
 			useCrc32: true,
 		},
 	}
@@ -64,12 +64,12 @@ func TestDataBlockWriteParse(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			if err := WriteDataBlock(&buf, tc.data, tc.endType, tc.useCrc32); err != nil {
+			if err := writeDataBlock(&buf, tc.data, tc.endType, tc.useCrc32); err != nil {
 				t.Fatalf("WriteDataBlock failed: %v", err)
 			}
 
-			zr := NewReader(&buf)
-			parsedData, parsedEndType, err := zr.ReadDataBlock(tc.useCrc32)
+			zr := newReader(&buf)
+			parsedData, parsedEndType, err := zr.readDataBlock(tc.useCrc32)
 			if err != nil {
 				t.Fatalf("ReadDataBlock failed: %v", err)
 			}
@@ -86,7 +86,7 @@ func TestDataBlockWriteParse(t *testing.T) {
 
 func TestDataBlock_CorruptedCRC(t *testing.T) {
 	var buf bytes.Buffer
-	err := WriteDataBlock(&buf, []byte("good data"), ZCRCE, false)
+	err := writeDataBlock(&buf, []byte("good data"), zCRCE, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +95,8 @@ func TestDataBlock_CorruptedCRC(t *testing.T) {
 	out := buf.Bytes()
 	out[len(out)-1] ^= 0xFF
 
-	zr := NewReader(bytes.NewReader(out))
-	_, _, err = zr.ReadDataBlock(false)
+	zr := newReader(bytes.NewReader(out))
+	_, _, err = zr.readDataBlock(false)
 	if err == nil {
 		t.Fatal("Expected CRC mismatch error, but got nil")
 	}

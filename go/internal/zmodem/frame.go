@@ -32,16 +32,16 @@ import (
 	"io"
 )
 
-var ErrCanceled = errors.New("zmodem transfer canceled")
+var errCanceled = errors.New("zmodem transfer canceled")
 
 // Subpacket endings
 const (
-	ZCRCE = 'h' // CRC next, frame ends, header (ZACK) follows
-	ZCRCG = 'i' // CRC next, frame continues non-stop
-	ZCRCQ = 'j' // CRC next, frame continues, ZACK expected
-	ZCRCW = 'k' // CRC next, frame ends, wait for ZACK
-	ZRUB0 = 'l' // Translate to rubout 0177
-	ZRUB1 = 'm' // Translate to rubout 0377
+	zCRCE = 'h' // CRC next, frame ends, header (ZACK) follows
+	zCRCG = 'i' // CRC next, frame continues non-stop
+	zCRCQ = 'j' // CRC next, frame continues, ZACK expected
+	zCRCW = 'k' // CRC next, frame ends, wait for ZACK
+	zRUB0 = 'l' // Translate to rubout 0177
+	zRUB1 = 'm' // Translate to rubout 0377
 )
 
 // updcrc32 computes the Zmodem CRC32 (which matches the IEEE standard CRC32).
@@ -50,10 +50,10 @@ func updcrc32(cp uint8, crc uint32) uint32 {
 }
 
 // Escape handles ZMODEM character escaping.
-// ZDLE, XON, XOFF, and their 8th bit set variants must be escaped.
+// zDLE, xON, xOFF, and their 8th bit set variants must be escaped.
 func needsEscape(b byte) bool {
 	switch b & 0x7F {
-	case ZDLE, XON, XOFF, 0x0D, 0x10: // CR, DLE, XON, XOFF
+	case zDLE, xON, xOFF, 0x0D, 0x10: // CR, DLE, XON, XOFF
 		return true
 	}
 	return false
@@ -61,19 +61,19 @@ func needsEscape(b byte) bool {
 
 func escapeByte(b byte, out *bytes.Buffer) {
 	if needsEscape(b) {
-		out.WriteByte(ZDLE)
+		out.WriteByte(zDLE)
 		out.WriteByte(b ^ 0x40)
 	} else {
 		out.WriteByte(b)
 	}
 }
 
-// WriteBinaryHeader writes a ZBIN header to the writer.
-func WriteBinaryHeader(w io.Writer, h Header) error {
+// writeBinaryHeader writes a ZBIN header to the writer.
+func writeBinaryHeader(w io.Writer, h header) error {
 	var buf bytes.Buffer
-	buf.WriteByte(ZPAD)
-	buf.WriteByte(ZDLE)
-	buf.WriteByte(ZBIN)
+	buf.WriteByte(zPAD)
+	buf.WriteByte(zDLE)
+	buf.WriteByte(zBIN)
 
 	data := []byte{h.Type, h.Flags[0], h.Flags[1], h.Flags[2], h.Flags[3]}
 	var crc uint16
@@ -88,12 +88,12 @@ func WriteBinaryHeader(w io.Writer, h Header) error {
 	return err
 }
 
-// WriteBinary32Header writes a ZBIN32 header to the writer.
-func WriteBinary32Header(w io.Writer, h Header) error {
+// writeBinary32Header writes a ZBIN32 header to the writer.
+func writeBinary32Header(w io.Writer, h header) error {
 	var buf bytes.Buffer
-	buf.WriteByte(ZPAD)
-	buf.WriteByte(ZDLE)
-	buf.WriteByte(ZBIN32)
+	buf.WriteByte(zPAD)
+	buf.WriteByte(zDLE)
+	buf.WriteByte(zBIN32)
 
 	data := []byte{h.Type, h.Flags[0], h.Flags[1], h.Flags[2], h.Flags[3]}
 	var crc uint32 = 0xFFFFFFFF
@@ -111,52 +111,52 @@ func WriteBinary32Header(w io.Writer, h Header) error {
 	return err
 }
 
-// Reader provides robust reading of ZMODEM frames from an underlying stream.
-type Reader struct {
+// reader provides robust reading of ZMODEM frames from an underlying stream.
+type reader struct {
 	r *bufio.Reader
 }
 
-func NewReader(r io.Reader) *Reader {
-	return &Reader{r: bufio.NewReader(r)}
+func newReader(r io.Reader) *reader {
+	return &reader{r: bufio.NewReader(r)}
 }
 
-// ReadByteUnescaped reads one byte, handling ZDLE escaping.
-func (zr *Reader) ReadByteUnescaped() (byte, error) {
+// readByteUnescaped reads one byte, handling zDLE escaping.
+func (zr *reader) readByteUnescaped() (byte, error) {
 	for {
 		b, err := zr.r.ReadByte()
 		if err != nil {
 			return 0, err
 		}
-		if b == XON || b == XOFF || b == XON|0x80 || b == XOFF|0x80 {
+		if b == xON || b == xOFF || b == xON|0x80 || b == xOFF|0x80 {
 			continue // ignore flow control
 		}
-		if b == ZDLE {
+		if b == zDLE {
 			next, err := zr.r.ReadByte()
 			if err != nil {
 				return 0, err
 			}
-			if next == ZRUB0 {
+			if next == zRUB0 {
 				return 0x7F, nil
 			}
-			if next == ZRUB1 {
+			if next == zRUB1 {
 				return 0xFF, nil
 			}
-			// Cancel sequence: ZDLE followed by CAN, then 4 more CANs (5 total).
-			if next == ZCAN {
+			// Cancel sequence: zDLE followed by CAN, then 4 more CANs (5 total).
+			if next == zCAN {
 				canCount := 1
 				for canCount < 5 {
 					peek, err := zr.r.ReadByte()
 					if err != nil {
-						return 0, ErrCanceled
+						return 0, errCanceled
 					}
-					if peek == ZCAN || peek == ZDLE {
+					if peek == zCAN || peek == zDLE {
 						canCount++
 					} else {
 						break
 					}
 				}
 				if canCount >= 5 {
-					return 0, ErrCanceled
+					return 0, errCanceled
 				}
 				// Not a real cancel sequence; treat as escaped byte.
 				return next ^ 0x40, nil
@@ -167,101 +167,101 @@ func (zr *Reader) ReadByteUnescaped() (byte, error) {
 	}
 }
 
-// ReadHeader scans for the next valid ZMODEM header.
-func (zr *Reader) ReadHeader() (Header, error) {
+// readHeader scans for the next valid ZMODEM header.
+func (zr *reader) readHeader() (header, error) {
 	for {
-		// Scan for ZPAD
+		// Scan for zPAD
 		b, err := zr.r.ReadByte()
 		if err != nil {
-			return Header{}, err
+			return header{}, err
 		}
-		if b != ZPAD {
+		if b != zPAD {
 			continue
 		}
 
-		// Wait for ZDLE
+		// Wait for zDLE
 		b, err = zr.r.ReadByte()
 		if err != nil {
-			return Header{}, err
+			return header{}, err
 		}
-		if b == ZPAD {
-			// Might be multiple ZPADs
+		if b == zPAD {
+			// Might be multiple zPADs
 			b, err = zr.r.ReadByte()
 			if err != nil {
-				return Header{}, err
+				return header{}, err
 			}
 		}
-		if b != ZDLE {
+		if b != zDLE {
 			continue
 		}
 
 		// Read header type
 		b, err = zr.r.ReadByte()
 		if err != nil {
-			return Header{}, err
+			return header{}, err
 		}
 
 		switch b {
-		case ZHEX:
+		case zHEX:
 			return zr.readHexHeader()
-		case ZBIN:
+		case zBIN:
 			return zr.readBinHeader()
-		case ZBIN32:
+		case zBIN32:
 			return zr.readBin32Header()
 		}
 	}
 }
 
-func (zr *Reader) readHexHeader() (Header, error) {
+func (zr *reader) readHexHeader() (header, error) {
 	hexBuf := make([]byte, 14)
 	if _, err := io.ReadFull(zr.r, hexBuf); err != nil {
-		return Header{}, err
+		return header{}, err
 	}
 
 	// Consume trailing \r\n and XON if present, but we can also just ignore them
-	// because ReadHeader scans for the next ZPAD anyway.
+	// because readHeader scans for the next zPAD anyway.
 
-	return ParseHexHeader(hexBuf)
+	return parseHexHeader(hexBuf)
 }
 
-func (zr *Reader) readBinHeader() (Header, error) {
+func (zr *reader) readBinHeader() (header, error) {
 	data := make([]byte, 5)
 	var crc uint16
 	for i := 0; i < 5; i++ {
-		b, err := zr.ReadByteUnescaped()
+		b, err := zr.readByteUnescaped()
 		if err != nil {
-			return Header{}, err
+			return header{}, err
 		}
 		data[i] = b
 		crc = updcrc16(b, crc)
 	}
 
-	crc1, err := zr.ReadByteUnescaped()
+	crc1, err := zr.readByteUnescaped()
 	if err != nil {
-		return Header{}, err
+		return header{}, err
 	}
-	crc2, err := zr.ReadByteUnescaped()
+	crc2, err := zr.readByteUnescaped()
 	if err != nil {
-		return Header{}, err
+		return header{}, err
 	}
 
 	expectedCRC := (uint16(crc1) << 8) | uint16(crc2)
 	if crc != expectedCRC {
-		return Header{}, fmt.Errorf("%w: ZBIN CRC mismatch", ErrInvalidHeader)
+		return header{}, fmt.Errorf("%w: ZBIN CRC mismatch", errInvalidHeader)
 	}
 
-	h := Header{Type: data[0], Format: FormatBin}
+	h := header{Type: data[0], Format: formatBin}
 	copy(h.Flags[:], data[1:5])
 	return h, nil
 }
 
-func (zr *Reader) readBin32Header() (Header, error) {
+func (zr *reader) readBin32Header() (header, error) {
 	data := make([]byte, 5)
 	var crc uint32 = 0xFFFFFFFF
 	for i := 0; i < 5; i++ {
-		b, err := zr.ReadByteUnescaped()
+		b, err := zr.readByteUnescaped()
 		if err != nil {
-			return Header{}, err
+			return header{}, err
 		}
 		data[i] = b
 		crc = updcrc32(b, crc)
@@ -269,19 +269,19 @@ func (zr *Reader) readBin32Header() (Header, error) {
 
 	crcBytes := make([]byte, 4)
 	for i := 0; i < 4; i++ {
-		b, err := zr.ReadByteUnescaped()
+		b, err := zr.readByteUnescaped()
 		if err != nil {
-			return Header{}, err
+			return header{}, err
 		}
 		crcBytes[i] = b
 	}
 
 	expectedCRC := uint32(crcBytes[0]) | (uint32(crcBytes[1]) << 8) | (uint32(crcBytes[2]) << 16) | (uint32(crcBytes[3]) << 24)
 	if ^crc != expectedCRC {
-		return Header{}, fmt.Errorf("%w: ZBIN32 CRC mismatch", ErrInvalidHeader)
+		return header{}, fmt.Errorf("%w: ZBIN32 CRC mismatch", errInvalidHeader)
 	}
 
-	h := Header{Type: data[0], Format: FormatBin32}
+	h := header{Type: data[0], Format: formatBin32}
 	copy(h.Flags[:], data[1:5])
 	return h, nil
 }

@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package app
+package zmodem
 
 import (
 	"bytes"
@@ -30,8 +30,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/c2FmZQ/sshterm/internal/zmodem"
 )
 
 type mockTerminal struct {
@@ -50,28 +48,18 @@ func (m *mockTerminal) Printf(format string, args ...any) {
 func TestZmodemFilterSplitSignature(t *testing.T) {
 	term := &mockTerminal{Reader: bytes.NewReader(nil)}
 
-	receiveCalled := false
-	sendCalled := false
-
-	startRecv := func(f *zmodemFilter) {
-		f.active = true
-		f.resetPipe()
-		receiveCalled = true
-		go func() {
-			io.ReadAll(f.zmodemPipeR)
-			f.zmodemPipeR.Close()
-		}()
+	download := func(name string, size int64, r io.Reader) error {
+		io.ReadAll(r)
+		return nil
 	}
-	startSend := func(f *zmodemFilter) {
-		f.active = true
-		f.resetPipe()
-		sendCalled = true
+	upload := func() ([]*File, error) {
+		return nil, nil
 	}
 
-	filter, _ := newZmodemFilter(term, startRecv, startSend)
+	filter, _ := New(term, download, upload)
 
 	// Write signature in tiny chunks to test sliding window
-	sig := []byte{'*', '*', zmodem.ZDLE, zmodem.ZHEX, '0', '0'}
+	sig := []byte{'*', '*', zDLE, zHEX, '0', '0'}
 
 	prefix := []byte("hello ")
 	filter.Write(prefix)
@@ -86,39 +74,25 @@ func TestZmodemFilterSplitSignature(t *testing.T) {
 	// Wait a moment for async pipe copies
 	time.Sleep(50 * time.Millisecond)
 
-	if !receiveCalled {
-		t.Fatal("Expected receive handler to be called")
-	}
-	if sendCalled {
-		t.Fatal("Did not expect send handler to be called")
-	}
-
 	out := term.out.String()
 	// The prefix AND the signature itself should have been written to the terminal
 	expectedTermOut := "hello **\x18B00\x1b[33m[ZMODEM] Intercepted receive request...\x1b[0m\r\n"
-	if out != expectedTermOut {
-		t.Fatalf("Terminal output mismatch.\nGot: %q\nExp: %q", out, expectedTermOut)
+	if !strings.HasPrefix(out, expectedTermOut) {
+		t.Fatalf("Terminal output mismatch.\nGot: %q\nExp prefix: %q", out, expectedTermOut)
 	}
 }
 
 func TestZmodemFilterFallback(t *testing.T) {
 	term := &mockTerminal{Reader: bytes.NewReader(nil)}
 
-	startRecv := func(f *zmodemFilter) {
-		f.active = true
-		f.resetPipe()
-		go func() {
-			// Immediately close the reader to simulate ZMODEM abort or completion
-			f.zmodemPipeR.Close()
-			f.mu.Lock()
-			f.active = false
-			f.mu.Unlock()
-		}()
+	download := func(name string, size int64, r io.Reader) error {
+		io.ReadAll(r)
+		return nil
 	}
 
-	filter, _ := newZmodemFilter(term, startRecv, nil)
+	filter, _ := New(term, download, nil)
 
-	sig := []byte{'*', '*', zmodem.ZDLE, zmodem.ZHEX, '0', '0'}
+	sig := []byte{'*', '*', zDLE, zHEX, '0', '0'}
 
 	// Write signature followed by shell prompt in a single burst
 	burst := append(sig, []byte("\r\nuser@host:~$")...)

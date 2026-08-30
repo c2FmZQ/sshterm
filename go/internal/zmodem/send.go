@@ -26,23 +26,31 @@ package zmodem
 import (
 	"fmt"
 	"io"
+	"math"
 )
 
-// Send performs a ZMODEM send session, uploading the provided files.
+// send performs a ZMODEM send session, uploading the provided files.
 // Note: This relies on a reliable underlying stream (e.g. SSH).
-func Send(rw io.ReadWriter, files []*File) error {
-	zr := NewReader(rw)
+func send(rw io.ReadWriter, files []*File) error {
+	for _, f := range files {
+		if f.Size < 0 || f.Size > math.MaxUint32 {
+			return fmt.Errorf("file %q: size %d exceeds ZMODEM 32-bit limit (%d)",
+				f.Name, f.Size, uint32(math.MaxUint32))
+		}
+	}
+
+	zr := newReader(rw)
 
 	var currentFile *File
 
 	for {
-		h, err := zr.ReadHeader()
+		h, err := zr.readHeader()
 		if err != nil {
 			return err
 		}
 
 		switch h.Type {
-		case ZRINIT:
+		case zRINIT:
 			if currentFile != nil {
 				// We already sent ZFILE and are waiting for ZRPOS.
 				// This is a duplicate ZRINIT from the receiver, ignore it.
@@ -51,12 +59,12 @@ func Send(rw io.ReadWriter, files []*File) error {
 
 			if len(files) == 0 {
 				// 4. No more files, send ZFIN
-				if err := WriteHexHeader(rw, Header{Type: ZFIN}); err != nil {
+				if err := writeHexHeader(rw, header{Type: zFIN}); err != nil {
 					return err
 				}
 				// Wait for ZFIN reply
-				reply, err := zr.ReadHeader()
-				if err == nil && reply.Type == ZFIN {
+				reply, err := zr.readHeader()
+				if err == nil && reply.Type == zFIN {
 					rw.Write([]byte("OO"))
 				}
 				return nil
@@ -67,41 +75,69 @@ func Send(rw io.ReadWriter, files []*File) error {
 			files = files[1:]
 
 			// Build file info: "name\0size"
-			info := []byte(fmt.Sprintf("%s\x00%d 0 0 0 %d %d", currentFile.Name, len(currentFile.Data), len(files), 0))
+			info := []byte(fmt.Sprintf("%s\x00%d 0 0 0 %d %d", currentFile.Name, currentFile.Size, len(files), 0))
 
-			if err := WriteBinaryHeader(rw, Header{Type: ZFILE}); err != nil {
+			if err := writeBinaryHeader(rw, header{Type: zFILE}); err != nil {
 				return err
 			}
-			if err := WriteDataBlock(rw, info, ZCRCW, false); err != nil {
-				return err
-			}
-
-		case ZRPOS:
-			// Receiver accepted ZFILE. Send ZDATA.
-			// TODO: h.Flags contains the requested file offset for resume.
-			// We currently always send from offset 0, which is safe over
-			// reliable transports like SSH.
-			if err := WriteBinaryHeader(rw, Header{Type: ZDATA}); err != nil {
+			if err := writeDataBlock(rw, info, zCRCW, false); err != nil {
 				return err
 			}
 
-			// Send file data
-			if err := WriteDataBlock(rw, currentFile.Data, ZCRCE, false); err != nil {
+		case zRPOS:
+			// Receiver accepted ZFILE and requested to resume from an offset.
+			requestedOffset := uint32(h.Flags[0]) | uint32(h.Flags[1])<<8 | uint32(h.Flags[2])<<16 | uint32(h.Flags[3])<<24
+			if requestedOffset > 0 {
+				if seeker, ok := currentFile.R.(io.Seeker); ok {
+					if _, err := seeker.Seek(int64(requestedOffset), io.SeekStart); err != nil {
+						return err
+					}
+				} else {
+					if _, err := io.CopyN(io.Discard, currentFile.R, int64(requestedOffset)); err != nil {
+						return err
+					}
+				}
+			}
+
+			if err := writeBinaryHeader(rw, header{Type: zDATA}); err != nil {
 				return err
+			}
+
+			// Stream file data in chunks
+			buf := make([]byte, 8192)
+			offset := requestedOffset
+			for {
+				n, readErr := currentFile.R.Read(buf)
+				if n > 0 || (offset == 0 && readErr == io.EOF) {
+					// Use zCRCG for intermediate chunks, zCRCE for the last
+					endType := byte(zCRCG)
+					if readErr != nil || offset+uint32(n) >= uint32(currentFile.Size) {
+						endType = zCRCE
+					}
+					if err := writeDataBlock(rw, buf[:n], endType, false); err != nil {
+						return err
+					}
+					offset += uint32(n)
+				}
+				if readErr != nil {
+					if readErr != io.EOF {
+						return readErr
+					}
+					break
+				}
 			}
 
 			// Send ZEOF
-			offset := uint32(len(currentFile.Data))
 			flags := [4]byte{byte(offset), byte(offset >> 8), byte(offset >> 16), byte(offset >> 24)}
-			if err := WriteHexHeader(rw, Header{Type: ZEOF, Flags: flags}); err != nil {
+			if err := writeHexHeader(rw, header{Type: zEOF, Flags: flags}); err != nil {
 				return err
 			}
 			currentFile = nil // Reset state, waiting for next ZRINIT
 
-		case ZSKIP:
+		case zSKIP:
 			currentFile = nil // Receiver skipped this file, wait for next ZRINIT
 
-		case ZABORT, ZCAN, ZFERR:
+		case zABORT, zCAN, zFERR:
 			return fmt.Errorf("transfer aborted by receiver")
 
 		default:
