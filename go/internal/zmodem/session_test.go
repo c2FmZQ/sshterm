@@ -134,7 +134,7 @@ func TestSessionSendReceive(t *testing.T) {
 	// Run Sender (Client side in this context)
 	go func() {
 		defer wg.Done()
-		sendErr = send(clientConn, originalFiles)
+		sendErr = send(clientConn, originalFiles, nil)
 		clientToServer.mu.Lock()
 		clientToServer.closed = true
 		clientToServer.cond.Broadcast()

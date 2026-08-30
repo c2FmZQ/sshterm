@@ -268,14 +268,19 @@ func (f *Filter) handleSend() {
 		if len(files) == 1 {
 			s = ""
 		}
-		f.term.Printf("\x1b[33m[ZMODEM] Sending %d file%s...\x1b[0m\r\n", len(files), s)
 
 		rw := struct {
 			io.Reader
 			io.Writer
 		}{f.pipeR, f.stdinW}
 
-		err = send(rw, files)
+		err = send(rw, files, func(name string, size int64) {
+			s2 := "s"
+			if size == 1 {
+				s2 = ""
+			}
+			f.term.Printf("\x1b[36m[ZMODEM] Sending %s (%d byte%s)...\x1b[0m\r\n", name, size, s2)
+		})
 
 		f.mu.Lock()
 		f.active = false
@@ -284,7 +289,7 @@ func (f *Filter) handleSend() {
 		if err != nil {
 			f.term.Printf("\x1b[31m[ZMODEM] Send Error: %v\x1b[0m\r\n", err)
 		} else {
-			f.term.Printf("\x1b[32m[ZMODEM] Send completed successfully.\x1b[0m\r\n")
+			f.term.Printf("\x1b[32m[ZMODEM] Sent %d file%s successfully.\x1b[0m\r\n", len(files), s)
 		}
 	}()
 }

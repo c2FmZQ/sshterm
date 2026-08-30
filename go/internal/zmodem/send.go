@@ -31,7 +31,7 @@ import (
 
 // send performs a ZMODEM send session, uploading the provided files.
 // Note: This relies on a reliable underlying stream (e.g. SSH).
-func send(rw io.ReadWriter, files []*File) error {
+func send(rw io.ReadWriter, files []*File, onStart func(name string, size int64)) error {
 	for _, f := range files {
 		if f.Size < 0 || f.Size > math.MaxUint32 {
 			return fmt.Errorf("file %q: size %d exceeds ZMODEM 32-bit limit (%d)",
@@ -84,6 +84,10 @@ func send(rw io.ReadWriter, files []*File) error {
 			// 2. Send ZFILE for the next file
 			currentFile = files[0]
 			files = files[1:]
+
+			if onStart != nil {
+				onStart(currentFile.Name, currentFile.Size)
+			}
 
 			// Build file info: "name\0size"
 			info := []byte(fmt.Sprintf("%s\x00%d 0 0 0 %d %d", currentFile.Name, currentFile.Size, len(files), 0))
