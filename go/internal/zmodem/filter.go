@@ -49,6 +49,7 @@ type UploadFunc func() ([]*File, error)
 // handles file transfers using the provided callbacks.
 type Filter struct {
 	term   TerminalPrinter
+	stdinR *io.PipeReader
 	stdinW *io.PipeWriter
 
 	pipeR *io.PipeReader
@@ -62,16 +63,17 @@ type Filter struct {
 	upload   UploadFunc
 }
 
-// New creates a Filter. It returns the Filter (an io.Writer for session
-// stdout) and an io.Reader to use as session stdin.
+// New creates a Filter. It returns a Filter that acts as an io.ReadWriter
+// for the session.
 //
 // download is called for each file received during a ZMODEM download.
 // upload is called when a ZMODEM upload request is detected; it should
 // return the files to send, or nil to cancel.
-func New(term TerminalPrinter, download DownloadFunc, upload UploadFunc) (*Filter, io.Reader) {
+func New(term TerminalPrinter, download DownloadFunc, upload UploadFunc) *Filter {
 	stdinR, stdinW := io.Pipe()
 	f := &Filter{
 		term:     term,
+		stdinR:   stdinR,
 		stdinW:   stdinW,
 		download: download,
 		upload:   upload,
@@ -118,7 +120,13 @@ func New(term TerminalPrinter, download DownloadFunc, upload UploadFunc) (*Filte
 		}
 	}()
 
-	return f, stdinR
+	return f
+}
+
+// Read implements io.Reader. It reads data that should be sent to the remote
+// session, including user input and ZMODEM protocol responses.
+func (f *Filter) Read(p []byte) (n int, err error) {
+	return f.stdinR.Read(p)
 }
 
 func (f *Filter) resetPipe() {

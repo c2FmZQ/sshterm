@@ -33,7 +33,7 @@ import (
 	"github.com/c2FmZQ/sshterm/internal/zmodem"
 )
 
-func newZModemFilter(term *terminal.Terminal) (io.Writer, io.Reader) {
+func newZModemFilter(term *terminal.Terminal) io.ReadWriter {
 	return zmodem.New(term, wasmDownload, wasmUpload)
 }
 

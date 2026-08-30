@@ -56,7 +56,7 @@ func TestZmodemFilterSplitSignature(t *testing.T) {
 		return nil, nil
 	}
 
-	filter, _ := New(term, download, upload)
+	filter := New(term, download, upload)
 
 	// Write signature in tiny chunks to test sliding window
 	sig := []byte{'*', '*', zDLE, zHEX, '0', '0'}
@@ -90,7 +90,7 @@ func TestZmodemFilterFallback(t *testing.T) {
 		return nil
 	}
 
-	filter, _ := New(term, download, nil)
+	filter := New(term, download, nil)
 
 	sig := []byte{'*', '*', zDLE, zHEX, '0', '0'}
 
