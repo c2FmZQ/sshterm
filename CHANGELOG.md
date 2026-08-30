@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :star2: New features
+
+* Add support for ZMODEM in-band file transfers (`rz`/`sz`). File uploads and downloads can now be triggered natively within SSH sessions using the `-z` or `--zmodem` flag.
+
 ## v0.8.5
 
 * Update go 1.27.0
