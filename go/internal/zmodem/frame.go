@@ -141,21 +141,11 @@ func (zr *reader) readByteUnescaped() (byte, error) {
 			if next == zRUB1 {
 				return 0xFF, nil
 			}
-			// Cancel sequence: zDLE followed by CAN, then 4 more CANs (5 total).
-			if next == zCAN {
-				canCount := 1
-				for canCount < 5 {
-					peek, err := zr.r.ReadByte()
-					if err != nil {
-						return 0, errCanceled
-					}
-					if peek == zCAN || peek == zDLE {
-						canCount++
-					} else {
-						break
-					}
-				}
-				if canCount >= 5 {
+			// Cancel sequence: five or more consecutive CAN bytes. CAN and
+			// zDLE are the same byte, so reaching here with next == can means
+			// two of them have already been read.
+			if next == can {
+				if zr.checkCancel() {
 					return 0, errCanceled
 				}
 				// Not a real cancel sequence; treat as escaped byte.
@@ -165,6 +155,26 @@ func (zr *reader) readByteUnescaped() (byte, error) {
 		}
 		return b, nil
 	}
+}
+
+// checkCancel is called right after a zDLE was found to be followed by another
+// CAN byte. It consumes any further consecutive CAN bytes and reports whether
+// the ZMODEM cancel sequence (five or more CANs) was seen. When it returns
+// false, the byte that ended the run is pushed back.
+func (zr *reader) checkCancel() bool {
+	canCount := 2 // the zDLE and the byte that followed it
+	for canCount < 5 {
+		b, err := zr.r.ReadByte()
+		if err != nil {
+			return true
+		}
+		if b != can {
+			zr.r.UnreadByte()
+			return false
+		}
+		canCount++
+	}
+	return true
 }
 
 // readHeader scans for the next valid ZMODEM header.

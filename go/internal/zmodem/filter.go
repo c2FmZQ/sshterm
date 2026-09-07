@@ -97,13 +97,18 @@ func New(term TerminalPrinter, download DownloadFunc, upload UploadFunc) *Filter
 						f.mu.Lock()
 						f.active = false
 						f.window = [6]byte{}
-						// Send standard ZMODEM cancel sequence to remote
-						stdinW.Write(cancelSeq)
-						// Close the write side of the pipe to interrupt the parser
-						if f.pipeW != nil {
-							f.pipeW.Close()
-						}
+						pw := f.pipeW
 						f.mu.Unlock()
+
+						// Close the write side of the pipe to interrupt the parser
+						if pw != nil {
+							pw.Close()
+						}
+						// Send standard ZMODEM cancel sequence to remote. This
+						// must happen outside the lock: stdinW is only drained
+						// by Filter.Read, so the write can block indefinitely
+						// once the session is gone.
+						stdinW.Write(cancelSeq)
 					} else if !warned {
 						f.term.Printf("\x1b[33m[ZMODEM] Keyboard input is ignored during file transfers. Press Ctrl-C to abort.\x1b[0m\r\n")
 						warned = true
@@ -127,6 +132,17 @@ func New(term TerminalPrinter, download DownloadFunc, upload UploadFunc) *Filter
 // session, including user input and ZMODEM protocol responses.
 func (f *Filter) Read(p []byte) (n int, err error) {
 	return f.stdinR.Read(p)
+}
+
+// finish ends a transfer session: it closes the read side of the session pipe
+// and only then marks the filter inactive, so that a concurrent Write cannot
+// start a second session while this one is still using the pipe.
+func (f *Filter) finish(pr *io.PipeReader) {
+	f.mu.Lock()
+	pr.Close()
+	f.active = false
+	f.window = [6]byte{}
+	f.mu.Unlock()
 }
 
 func (f *Filter) resetPipe() {
@@ -166,11 +182,12 @@ func (f *Filter) Write(p []byte) (n int, err error) {
 			f.term.Write(p[:i+1])
 			f.term.Printf("\x1b[33m[ZMODEM] Intercepted receive request...\x1b[0m\r\n")
 			f.handleReceive()
+			pw := f.pipeW
 			f.mu.Unlock()
 
-			f.pipeW.Write(sigReceive)
+			pw.Write(sigReceive)
 			if i+1 < len(p) {
-				n2, err := f.pipeW.Write(p[i+1:])
+				n2, err := pw.Write(p[i+1:])
 				if err != nil {
 					f.term.Write(p[i+1+n2:])
 				}
@@ -181,11 +198,12 @@ func (f *Filter) Write(p []byte) (n int, err error) {
 			f.term.Write(p[:i+1])
 			f.term.Printf("\x1b[33m[ZMODEM] Intercepted send request...\x1b[0m\r\n")
 			f.handleSend()
+			pw := f.pipeW
 			f.mu.Unlock()
 
-			f.pipeW.Write(sigSend)
+			pw.Write(sigSend)
 			if i+1 < len(p) {
-				n2, err := f.pipeW.Write(p[i+1:])
+				n2, err := pw.Write(p[i+1:])
 				if err != nil {
 					f.term.Write(p[i+1+n2:])
 				}
@@ -204,13 +222,13 @@ func (f *Filter) Write(p []byte) (n int, err error) {
 func (f *Filter) handleReceive() {
 	f.active = true
 	f.resetPipe()
+	pr := f.pipeR
 
 	go func() {
-		defer f.pipeR.Close()
 		rw := struct {
 			io.Reader
 			io.Writer
-		}{f.pipeR, f.stdinW}
+		}{pr, f.stdinW}
 
 		var numFiles int
 		err := receive(rw, func(name string, size int64, rc io.Reader) error {
@@ -223,9 +241,7 @@ func (f *Filter) handleReceive() {
 			return f.download(name, size, rc)
 		})
 
-		f.mu.Lock()
-		f.active = false
-		f.mu.Unlock()
+		f.finish(pr)
 
 		s := "s"
 		if numFiles == 1 {
@@ -244,10 +260,9 @@ func (f *Filter) handleReceive() {
 func (f *Filter) handleSend() {
 	f.active = true
 	f.resetPipe()
+	pr := f.pipeR
 
 	go func() {
-		defer f.pipeR.Close()
-
 		files, err := f.upload()
 		if err != nil || len(files) == 0 {
 			if err != nil {
@@ -255,12 +270,9 @@ func (f *Filter) handleSend() {
 			} else {
 				f.term.Printf("\x1b[33m[ZMODEM] Send canceled (no files selected).\x1b[0m\r\n")
 			}
+			f.finish(pr)
 			// Send standard ZMODEM cancel sequence to abort remote rz
 			f.stdinW.Write(cancelSeq)
-			f.mu.Lock()
-			f.active = false
-			f.window = [6]byte{}
-			f.mu.Unlock()
 			return
 		}
 
@@ -272,7 +284,7 @@ func (f *Filter) handleSend() {
 		rw := struct {
 			io.Reader
 			io.Writer
-		}{f.pipeR, f.stdinW}
+		}{pr, f.stdinW}
 
 		err = send(rw, files, func(name string, size int64) {
 			s2 := "s"
@@ -282,9 +294,7 @@ func (f *Filter) handleSend() {
 			f.term.Printf("\x1b[36m[ZMODEM] Sending %s (%d byte%s)...\x1b[0m\r\n", name, size, s2)
 		})
 
-		f.mu.Lock()
-		f.active = false
-		f.mu.Unlock()
+		f.finish(pr)
 
 		if err != nil {
 			f.term.Printf("\x1b[31m[ZMODEM] Send Error: %v\x1b[0m\r\n", err)

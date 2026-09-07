@@ -105,3 +105,26 @@ func TestEscaping(t *testing.T) {
 		}
 	}
 }
+
+func TestReadByteUnescaped_Cancel(t *testing.T) {
+	zr := newReader(bytes.NewReader(cancelSeq))
+	if _, err := zr.readByteUnescaped(); err != errCanceled {
+		t.Fatalf("Expected errCanceled, got %v", err)
+	}
+}
+
+func TestReadByteUnescaped_ShortCanRun(t *testing.T) {
+	// Fewer than five CANs is not a cancel sequence.
+	zr := newReader(bytes.NewReader([]byte{zDLE, can, 'A', 'B'}))
+	b, err := zr.readByteUnescaped()
+	if err != nil {
+		t.Fatalf("readByteUnescaped failed: %v", err)
+	}
+	if want := byte(can ^ 0x40); b != want {
+		t.Errorf("Expected escaped byte %#x, got %#x", want, b)
+	}
+	// The byte that ended the CAN run must not have been swallowed.
+	if b, err = zr.readByteUnescaped(); err != nil || b != 'A' {
+		t.Errorf("Expected 'A', nil; got %q, %v", b, err)
+	}
+}

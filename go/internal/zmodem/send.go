@@ -100,6 +100,13 @@ func send(rw io.ReadWriter, files []*File, onStart func(name string, size int64)
 			}
 
 		case zRPOS:
+			if currentFile == nil || currentFile.R == nil {
+				// ZRPOS outside of the ZFILE -> ZRPOS window, e.g. a
+				// retransmission request arriving after we already sent ZEOF,
+				// or one following a ZSKIP. There is nothing to send.
+				continue
+			}
+
 			// Receiver accepted ZFILE and requested to resume from an offset.
 			requestedOffset := uint32(h.Flags[0]) | uint32(h.Flags[1])<<8 | uint32(h.Flags[2])<<16 | uint32(h.Flags[3])<<24
 			if requestedOffset > 0 {
@@ -118,29 +125,39 @@ func send(rw io.ReadWriter, files []*File, onStart func(name string, size int64)
 				return err
 			}
 
-			// Stream file data in chunks
-			buf := make([]byte, 8192)
+			// Stream file data in chunks. The last subpacket must end the
+			// frame with zCRCE, so a chunk is held back until the next read
+			// says whether more data follows. Relying on the declared size
+			// instead would desynchronize the receiver whenever the reader
+			// yields a different number of bytes than File.Size advertises.
+			cur, next := make([]byte, 8192), make([]byte, 8192)
+			pending := 0
 			offset := requestedOffset
 			for {
-				n, readErr := currentFile.R.Read(buf)
-				if n > 0 || (offset == 0 && readErr == io.EOF) {
-					// Use zCRCG for intermediate chunks, zCRCE for the last
-					endType := byte(zCRCG)
-					if readErr != nil || offset+uint32(n) >= uint32(currentFile.Size) {
-						endType = zCRCE
-					}
-					if err := writeDataBlock(rw, buf[:n], endType, false); err != nil {
-						return err
-					}
-					offset += uint32(n)
+				n, readErr := currentFile.R.Read(next)
+				if readErr != nil && readErr != io.EOF {
+					return readErr
 				}
-				if readErr != nil {
-					if readErr != io.EOF {
-						return readErr
+				if n > 0 {
+					if pending > 0 {
+						if err := writeDataBlock(rw, cur[:pending], zCRCG, false); err != nil {
+							return err
+						}
+						offset += uint32(pending)
 					}
+					cur, next = next, cur
+					pending = n
+				}
+				if readErr == io.EOF {
 					break
 				}
 			}
+			// Always emit a final subpacket, even for an empty file, so the
+			// receiver sees a complete ZDATA frame before the ZEOF header.
+			if err := writeDataBlock(rw, cur[:pending], zCRCE, false); err != nil {
+				return err
+			}
+			offset += uint32(pending)
 
 			// Send ZEOF
 			flags := [4]byte{byte(offset), byte(offset >> 8), byte(offset >> 16), byte(offset >> 24)}

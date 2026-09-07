@@ -29,6 +29,12 @@ import (
 	"io"
 )
 
+// maxSubpacketSize bounds how much a single subpacket may buffer. ZMODEM
+// subpackets are at most 1024 bytes in practice; the generous cap only exists
+// so that a peer streaming data without ever sending a frame-end marker cannot
+// exhaust memory.
+const maxSubpacketSize = 64 * 1024
+
 // readDataBlock reads a single subpacket of data up to a zDLE frame-end marker.
 // Returns the unescaped data, the frame end type (e.g., zCRCE, zCRCG, zCRCQ, zCRCW), and any error.
 func (zr *reader) readDataBlock(useCrc32 bool) ([]byte, byte, error) {
@@ -69,8 +75,11 @@ func (zr *reader) readDataBlock(useCrc32 bool) ([]byte, byte, error) {
 				b = 0x7F
 			case zRUB1:
 				b = 0xFF
-			case zCAN:
-				return nil, 0, errCanceled
+			case can:
+				if zr.checkCancel() {
+					return nil, 0, errCanceled
+				}
+				b = next ^ 0x40
 			default:
 				b = next ^ 0x40
 			}
@@ -82,6 +91,9 @@ func (zr *reader) readDataBlock(useCrc32 bool) ([]byte, byte, error) {
 			crc16 = updcrc16(b, crc16)
 		}
 		buf.WriteByte(b)
+		if buf.Len() > maxSubpacketSize {
+			return nil, 0, fmt.Errorf("%w: subpacket exceeds %d bytes", errInvalidHeader, maxSubpacketSize)
+		}
 	}
 
 ReadCRC:

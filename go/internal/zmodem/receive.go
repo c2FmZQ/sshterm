@@ -48,6 +48,7 @@ func receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 		return err
 	}
 
+sessionLoop:
 	for {
 		h, err := zr.readHeader()
 		if err != nil {
@@ -97,7 +98,7 @@ func receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 					if err := onFile(name, size, bytes.NewReader(nil)); err != nil {
 						return err
 					}
-					continue // wait for next file or ZFIN
+					continue sessionLoop // wait for next file or ZFIN
 				default:
 					return fmt.Errorf("unexpected header before ZDATA: %d", h2.Type)
 				}
@@ -124,14 +125,16 @@ func receive(rw io.ReadWriter, onFile func(name string, size int64, rc io.Reader
 				return r.err
 			}
 
-			// Wait for ZEOF header (might have already been read if readDataBlock returned it,
-			// but ZMODEM sends ZEOF as a separate header after the last data block)
-			h2, err := zr.readHeader()
-			if err != nil {
-				return err
-			}
-			if h2.Type != zEOF {
-				return fmt.Errorf("expected ZEOF after data, got %d", h2.Type)
+			// Wait for the ZEOF header that follows the last data block, unless
+			// the reader already consumed it while crossing a frame boundary.
+			if !r.gotEOF {
+				h2, err := zr.readHeader()
+				if err != nil {
+					return err
+				}
+				if h2.Type != zEOF {
+					return fmt.Errorf("expected ZEOF after data, got %d", h2.Type)
+				}
 			}
 			if err := writeHexHeader(rw, header{Type: zRINIT}); err != nil {
 				return err
@@ -154,7 +157,33 @@ type dataReader struct {
 	buf      []byte
 	offset   uint32
 	eof      bool
+	gotEOF   bool // the ZEOF header was consumed while crossing a frame boundary
 	err      error
+}
+
+// ack sends a ZACK for everything received so far.
+func (r *dataReader) ack() {
+	flags := [4]byte{byte(r.offset), byte(r.offset >> 8), byte(r.offset >> 16), byte(r.offset >> 24)}
+	writeHexHeader(r.rw, header{Type: zACK, Flags: flags})
+}
+
+// nextFrame is called after a subpacket ended the ZDATA frame with ZCRCW. The
+// sender either opens another ZDATA frame or declares the file complete.
+func (r *dataReader) nextFrame() error {
+	h, err := r.zr.readHeader()
+	if err != nil {
+		return err
+	}
+	switch h.Type {
+	case zDATA:
+		r.useCrc32 = h.Format == formatBin32
+		return nil
+	case zEOF:
+		r.eof = true
+		r.gotEOF = true
+		return nil
+	}
+	return fmt.Errorf("unexpected header after ZCRCW: %d", h.Type)
 }
 
 func (r *dataReader) Read(p []byte) (n int, err error) {
@@ -166,35 +195,43 @@ func (r *dataReader) Read(p []byte) (n int, err error) {
 		r.buf = r.buf[n:]
 		return n, nil
 	}
-	if r.eof {
-		return 0, io.EOF
-	}
 
-	chunk, endType, err := r.zr.readDataBlock(r.useCrc32)
-	if err != nil {
-		r.err = err
-		return 0, err
-	}
-
-	r.offset += uint32(len(chunk))
-
-	if endType == zCRCQ || endType == zCRCW {
-		flags := [4]byte{byte(r.offset), byte(r.offset >> 8), byte(r.offset >> 16), byte(r.offset >> 24)}
-		writeHexHeader(r.rw, header{Type: zACK, Flags: flags})
-	}
-
-	if endType == zCRCE || endType == zCRCW {
-		r.eof = true
-	}
-
-	if len(chunk) > 0 {
-		n = copy(p, chunk)
-		if n < len(chunk) {
-			r.buf = chunk[n:]
+	for {
+		if r.eof {
+			return 0, io.EOF
 		}
-	} else if r.eof {
-		return 0, io.EOF
-	}
 
-	return n, nil
+		chunk, endType, err := r.zr.readDataBlock(r.useCrc32)
+		if err != nil {
+			r.err = err
+			return 0, err
+		}
+
+		r.offset += uint32(len(chunk))
+
+		switch endType {
+		case zCRCQ:
+			// Frame continues, but the sender wants an acknowledgement.
+			r.ack()
+		case zCRCW:
+			// Frame ends and the sender waits for a ZACK before opening the
+			// next one. This does not mean the file is over.
+			r.ack()
+			if err := r.nextFrame(); err != nil {
+				r.err = err
+				return 0, err
+			}
+		case zCRCE:
+			// Frame ends, a ZEOF header follows.
+			r.eof = true
+		}
+
+		if len(chunk) > 0 {
+			n = copy(p, chunk)
+			if n < len(chunk) {
+				r.buf = chunk[n:]
+			}
+			return n, nil
+		}
+	}
 }

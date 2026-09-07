@@ -25,6 +25,7 @@ package zmodem
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
 
@@ -99,5 +100,23 @@ func TestDataBlock_CorruptedCRC(t *testing.T) {
 	_, _, err = zr.readDataBlock(false)
 	if err == nil {
 		t.Fatal("Expected CRC mismatch error, but got nil")
+	}
+}
+
+func TestDataBlock_Canceled(t *testing.T) {
+	in := append([]byte("abc"), cancelSeq...)
+	zr := newReader(bytes.NewReader(in))
+	if _, _, err := zr.readDataBlock(false); err != errCanceled {
+		t.Fatalf("Expected errCanceled, got %v", err)
+	}
+}
+
+func TestDataBlock_SizeLimit(t *testing.T) {
+	// A peer that never sends a frame-end marker must not be able to make us
+	// buffer without bound.
+	zr := newReader(bytes.NewReader(bytes.Repeat([]byte{'a'}, maxSubpacketSize+10)))
+	_, _, err := zr.readDataBlock(false)
+	if !errors.Is(err, errInvalidHeader) {
+		t.Fatalf("Expected errInvalidHeader, got %v", err)
 	}
 }
