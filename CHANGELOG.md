@@ -6,6 +6,11 @@
 
 * Add support for ZMODEM in-band file transfers (`rz`/`sz`). File uploads and downloads can now be triggered natively within SSH sessions using the `-z` or `--zmodem` flag.
 
+### :wrench: Misc
+* Update go 1.27.1
+* Update go dependencies:
+  * golang.org/x/crypto v0.55.0 => v0.56.0
+
 ## v0.8.5
 
 * Update go 1.27.0
