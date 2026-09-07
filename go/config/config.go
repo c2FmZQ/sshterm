@@ -83,5 +83,6 @@ type Config struct {
 		Command      string `json:"command,omitempty"`
 		ForwardAgent bool   `json:"forwardAgent,omitempty"`
 		JumpHosts    string `json:"jumpHosts,omitempty"`
+		ZModem       bool   `json:"zmodem,omitempty"`
 	} `json:"autoConnect,omitempty"`
 }

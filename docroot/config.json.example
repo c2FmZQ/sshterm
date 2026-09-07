@@ -25,6 +25,7 @@
 		"hostname": "myserver.example.com",
 		"identity": "default",
 		"command": "uname -a",
-		"forwardAgent": false
+		"forwardAgent": false,
+		"zmodem": false
 	}
 }

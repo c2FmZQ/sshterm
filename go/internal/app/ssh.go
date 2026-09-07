@@ -68,6 +68,12 @@ func (a *App) sshCommand() *cli.App {
 				Value:   false,
 				Usage:   "Forward access to the local SSH agent. Use with caution.",
 			},
+			&cli.BoolFlag{
+				Name:    "zmodem",
+				Aliases: []string{"z"},
+				Value:   false,
+				Usage:   "Enable ZMODEM support for file transfers (rz/sz).",
+			},
 		},
 	}
 }
@@ -82,10 +88,10 @@ func (a *App) ssh(ctx *cli.Context) error {
 		command = strings.Join(ctx.Args().Slice()[1:], " ")
 	}
 
-	return a.runSSH(ctx.Context, ctx.Args().Get(0), ctx.String("identity"), command, ctx.Bool("forward-agent"), ctx.String("jump-hosts"))
+	return a.runSSH(ctx.Context, ctx.Args().Get(0), ctx.String("identity"), command, ctx.Bool("forward-agent"), ctx.String("jump-hosts"), ctx.Bool("zmodem"))
 }
 
-func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwardAgent bool, jumpHosts string) (err error) {
+func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwardAgent bool, jumpHosts string, enableZmodem bool) (err error) {
 	t := a.term
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer func() {
@@ -121,8 +127,16 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 		}
 	}
 
-	session.Stdin = t
-	session.Stdout = t
+	var sessionStdin io.Reader = t
+	var sessionStdout io.Writer = t
+	if enableZmodem {
+		filter := newZModemFilter(t)
+		sessionStdin = filter
+		sessionStdout = filter
+	}
+
+	session.Stdin = sessionStdin
+	session.Stdout = sessionStdout
 	session.Stderr = t
 
 	if command != "" {
