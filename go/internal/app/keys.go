@@ -157,7 +157,7 @@ func (a *App) keysCommand() *cli.App {
 					},
 					&cli.BoolFlag{
 						Name:    "resident",
-						Aliases: []string{"r", "discoverable"},
+						Aliases: []string{"r"},
 						Usage:   "Generate a discoverable (resident) key on the security key. Requires --type ecdsa-sk.",
 					},
 				},
@@ -198,7 +198,7 @@ func (a *App) keysCommand() *cli.App {
 				Name:        "discover",
 				Usage:       "Discover a resident key from a security key",
 				UsageText:   "keys discover [--idp <url>] [<name>]",
-				Description: "The discover command queries the security key for resident (discoverable)\ncredentials and imports them into sshterm.",
+				Description: "The discover command imports a resident (discoverable) credential from a\nsecurity key. The key is touched twice: once to select the credential, once\nto recover its public key.",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:  "idp",

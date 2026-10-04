@@ -216,8 +216,8 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
     *   `-t, --type <type>`: The type of key to generate (`ecdsa`, `ecdsa-sk`, `ed25519`, `rsa`).
     *   `-b, --bits <bits>`: The key size in bits.
     *   `--idp <url>`: The URL of the identity provider to use.
-    *   `-r, --resident`: Request a discoverable (resident) key on the security key. Only valid with `--type ecdsa-sk` (alias: `--discoverable`).
-*   `keys discover [options] [<name>]` - Discovers a resident key from a security key and imports it into sshterm. Requires two touches of the security key: the first selects the credential, the second recovers its public key. If `<name>` is omitted, the name stored on the security key is offered as a default.
+    *   `-r, --resident`: Request a discoverable (resident) key on the security key. Only valid with `--type ecdsa-sk`.
+*   `keys discover [options] [<name>]` - Imports a discoverable (resident) key from a security key. The key is touched twice: once to select the credential, once to recover its public key. If `<name>` is omitted, the name stored on the security key is offered as the default.
     *   `--idp <url>`: The URL of the identity provider to use.
 *   `keys delete <name>` - Deletes a key.
 *   `keys show <name>` - Shows a key's public part and certificate details.
