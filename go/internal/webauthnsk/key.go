@@ -59,13 +59,26 @@ type Key struct {
 
 func Create(name string, resident bool) (*Key, error) {
 	challenge := make([]byte, 32)
-	rand.Read(challenge)
+	if _, err := rand.Read(challenge); err != nil {
+		return nil, err
+	}
+	// user.id is the only field that an assertion returns (as userHandle), so
+	// for a discoverable credential it carries the key name and lets Discover
+	// restore it. The spec asks for an opaque value that doesn't identify the
+	// user, so this is limited to resident keys, where it buys something;
+	// everything else gets a random handle.
+	//
+	// Note that authenticators key discoverable credentials on
+	// (rpID, user.id), so creating a resident key replaces any existing one
+	// with the same name. Callers are expected to confirm overwrites.
 	var uid []byte
-	if len(name) > 0 && len(name) <= 64 {
+	if resident && len(name) > 0 && len(name) <= 64 && isPrintableASCII(name) {
 		uid = []byte(name)
 	} else {
 		uid = make([]byte, 32)
-		rand.Read(uid)
+		if _, err := rand.Read(uid); err != nil {
+			return nil, err
+		}
 	}
 	resp, err := jsutil.WebAuthnCreate(jsutil.CreateOptions{
 		Challenge: challenge,
@@ -126,6 +139,9 @@ func Discover(promptTouch func(string)) (*Key, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("WebAuthnGet: %w", err)
 	}
+	if err := verifyClientData(resp1.ClientDataJSON, "webauthn.get", challenge1); err != nil {
+		return nil, "", fmt.Errorf("assertion 1: %w", err)
+	}
 
 	challenge2 := make([]byte, 32)
 	if _, err := rand.Read(challenge2); err != nil {
@@ -141,25 +157,32 @@ func Discover(promptTouch func(string)) (*Key, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("WebAuthnGet: %w", err)
 	}
+	if err := verifyClientData(resp2.ClientDataJSON, "webauthn.get", challenge2); err != nil {
+		return nil, "", fmt.Errorf("assertion 2: %w", err)
+	}
+	if !bytes.Equal(resp1.ID, resp2.ID) {
+		return nil, "", errors.New("the authenticator returned a different credential for the second assertion")
+	}
 
 	pk, err := RecoverPublicKey(resp1.AuthenticatorData, resp1.ClientDataJSON, resp1.Signature, resp2.AuthenticatorData, resp2.ClientDataJSON, resp2.Signature)
 	if err != nil {
+		// An assertion with an empty allow list can return any discoverable
+		// credential for this origin, including one that isn't an ES256 key.
+		// Those fail while parsing the ECDSA signature, which is worth
+		// translating into something the user can act on.
+		var structErr asn1.StructuralError
+		var syntaxErr asn1.SyntaxError
+		if errors.As(err, &structErr) || errors.As(err, &syntaxErr) {
+			return nil, "", errors.New("the selected credential is not an ECDSA P-256 key; only ecdsa-sk keys can be discovered")
+		}
 		return nil, "", fmt.Errorf("RecoverPublicKey: %w", err)
 	}
 
+	// The user handle holds the key name when the credential was created by
+	// Create. Anything else is treated as not having a name.
 	var userName string
-	if len(resp1.UserHandle) > 0 {
-		cand := strings.TrimSpace(string(resp1.UserHandle))
-		isPrintable := true
-		for _, r := range cand {
-			if r < 32 || r > 126 {
-				isPrintable = false
-				break
-			}
-		}
-		if isPrintable {
-			userName = cand
-		}
+	if cand := strings.TrimSpace(string(resp1.UserHandle)); cand != "" && isPrintableASCII(cand) {
+		userName = cand
 	}
 
 	key := &Key{

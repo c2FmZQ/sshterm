@@ -54,6 +54,9 @@ func (a *App) generateKey(name, passphrase, idp, typ string, bits int, resident 
 	var sshPub ssh.PublicKey
 	var privPEM *pem.Block
 
+	if resident && typ != "ecdsa-sk" {
+		return nil, errors.New("resident keys require key type ecdsa-sk")
+	}
 	if typ == "ecdsa-sk" {
 		if bits != 0 && bits != 256 {
 			return nil, fmt.Errorf("invalid key length %d", bits)
@@ -154,12 +157,8 @@ func (a *App) keysCommand() *cli.App {
 					},
 					&cli.BoolFlag{
 						Name:    "resident",
-						Aliases: []string{"r"},
-						Usage:   "Generate a discoverable (resident) key on the security key.",
-					},
-					&cli.BoolFlag{
-						Name:  "discoverable",
-						Usage: "Alias for --resident.",
+						Aliases: []string{"r", "discoverable"},
+						Usage:   "Generate a discoverable (resident) key on the security key. Requires --type ecdsa-sk.",
 					},
 				},
 				Action: func(ctx *cli.Context) error {
@@ -168,6 +167,11 @@ func (a *App) keysCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
+					if _, exists := a.data.Keys[name]; exists {
+						if !a.term.Confirm(fmt.Sprintf("Key %q already exists. Overwrite?", name), false) {
+							return errors.New("aborted")
+						}
+					}
 					passphrase, err := a.term.ReadPassword("Enter a passphrase for the private key: ")
 					if err != nil {
 						return fmt.Errorf("ReadPassword: %w", err)
@@ -180,8 +184,7 @@ func (a *App) keysCommand() *cli.App {
 						return fmt.Errorf("passphrase doesn't match")
 					}
 
-					resident := ctx.Bool("resident") || ctx.Bool("discoverable")
-					if _, err := a.generateKey(name, passphrase, ctx.String("idp"), ctx.String("type"), ctx.Int("bits"), resident); err != nil {
+					if _, err := a.generateKey(name, passphrase, ctx.String("idp"), ctx.String("type"), ctx.Int("bits"), ctx.Bool("resident")); err != nil {
 						return err
 					}
 					if err := a.saveKeys(true); err != nil {
@@ -217,17 +220,18 @@ func (a *App) keysCommand() *cli.App {
 					}
 
 					if name == "" {
-						if discoveredName != "" {
-							name = discoveredName
-						} else {
-							n, err := a.term.Prompt("Enter a name for the discovered key [default]: ")
-							if err != nil {
-								return err
-							}
-							name = strings.TrimSpace(n)
-							if name == "" {
-								name = "default"
-							}
+						// discoveredName comes from the authenticator, so it is
+						// offered as a default rather than used outright.
+						dflt := discoveredName
+						if dflt == "" {
+							dflt = "default"
+						}
+						n, err := a.term.Prompt(fmt.Sprintf("Enter a name for the discovered key [%s]: ", dflt))
+						if err != nil {
+							return err
+						}
+						if name = strings.TrimSpace(n); name == "" {
+							name = dflt
 						}
 					}
 

@@ -27,6 +27,7 @@ package jsutil
 
 import (
 	"errors"
+	"fmt"
 	"syscall/js"
 )
 
@@ -48,23 +49,27 @@ func WebAuthnCreate(opts CreateOptions) (*CreateResponse, error) {
 	if !cc.Truthy() {
 		return nil, errors.New("CredentialsContainer is unavailable")
 	}
+	// "required" rather than "preferred": with "preferred" an authenticator
+	// that cannot store a discoverable credential silently creates a
+	// non-discoverable one instead, and the caller would never learn that the
+	// key it just created can't be found again by WebAuthnGet.
 	residentKey := "discouraged"
 	if opts.Resident {
-		residentKey = "preferred"
+		residentKey = "required"
 	}
-	userId := opts.UserID
-	if len(userId) == 0 {
-		userId = []byte(opts.UserName)
-		if len(userId) > 64 {
-			userId = userId[:64]
-		}
+	// The spec requires user.id to be 1-64 bytes.
+	if len(opts.UserID) == 0 || len(opts.UserID) > 64 {
+		return nil, fmt.Errorf("invalid user ID length %d, want 1-64", len(opts.UserID))
 	}
 	creds, err := Await(cc.Call("create", NewObject(map[string]any{
 		"publicKey": NewObject(map[string]any{
 			"attestation": "none",
 			"authenticatorSelection": NewObject(map[string]any{
+				// requireResidentKey is the WebAuthn Level 1 field, only
+				// consulted by clients that don't understand residentKey. The
+				// spec says to set it true iff residentKey is "required".
 				"residentKey":        residentKey,
-				"requireResidentKey": opts.Resident,
+				"requireResidentKey": residentKey == "required",
 				"userVerification":   "preferred",
 			}),
 			"challenge": Uint8ArrayFromBytes(opts.Challenge),
@@ -84,7 +89,7 @@ func WebAuthnCreate(opts CreateOptions) (*CreateResponse, error) {
 			"timeout": 120000,
 			"user": NewObject(map[string]any{
 				"displayName": "SSHTERM KEY: " + opts.UserName,
-				"id":          Uint8ArrayFromBytes(userId),
+				"id":          Uint8ArrayFromBytes(opts.UserID),
 				"name":        opts.UserName,
 			}),
 		}),
