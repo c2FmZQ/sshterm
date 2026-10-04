@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"strings"
 
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/pbkdf2"
@@ -56,16 +57,22 @@ type Key struct {
 	rpID   []byte
 }
 
-func Create(name string) (*Key, error) {
+func Create(name string, resident bool) (*Key, error) {
 	challenge := make([]byte, 32)
 	rand.Read(challenge)
-	uid := make([]byte, 32)
-	rand.Read(uid)
+	var uid []byte
+	if len(name) > 0 && len(name) <= 64 {
+		uid = []byte(name)
+	} else {
+		uid = make([]byte, 32)
+		rand.Read(uid)
+	}
 	resp, err := jsutil.WebAuthnCreate(jsutil.CreateOptions{
 		Challenge: challenge,
 		Alg:       algES256,
 		UserID:    uid,
 		UserName:  name,
+		Resident:  resident,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("WebAuthnCreate: %w", err)
@@ -99,6 +106,69 @@ func Create(name string) (*Key, error) {
 		pubKey: ecpk,
 		rpID:   []byte(jsutil.Hostname()),
 	}, nil
+}
+
+// Discover discovers a resident key on an authenticator by performing
+// two assertions to recover and verify the public key.
+// It returns the Key, the username from userHandle (if available), and any error.
+func Discover(promptTouch func(string)) (*Key, string, error) {
+	challenge1 := make([]byte, 32)
+	if _, err := rand.Read(challenge1); err != nil {
+		return nil, "", err
+	}
+	if promptTouch != nil {
+		promptTouch("Touch your security key to discover resident keys...\n")
+	}
+	resp1, err := jsutil.WebAuthnGet(jsutil.GetOptions{
+		Challenge: challenge1,
+		Allow:     nil,
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("WebAuthnGet: %w", err)
+	}
+
+	challenge2 := make([]byte, 32)
+	if _, err := rand.Read(challenge2); err != nil {
+		return nil, "", err
+	}
+	if promptTouch != nil {
+		promptTouch("Touch your security key again to verify public key...\n")
+	}
+	resp2, err := jsutil.WebAuthnGet(jsutil.GetOptions{
+		Challenge: challenge2,
+		Allow:     [][]byte{resp1.ID},
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("WebAuthnGet: %w", err)
+	}
+
+	pk, err := RecoverPublicKey(resp1.AuthenticatorData, resp1.ClientDataJSON, resp1.Signature, resp2.AuthenticatorData, resp2.ClientDataJSON, resp2.Signature)
+	if err != nil {
+		return nil, "", fmt.Errorf("RecoverPublicKey: %w", err)
+	}
+
+	var userName string
+	if len(resp1.UserHandle) > 0 {
+		cand := strings.TrimSpace(string(resp1.UserHandle))
+		isPrintable := true
+		for _, r := range cand {
+			if r < 32 || r > 126 {
+				isPrintable = false
+				break
+			}
+		}
+		if isPrintable {
+			userName = cand
+		}
+	}
+
+	key := &Key{
+		typ:    ecdsa256KeyType,
+		id:     resp1.ID,
+		pubKey: pk,
+		rpID:   []byte(jsutil.Hostname()),
+	}
+	return key, userName, nil
 }
 
 func Unmarshal(priv []byte, name string, rp func(string) (string, error)) (*Key, error) {

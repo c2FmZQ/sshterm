@@ -35,6 +35,7 @@ type CreateOptions struct {
 	Alg       int
 	UserID    []byte
 	UserName  string
+	Resident  bool
 }
 
 type CreateResponse struct {
@@ -47,12 +48,24 @@ func WebAuthnCreate(opts CreateOptions) (*CreateResponse, error) {
 	if !cc.Truthy() {
 		return nil, errors.New("CredentialsContainer is unavailable")
 	}
+	residentKey := "discouraged"
+	if opts.Resident {
+		residentKey = "preferred"
+	}
+	userId := opts.UserID
+	if len(userId) == 0 {
+		userId = []byte(opts.UserName)
+		if len(userId) > 64 {
+			userId = userId[:64]
+		}
+	}
 	creds, err := Await(cc.Call("create", NewObject(map[string]any{
 		"publicKey": NewObject(map[string]any{
 			"attestation": "none",
 			"authenticatorSelection": NewObject(map[string]any{
-				"residentKey":      "discouraged",
-				"userVerification": "preferred",
+				"residentKey":        residentKey,
+				"requireResidentKey": opts.Resident,
+				"userVerification":   "preferred",
 			}),
 			"challenge": Uint8ArrayFromBytes(opts.Challenge),
 			"pubKeyCredParams": NewArray([]any{
@@ -71,7 +84,7 @@ func WebAuthnCreate(opts CreateOptions) (*CreateResponse, error) {
 			"timeout": 120000,
 			"user": NewObject(map[string]any{
 				"displayName": "SSHTERM KEY: " + opts.UserName,
-				"id":          Uint8ArrayFromBytes(opts.UserID),
+				"id":          Uint8ArrayFromBytes(userId),
 				"name":        opts.UserName,
 			}),
 		}),
@@ -126,11 +139,15 @@ func WebAuthnGet(opts GetOptions) (*GetResponse, error) {
 		return nil, err
 	}
 	pkc := creds.Get("response")
+	var userHandle []byte
+	if uh := pkc.Get("userHandle"); uh.Truthy() {
+		userHandle = Uint8ArrayToBytes(Uint8Array.New(uh))
+	}
 	return &GetResponse{
 		ID:                Uint8ArrayToBytes(Uint8Array.New(creds.Get("rawId"))),
 		AuthenticatorData: Uint8ArrayToBytes(Uint8Array.New(pkc.Get("authenticatorData"))),
 		ClientDataJSON:    Uint8ArrayToBytes(Uint8Array.New(pkc.Get("clientDataJSON"))),
 		Signature:         Uint8ArrayToBytes(Uint8Array.New(pkc.Get("signature"))),
-		UserHandle:        Uint8ArrayToBytes(Uint8Array.New(pkc.Get("userHandle"))),
+		UserHandle:        userHandle,
 	}, nil
 }

@@ -184,7 +184,8 @@ func (a *App) initPresetConfig() error {
 		}
 	}
 	for i, k := range a.cfg.GenerateKeys {
-		key, err := a.generateKey(k.Name, "", k.IdentityProvider, k.Type, k.Bits)
+		resident := k.Resident || k.Discoverable
+		key, err := a.generateKey(k.Name, "", k.IdentityProvider, k.Type, k.Bits, resident)
 		if err != nil {
 			return fmt.Errorf("generateKeys[%d]: %w", i, err)
 		}

@@ -27,6 +27,8 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
+	"encoding/asn1"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -187,3 +189,107 @@ func parseClientData(js []byte) (*clientData, error) {
 	err := json.Unmarshal(js, &out)
 	return &out, err
 }
+
+func recoverCandidates(curve elliptic.Curve, hash []byte, r, s *big.Int) []*ecdsa.PublicKey {
+	params := curve.Params()
+	p := params.P
+	n := params.N
+
+	e := new(big.Int).SetBytes(hash)
+	rInv := new(big.Int).ModInverse(r, n)
+	if rInv == nil {
+		return nil
+	}
+
+	eGx, eGy := curve.ScalarBaseMult(e.Bytes())
+	neGy := new(big.Int).Sub(p, eGy)
+
+	var res []*ecdsa.PublicKey
+
+	xs := []*big.Int{r}
+	if rPlusN := new(big.Int).Add(r, n); rPlusN.Cmp(p) < 0 {
+		xs = append(xs, rPlusN)
+	}
+
+	for _, x := range xs {
+		x3 := new(big.Int).Mul(x, x)
+		x3.Mul(x3, x)
+		threeX := new(big.Int).Mul(big.NewInt(3), x)
+		ySq := new(big.Int).Sub(x3, threeX)
+		ySq.Add(ySq, params.B)
+		ySq.Mod(ySq, p)
+
+		exp := new(big.Int).Add(p, big.NewInt(1))
+		exp.Div(exp, big.NewInt(4))
+		y := new(big.Int).Exp(ySq, exp, p)
+
+		check := new(big.Int).Exp(y, big.NewInt(2), p)
+		if check.Cmp(ySq) != 0 {
+			continue
+		}
+
+		for _, yCand := range []*big.Int{y, new(big.Int).Sub(p, y)} {
+			sRx, sRy := curve.ScalarMult(x, yCand, s.Bytes())
+			diffX, diffY := curve.Add(sRx, sRy, eGx, neGy)
+			qx, qy := curve.ScalarMult(diffX, diffY, rInv.Bytes())
+			if curve.IsOnCurve(qx, qy) {
+				res = append(res, &ecdsa.PublicKey{
+					Curve: curve,
+					X:     qx,
+					Y:     qy,
+				})
+			}
+		}
+	}
+	return res
+}
+
+// RecoverPublicKey recovers the ECDSA P-256 public key from two WebAuthn assertions
+// using different challenges. Two assertions are required to uniquely identify the
+// public key among the mathematically possible ECDSA recovery candidates.
+func RecoverPublicKey(authData1, clientDataJSON1, sig1Bytes, authData2, clientDataJSON2, sig2Bytes []byte) (*ecdsa.PublicKey, error) {
+	curve := elliptic.P256()
+
+	var sig1, sig2 struct {
+		R, S *big.Int
+	}
+	if _, err := asn1.Unmarshal(sig1Bytes, &sig1); err != nil {
+		return nil, fmt.Errorf("sig1: %w", err)
+	}
+	if _, err := asn1.Unmarshal(sig2Bytes, &sig2); err != nil {
+		return nil, fmt.Errorf("sig2: %w", err)
+	}
+
+	h1 := sha256.Sum256(clientDataJSON1)
+	signed1 := append(append([]byte(nil), authData1...), h1[:]...)
+	hash1 := sha256.Sum256(signed1)
+
+	h2 := sha256.Sum256(clientDataJSON2)
+	signed2 := append(append([]byte(nil), authData2...), h2[:]...)
+	hash2 := sha256.Sum256(signed2)
+
+	cands1 := recoverCandidates(curve, hash1[:], sig1.R, sig1.S)
+	cands2 := recoverCandidates(curve, hash2[:], sig2.R, sig2.S)
+
+	var matches []*ecdsa.PublicKey
+	for _, c1 := range cands1 {
+		for _, c2 := range cands2 {
+			if c1.X.Cmp(c2.X) == 0 && c1.Y.Cmp(c2.Y) == 0 {
+				matches = append(matches, c1)
+			}
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, errors.New("no matching public key found from assertions")
+	}
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("multiple matching public keys found (%d)", len(matches))
+	}
+	pk := matches[0]
+	if !ecdsa.Verify(pk, hash1[:], sig1.R, sig1.S) || !ecdsa.Verify(pk, hash2[:], sig2.R, sig2.S) {
+		return nil, errors.New("recovered public key failed signature verification")
+	}
+	return pk, nil
+}
+

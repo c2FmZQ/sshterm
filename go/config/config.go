@@ -69,6 +69,8 @@ type Config struct {
 		Bits             int    `json:"bits,omitempty"`
 		IdentityProvider string `json:"identityProvider,omitempty"`
 		AddToAgent       bool   `json:"addToAgent,omitempty"`
+		Resident         bool   `json:"resident,omitempty"`
+		Discoverable     bool   `json:"discoverable,omitempty"`
 	} `json:"generateKeys,omitempty"`
 
 	// AutoConnect, if set, instructs the app to open an SSH connection
