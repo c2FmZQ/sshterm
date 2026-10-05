@@ -18,7 +18,7 @@ A key component of the architecture is a WebSocket-to-TCP proxy, such as `TLSPRO
 *   **Key Management:** Supports generation, import, and export of various SSH key types (RSA, ECDSA, Ed25519, and `ecdsa-sk` via WebAuthn).
 *   **SSH Agent:** An in-memory SSH agent implementation allows for agent forwarding.
 *   **Certificate Authentication:** Supports both host and user certificates.
-*   **WebAuthn Support:** `ecdsa-sk` keys can be created and used, leveraging hardware security keys and passkeys.
+*   **WebAuthn Support:** `ecdsa-sk` keys can be created and used, leveraging hardware security keys and passkeys. Discoverable (resident) keys can be created on, and later recovered from, a security key.
 *   **Local Storage:** Configuration, keys, and known hosts are persisted in the browser's IndexedDB.
 
 ## Architecture

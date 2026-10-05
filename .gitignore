@@ -5,3 +5,7 @@ node_modules
 xterm.css
 xterm.js
 xterm.mjs
+bin/
+cache/
+config.yaml
+tlsproxy.env

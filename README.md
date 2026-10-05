@@ -130,6 +130,7 @@ Here is an example with explanations of the fields:
     *   `type`: The key type (e.g., `ecdsa`, `ecdsa-sk`, `ed25519`, `rsa`).
     *   `identityProvider`: If specified, the application will send a request to this URL to get the newly generated public key signed, creating a certificate.
     *   `addToAgent`: If `true`, the new key will be automatically added to the in-memory agent.
+    *   `resident`: If `true`, request a discoverable (resident) credential on the security key. Only valid with type `ecdsa-sk`.
 *   `autoConnect`: Automatically connect to a specified host on startup.
     *   `username`: The user to connect as.
     *   `hostname`: The host to connect to (must match an endpoint name).
@@ -214,6 +215,9 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 *   `keys generate [options] <name>` - Generates a new key.
     *   `-t, --type <type>`: The type of key to generate (`ecdsa`, `ecdsa-sk`, `ed25519`, `rsa`).
     *   `-b, --bits <bits>`: The key size in bits.
+    *   `--idp <url>`: The URL of the identity provider to use.
+    *   `-r, --resident`: Request a discoverable (resident) key on the security key. Only valid with `--type ecdsa-sk`.
+*   `keys discover [options] [<name>]` - Imports a discoverable (resident) key from a security key. The key is touched twice: once to select the credential, once to recover its public key. If `<name>` is omitted, the name stored on the security key is offered as the default.
     *   `--idp <url>`: The URL of the identity provider to use.
 *   `keys delete <name>` - Deletes a key.
 *   `keys show <name>` - Shows a key's public part and certificate details.

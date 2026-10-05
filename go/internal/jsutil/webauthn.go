@@ -27,6 +27,7 @@ package jsutil
 
 import (
 	"errors"
+	"fmt"
 	"syscall/js"
 )
 
@@ -35,6 +36,7 @@ type CreateOptions struct {
 	Alg       int
 	UserID    []byte
 	UserName  string
+	Resident  bool
 }
 
 type CreateResponse struct {
@@ -47,12 +49,28 @@ func WebAuthnCreate(opts CreateOptions) (*CreateResponse, error) {
 	if !cc.Truthy() {
 		return nil, errors.New("CredentialsContainer is unavailable")
 	}
+	// "required" rather than "preferred": with "preferred" an authenticator
+	// that cannot store a discoverable credential silently creates a
+	// non-discoverable one instead, and the caller would never learn that the
+	// key it just created can't be found again by WebAuthnGet.
+	residentKey := "discouraged"
+	if opts.Resident {
+		residentKey = "required"
+	}
+	// The spec requires user.id to be 1-64 bytes.
+	if len(opts.UserID) == 0 || len(opts.UserID) > 64 {
+		return nil, fmt.Errorf("invalid user ID length %d, want 1-64", len(opts.UserID))
+	}
 	creds, err := Await(cc.Call("create", NewObject(map[string]any{
 		"publicKey": NewObject(map[string]any{
 			"attestation": "none",
 			"authenticatorSelection": NewObject(map[string]any{
-				"residentKey":      "discouraged",
-				"userVerification": "preferred",
+				// requireResidentKey is the WebAuthn Level 1 field, only
+				// consulted by clients that don't understand residentKey. The
+				// spec says to set it true iff residentKey is "required".
+				"residentKey":        residentKey,
+				"requireResidentKey": residentKey == "required",
+				"userVerification":   "preferred",
 			}),
 			"challenge": Uint8ArrayFromBytes(opts.Challenge),
 			"pubKeyCredParams": NewArray([]any{
@@ -126,11 +144,15 @@ func WebAuthnGet(opts GetOptions) (*GetResponse, error) {
 		return nil, err
 	}
 	pkc := creds.Get("response")
+	var userHandle []byte
+	if uh := pkc.Get("userHandle"); uh.Truthy() {
+		userHandle = Uint8ArrayToBytes(Uint8Array.New(uh))
+	}
 	return &GetResponse{
 		ID:                Uint8ArrayToBytes(Uint8Array.New(creds.Get("rawId"))),
 		AuthenticatorData: Uint8ArrayToBytes(Uint8Array.New(pkc.Get("authenticatorData"))),
 		ClientDataJSON:    Uint8ArrayToBytes(Uint8Array.New(pkc.Get("clientDataJSON"))),
 		Signature:         Uint8ArrayToBytes(Uint8Array.New(pkc.Get("signature"))),
-		UserHandle:        Uint8ArrayToBytes(Uint8Array.New(pkc.Get("userHandle"))),
+		UserHandle:        userHandle,
 	}, nil
 }
