@@ -1,5 +1,20 @@
 # SSH Term Release Notes
 
+## v0.10.0
+
+### :star: Feature improvements
+
+* Add support for discoverable WebAuthn keys. (Thanks to @tbutter)
+  * WebAuthn keys generated with `--resident` (or `-r`) can easily be recovered without backups with `keys discover`.
+
+### :wrench: Misc
+
+* Update go dependencies:
+  * upgraded github.com/fxamacker/cbor/v2 v2.9.3 => v2.9.4
+  * upgraded golang.org/x/crypto v0.56.0 => v0.57.0
+  * upgraded golang.org/x/sys v0.47.0 => v0.48.0
+  * upgraded golang.org/x/term v0.45.0 => v0.46.0
+
 ## v0.9.0
 
 ### :star2: New features
