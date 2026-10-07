@@ -47,6 +47,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
+	"github.com/c2FmZQ/sshterm/internal/termsafe"
 	"github.com/c2FmZQ/sshterm/internal/webauthnsk"
 )
 
@@ -612,7 +613,7 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 	a.term.Printf("  Public key:...... %s", ssh.MarshalAuthorizedKey(cert.Key))
 	a.term.Printf("  Public key fp:... %s\n", ssh.FingerprintSHA256(cert.Key))
 	a.term.Printf("  Type:............ %s\n", cert.Type())
-	a.term.Printf("  Key ID:.......... %s\n", cert.KeyId)
+	a.term.Printf("  Key ID:.......... %s\n", termsafe.Name(cert.KeyId))
 	if cert.ValidBefore != 0 {
 		a.term.Printf("  Validity:........ %s - %s (UTC)\n",
 			time.Unix(int64(cert.ValidAfter), 0).UTC().Format(time.DateTime),
@@ -623,7 +624,7 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 	if len(cert.ValidPrincipals) > 0 {
 		a.term.Printf("  Principals:\n")
 		for _, p := range cert.ValidPrincipals {
-			a.term.Printf("    %s\n", p)
+			a.term.Printf("    %s\n", termsafe.Name(p))
 		}
 	}
 	if len(cert.CriticalOptions) > 0 {
@@ -635,9 +636,9 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 		a.term.Printf("  Critical options:\n")
 		for _, k := range keys {
 			if v := cert.CriticalOptions[k]; v != "" {
-				a.term.Printf("    %s: %s\n", k, v)
+				a.term.Printf("    %s: %s\n", termsafe.Name(k), termsafe.Name(v))
 			} else {
-				a.term.Printf("    %s\n", k)
+				a.term.Printf("    %s\n", termsafe.Name(k))
 			}
 		}
 	}
@@ -650,9 +651,9 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 		a.term.Printf("  Extensions:\n")
 		for _, k := range keys {
 			if v := cert.Extensions[k]; v != "" {
-				a.term.Printf("    %s: %s\n", k, v)
+				a.term.Printf("    %s: %s\n", termsafe.Name(k), termsafe.Name(v))
 			} else {
-				a.term.Printf("    %s\n", k)
+				a.term.Printf("    %s\n", termsafe.Name(k))
 			}
 		}
 	}
@@ -714,7 +715,8 @@ func (k *key) updateCert() error {
 		return err
 	}
 	req.Header.Set("Content-Type", "text/plain")
-	if sid := jsutil.TLSProxySID(); sid != "" {
+	// The CSRF token is only for the proxy that serves this app.
+	if sid := jsutil.TLSProxySID(); sid != "" && jsutil.IsSameOrigin(k.Provider) {
 		req.Header.Set("x-csrf-token", sid)
 	}
 	resp, err := http.DefaultClient.Do(req)
@@ -725,7 +727,7 @@ func (k *key) updateCert() error {
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain" {
 		if resp.StatusCode == http.StatusForbidden {
 			msg, _ := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 1024})
-			return fmt.Errorf("%q: %s: %s", k.Provider, resp.Status, maskControl(string(msg)))
+			return fmt.Errorf("%q: %s: %s", k.Provider, resp.Status, termsafe.Text(string(msg)))
 		}
 		return fmt.Errorf("%q: status code %q content-type %q", k.Provider, resp.Status, resp.Header.Get("Content-Type"))
 	}

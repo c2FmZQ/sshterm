@@ -21,40 +21,50 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-//go:build wasm
-
-package app
+// Package termsafe makes untrusted strings safe to display in a terminal.
+package termsafe
 
 import (
-	"errors"
-	"io"
-
-	"github.com/c2FmZQ/sshterm/internal/jsutil"
-	"github.com/c2FmZQ/sshterm/internal/zmodem"
+	"strings"
 )
 
-func (a *App) newZModemFilter() io.ReadWriter {
-	return zmodem.New(a.term, a.zmodemDownload, a.zmodemUpload)
-}
-
-func (a *App) zmodemDownload(name string, size int64, r io.Reader) error {
-	if a.streamHelper == nil {
-		if a.streamHelper = jsutil.NewStreamHelper(); a.streamHelper == nil {
-			return errors.New("streaming download unavailable")
+// Text returns s with all the control characters replaced with '#', except
+// for tabs and newlines. Carriage returns are removed. It is meant for
+// multi-line text received from a remote server, e.g. banners and error
+// messages.
+func Text(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t' || r == '\n':
+			return r
+		case r == '\r':
+			return -1
+		case isUnsafe(r):
+			return '#'
+		default:
+			return r
 		}
-	}
-	return a.streamHelper.Download(io.NopCloser(r), name, size, nil, a.cfg.StreamHook)
+	}, s)
 }
 
-func (a *App) zmodemUpload() ([]*zmodem.File, error) {
-	imported := a.importFiles("", true)
-	var files []*zmodem.File
-	for _, imp := range imported {
-		files = append(files, &zmodem.File{
-			Name: imp.Name,
-			Size: imp.Size,
-			R:    imp.Content,
-		})
+// Name returns s with all the control characters replaced with '?'. It is
+// meant for single-line strings received from a remote server, e.g. file
+// names.
+func Name(s string) string {
+	return strings.Map(func(r rune) rune {
+		if isUnsafe(r) {
+			return '?'
+		}
+		return r
+	}, s)
+}
+
+func isUnsafe(r rune) bool {
+	switch {
+	case r < ' ', r >= 0x7f && r <= 0x9f: // C0 and C1 controls, DEL
+		return true
+	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069: // bidi overrides
+		return true
 	}
-	return files, nil
+	return false
 }

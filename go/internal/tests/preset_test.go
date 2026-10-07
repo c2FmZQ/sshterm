@@ -107,6 +107,10 @@ func TestPresetAuthorities(t *testing.T) {
 			"endpoints": [{
 				"name": "myserver.example.com",
 				"url": "./websocket?cert=true"
+			}, {
+				"name": "myserver",
+				"hostname": "myserver.example.com",
+				"url": "./websocket?cert=true"
 			}]
 		}`),
 		&cfg,
@@ -129,6 +133,13 @@ func TestPresetAuthorities(t *testing.T) {
 		{Type: "ssh testuser@myserver.example.com foo\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
+		{Type: "ssh testuser@myserver foo\n", Expect: `(?s)Host certificate for myserver \(myserver.example.com\) is trusted.*Password: `},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// The hostname set by the user is kept when the config doesn't
+		// have one.
+		{Type: "ep add --hostname=foo myserver.example.com ./websocket?cert=true\n", Expect: prompt},
 
 		{Type: "ca remove-hostname testca *.example.com\n", Expect: prompt},
 		{Type: "ca add-hostname testca foobar\n", Expect: prompt},
@@ -149,6 +160,7 @@ func TestPresetAuthorities(t *testing.T) {
 
 	script(t, []line{
 		{Type: "ca list\n", Expect: `testca ` + regexp.QuoteMeta(fp) + ` \*\.example\.com`},
+		{Type: "ep list\n", Expect: `myserver\.example\.com +\./websocket\?cert=true +foo `},
 		{Type: "ssh testuser@myserver.example.com foo\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
@@ -195,24 +207,37 @@ func TestPresetKeys(t *testing.T) {
 	); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	a, err := app.New(&cfg)
-	if err != nil {
-		t.Fatalf("app.New: %v", err)
+	// Use a new database to start without keys.
+	cfg.DBName = fmt.Sprintf("test-preset-keys-%d", time.Now().UnixNano())
+
+	// The key is generated the first time only.
+	var fingerprints []string
+	for range 2 {
+		a, err := app.New(&cfg)
+		if err != nil {
+			t.Fatalf("app.New: %v", err)
+		}
+		result := make(chan error)
+		go func() {
+			result <- a.Run()
+		}()
+		t.Cleanup(a.Stop)
+
+		script(t, []line{
+			{Type: "ssh testuser@myserver.example.com foo\n", Expect: `(?s)Host certificate for myserver.example.com is trusted.\r\n.*exec: foo`},
+			{Wait: time.Second, Type: "\n\n"},
+
+			{Type: "keys show foo\n", Expect: `Fingerprint: (SHA256:[^\r\n]+)`, Do: func(m []string) {
+				fingerprints = append(fingerprints, m[1])
+			}},
+			{Expect: prompt},
+			{Type: "exit\n"},
+		})
+		if err := <-result; err != nil {
+			t.Fatalf("Run(): %v", err)
+		}
 	}
-	result := make(chan error)
-	go func() {
-		result <- a.Run()
-	}()
-	t.Cleanup(a.Stop)
-
-	script(t, []line{
-		{Type: "ssh testuser@myserver.example.com foo\n", Expect: `(?s)Host certificate for myserver.example.com is trusted.\r\n.*exec: foo`},
-		{Wait: time.Second, Type: "\n\n"},
-
-		{Type: "keys show foo\n", Expect: prompt},
-		{Type: "exit\n"},
-	})
-	if err := <-result; err != nil {
-		t.Fatalf("Run(): %v", err)
+	if fingerprints[0] != fingerprints[1] {
+		t.Errorf("key changed after restart: %v", fingerprints)
 	}
 }

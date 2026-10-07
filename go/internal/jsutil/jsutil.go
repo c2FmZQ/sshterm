@@ -33,15 +33,16 @@ import (
 )
 
 var (
-	Uint8Array = js.Global().Get("Uint8Array")
-	Error      = js.Global().Get("Error")
-	Array      = js.Global().Get("Array")
-	Object     = js.Global().Get("Object")
-	Promise    = js.Global().Get("Promise")
-	Blob       = js.Global().Get("Blob")
-	URL        = js.Global().Get("URL")
-	Document   = js.Global().Get("document")
-	Body       = Document.Get("body")
+	ArrayBuffer = js.Global().Get("ArrayBuffer")
+	Uint8Array  = js.Global().Get("Uint8Array")
+	Error       = js.Global().Get("Error")
+	Array       = js.Global().Get("Array")
+	Object      = js.Global().Get("Object")
+	Promise     = js.Global().Get("Promise")
+	Blob        = js.Global().Get("Blob")
+	URL         = js.Global().Get("URL")
+	Document    = js.Global().Get("document")
+	Body        = Document.Get("body")
 )
 
 func TryCatch(try func(), catch func(any)) {
@@ -216,12 +217,28 @@ func ExportFile(data []byte, filename, mimeType string) error {
 }
 
 func TLSProxySID() string {
-	re := regexp.MustCompile(`__tlsproxySid=([^;]*)(;|$)`)
+	re := regexp.MustCompile(`(?:^|;\s*)__tlsproxySid=([^;]*)`)
 	m := re.FindStringSubmatch(Document.Get("cookie").String())
 	if len(m) > 1 {
 		return m[1]
 	}
 	return ""
+}
+
+// IsSameOrigin returns true if url, which may be relative, has the same
+// origin as the current page.
+func IsSameOrigin(url string) (same bool) {
+	TryCatch(
+		func() { // try
+			loc := Document.Get("location")
+			u := URL.New(url, loc.Get("href"))
+			same = u.Get("origin").String() == loc.Get("origin").String()
+		},
+		func(any) { // catch
+			same = false
+		},
+	)
+	return
 }
 
 func Hostname() string {

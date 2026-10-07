@@ -23,38 +23,51 @@
 
 //go:build wasm
 
-package app
+package tests
 
 import (
-	"errors"
-	"io"
+	"syscall/js"
+	"testing"
 
+	"github.com/c2FmZQ/sshterm/internal/app"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
-	"github.com/c2FmZQ/sshterm/internal/zmodem"
 )
 
-func (a *App) newZModemFilter() io.ReadWriter {
-	return zmodem.New(a.term, a.zmodemDownload, a.zmodemUpload)
-}
-
-func (a *App) zmodemDownload(name string, size int64, r io.Reader) error {
-	if a.streamHelper == nil {
-		if a.streamHelper = jsutil.NewStreamHelper(); a.streamHelper == nil {
-			return errors.New("streaming download unavailable")
-		}
+func TestPaste(t *testing.T) {
+	a, err := app.New(appConfig)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
 	}
-	return a.streamHelper.Download(io.NopCloser(r), name, size, nil, a.cfg.StreamHook)
-}
+	result := make(chan error)
+	go func() {
+		result <- a.Run()
+	}()
+	t.Cleanup(a.Stop)
 
-func (a *App) zmodemUpload() ([]*zmodem.File, error) {
-	imported := a.importFiles("", true)
-	var files []*zmodem.File
-	for _, imp := range imported {
-		files = append(files, &zmodem.File{
-			Name: imp.Name,
-			Size: imp.Size,
-			R:    imp.Content,
-		})
+	paste := func(text string) {
+		dt := js.Global().Get("DataTransfer").New()
+		dt.Call("setData", "text/plain", text)
+		ev := js.Global().Get("ClipboardEvent").New("paste", jsutil.NewObject(map[string]any{
+			"clipboardData": dt,
+			"bubbles":       true,
+			"cancelable":    true,
+		}))
+		js.Global().Get("sshApp").Get("term").Get("textarea").Call("dispatchEvent", ev)
 	}
-	return files, nil
+
+	script(t, []line{
+		{Expect: prompt},
+		{Type: "db wipe\n", Expect: `Continue\?`},
+		{Type: "Y\n", Expect: prompt},
+	})
+	// Escape characters are removed from pasted text.
+	paste("ep add pa\x1bste ./websocket\r")
+	script(t, []line{
+		{Expect: prompt},
+		{Type: "ep list\n", Expect: `(?s)paste +\./websocket.*sshterm> `},
+		{Type: "exit\n"},
+	})
+	if err := <-result; err != nil {
+		t.Fatalf("Run(): %v", err)
+	}
 }

@@ -23,38 +23,31 @@
 
 //go:build wasm
 
-package app
+package tests
 
 import (
-	"errors"
-	"io"
-
-	"github.com/c2FmZQ/sshterm/internal/jsutil"
-	"github.com/c2FmZQ/sshterm/internal/zmodem"
+	"syscall/js"
+	"testing"
+	"time"
 )
 
-func (a *App) newZModemFilter() io.ReadWriter {
-	return zmodem.New(a.term, a.zmodemDownload, a.zmodemUpload)
-}
+func TestNoFrame(t *testing.T) {
+	doc := js.Global().Get("document")
+	iframe := doc.Call("createElement", "iframe")
+	iframe.Set("src", "index.html")
+	doc.Get("body").Call("appendChild", iframe)
+	defer doc.Get("body").Call("removeChild", iframe)
 
-func (a *App) zmodemDownload(name string, size int64, r io.Reader) error {
-	if a.streamHelper == nil {
-		if a.streamHelper = jsutil.NewStreamHelper(); a.streamHelper == nil {
-			return errors.New("streaming download unavailable")
+	want := "SSH Term cannot run inside a frame."
+	var got string
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if d := iframe.Get("contentDocument"); d.Truthy() {
+			if elem := d.Call("getElementById", "terminal"); elem.Truthy() {
+				if got = elem.Get("textContent").String(); got == want {
+					return
+				}
+			}
 		}
 	}
-	return a.streamHelper.Download(io.NopCloser(r), name, size, nil, a.cfg.StreamHook)
-}
-
-func (a *App) zmodemUpload() ([]*zmodem.File, error) {
-	imported := a.importFiles("", true)
-	var files []*zmodem.File
-	for _, imp := range imported {
-		files = append(files, &zmodem.File{
-			Name: imp.Name,
-			Size: imp.Size,
-			R:    imp.Content,
-		})
-	}
-	return files, nil
+	t.Errorf("iframe content = %q, want %q", got, want)
 }

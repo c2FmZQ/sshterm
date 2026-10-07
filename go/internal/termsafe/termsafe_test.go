@@ -21,40 +21,43 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-//go:build wasm
-
-package app
+package termsafe
 
 import (
-	"errors"
-	"io"
-
-	"github.com/c2FmZQ/sshterm/internal/jsutil"
-	"github.com/c2FmZQ/sshterm/internal/zmodem"
+	"testing"
 )
 
-func (a *App) newZModemFilter() io.ReadWriter {
-	return zmodem.New(a.term, a.zmodemDownload, a.zmodemUpload)
-}
-
-func (a *App) zmodemDownload(name string, size int64, r io.Reader) error {
-	if a.streamHelper == nil {
-		if a.streamHelper = jsutil.NewStreamHelper(); a.streamHelper == nil {
-			return errors.New("streaming download unavailable")
+func TestText(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+	}{
+		{"hello", "hello"},
+		{"line 1\r\nline 2\n\tindented", "line 1\nline 2\n\tindented"},
+		{"\x1b[2J\x1b]0;title\a", "#[2J#]0;title#"},
+		{"csi\u009b31m", "csi#31m"},
+		{"del\x7f", "del#"},
+		{"invoice\u202efdp.exe", "invoice#fdp.exe"},
+		{"héllo €", "héllo €"},
+	} {
+		if got := Text(tc.in); got != tc.want {
+			t.Errorf("Text(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
-	return a.streamHelper.Download(io.NopCloser(r), name, size, nil, a.cfg.StreamHook)
 }
 
-func (a *App) zmodemUpload() ([]*zmodem.File, error) {
-	imported := a.importFiles("", true)
-	var files []*zmodem.File
-	for _, imp := range imported {
-		files = append(files, &zmodem.File{
-			Name: imp.Name,
-			Size: imp.Size,
-			R:    imp.Content,
-		})
+func TestName(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+	}{
+		{"hello.txt", "hello.txt"},
+		{"a\r\nb\tc", "a??b?c"},
+		{"\x1b[2Jevil.exe", "?[2Jevil.exe"},
+		{"invoice\u202efdp.exe", "invoice?fdp.exe"},
+		{"x\u2066y\u2069", "x?y?"},
+		{"héllo-€.txt", "héllo-€.txt"},
+	} {
+		if got := Name(tc.in); got != tc.want {
+			t.Errorf("Name(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
-	return files, nil
 }

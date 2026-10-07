@@ -45,6 +45,7 @@ import (
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 	"github.com/c2FmZQ/sshterm/internal/shellwords"
 	"github.com/c2FmZQ/sshterm/internal/terminal"
+	"github.com/c2FmZQ/sshterm/internal/termsafe"
 )
 
 var backupMagic = []byte{0xe2, 0x9b, 0x94, '0'}
@@ -153,9 +154,20 @@ type authority struct {
 }
 
 type endpoint struct {
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	HostKey []byte `json:"hostKey,omitempty"` // deprecated
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// Hostname is the server's real hostname, used to validate host
+	// certificates. If empty, Name is used.
+	Hostname string `json:"hostname,omitempty"`
+	HostKey  []byte `json:"hostKey,omitempty"` // deprecated
+}
+
+// certHostname returns the hostname that host certificates must be valid for.
+func (ep *endpoint) certHostname() string {
+	if ep.Hostname != "" {
+		return ep.Hostname
+	}
+	return ep.Name
 }
 
 type host struct {
@@ -174,7 +186,12 @@ func (a *App) initPresetConfig() error {
 		}
 	}
 	for i, ep := range a.cfg.Endpoints {
-		if err := a.addEndpoint(ep.Name, ep.URL); err != nil {
+		hostname := ep.Hostname
+		// Keep the hostname that the user set, unless the config has one.
+		if old, exists := a.data.Endpoints[ep.Name]; exists && hostname == "" {
+			hostname = old.Hostname
+		}
+		if err := a.addEndpoint(ep.Name, ep.URL, hostname); err != nil {
 			return fmt.Errorf("endpoints[%d]: %w", i, err)
 		}
 	}
@@ -184,9 +201,15 @@ func (a *App) initPresetConfig() error {
 		}
 	}
 	for i, k := range a.cfg.GenerateKeys {
-		key, err := a.generateKey(k.Name, "", k.IdentityProvider, k.Type, k.Bits, k.Resident)
-		if err != nil {
-			return fmt.Errorf("generateKeys[%d]: %w", i, err)
+		// Keep existing keys. This runs every time the app starts, and
+		// re-creating a resident key would replace the credential on the
+		// security key.
+		key, exists := a.data.Keys[k.Name]
+		if !exists {
+			var err error
+			if key, err = a.generateKey(k.Name, "", k.IdentityProvider, k.Type, k.Bits, k.Resident); err != nil {
+				return fmt.Errorf("generateKeys[%d]: %w", i, err)
+			}
 		}
 		if k.AddToAgent {
 			signer, err := key.Signer(nil)
@@ -317,7 +340,7 @@ func (a *App) Run() error {
 				}
 				target := username + "@" + a.cfg.AutoConnect.Hostname
 				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent, a.cfg.AutoConnect.JumpHosts, a.cfg.AutoConnect.ZModem); err != nil {
-					t.Errorf("%v", err)
+					t.Errorf("%s", termsafe.Text(err.Error()))
 				}
 			},
 			func(err any) { // catch
@@ -427,7 +450,8 @@ func (a *App) Run() error {
 						if errors.Is(err, context.Canceled) {
 							t.Errorf("Aborted")
 						} else {
-							t.Errorf("%v", err)
+							// Errors may contain text from the remote server.
+							t.Errorf("%s", termsafe.Text(err.Error()))
 						}
 					}
 				},

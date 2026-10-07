@@ -47,9 +47,13 @@ type Config struct {
 
 	// Endpoints is a list of WebSocket endpoints that the app can use to
 	// connect to SSH servers.
+	//
+	// Hostname is the server's real hostname. It is used to validate host
+	// certificates. If unset, Name is used.
 	Endpoints []struct {
-		Name string `json:"name"`
-		URL  string `json:"url"`
+		Name     string `json:"name"`
+		URL      string `json:"url"`
+		Hostname string `json:"hostname,omitempty"`
 	} `json:"endpoints,omitempty"`
 
 	// Hosts is a list of known hosts and their host keys. It is used for
@@ -60,7 +64,8 @@ type Config struct {
 		Key  string `json:"key,omitempty"`
 	} `json:"hosts,omitempty"`
 
-	// GenerateKeys instructs the app to generate SSH keys when it starts.
+	// GenerateKeys instructs the app to generate SSH keys when it starts,
+	// unless keys with the same names already exist in the database.
 	// These keys are passwordless and are intended to be used with an
 	// Identity Provider.
 	GenerateKeys []struct {

@@ -43,7 +43,20 @@ var (
 )
 
 func New(ctx context.Context, url string, log io.Writer) (*WebSocket, error) {
-	jsWS := js.Global().Get("WebSocket").New(url)
+	var jsWS js.Value
+	var err error
+	jsutil.TryCatch(
+		func() { // try
+			jsWS = js.Global().Get("WebSocket").New(url)
+		},
+		func(e any) { // catch
+			err = fmt.Errorf("websocket: %v", e)
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	jsWS.Set("binaryType", "arraybuffer")
 	ws := &WebSocket{
 		ctx:     ctx,
 		ws:      jsWS,
@@ -75,11 +88,17 @@ func New(ctx context.Context, url string, log io.Writer) (*WebSocket, error) {
 		return nil
 	}))
 	jsWS.Call("addEventListener", "message", js.FuncOf(func(this js.Value, args []js.Value) any {
-		event := args[0]
+		data := args[0].Get("data")
+		if !data.InstanceOf(jsutil.ArrayBuffer) {
+			if !ws.isClosed() {
+				ws.err = errors.New("websocket: unexpected message type")
+			}
+			return ws.Close()
+		}
 		select {
 		case <-ws.ctx.Done():
 			return ws.Close()
-		case ws.ch <- event.Get("data").Call("arrayBuffer"):
+		case ws.ch <- data:
 		}
 		return nil
 	}))
@@ -123,11 +142,7 @@ func (ws *WebSocket) readChunk() error {
 	select {
 	case <-ws.ctx.Done():
 		return ws.ctx.Err()
-	case p := <-ws.ch:
-		data, err := jsutil.Await(p)
-		if err != nil {
-			return err
-		}
+	case data := <-ws.ch:
 		vv := jsutil.Uint8Array.New(data)
 		n := len(ws.r)
 		ws.r = append(ws.r, make([]byte, vv.Length())...)

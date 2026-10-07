@@ -54,20 +54,30 @@ class TerminalManager {
       this.term,
     ];
 
+    // Remove escape characters from pasted text so that it can't end
+    // bracketed paste mode early, e.g. with "\x1b[201~some command\r".
+    const paste = t => this.term.paste(t.replace(/\x1b/g, ''));
     this.contextmenuHandler = event => {
       event.preventDefault();
       event.stopPropagation();
-      navigator.clipboard.readText().then(t => this.term.paste(t));
+      navigator.clipboard.readText().then(paste);
     };
     this.mousedownHandler = event => {
       if (event.button === 1) {
-        navigator.clipboard.readText().then(t => this.term.paste(t));
+        navigator.clipboard.readText().then(paste);
       }
+    };
+    this.pasteHandler = event => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      paste(event.clipboardData?.getData('text/plain') ?? '');
     };
     this.resizeHandler = () => this.fitAddon.fit();
 
     this.term.element.addEventListener('contextmenu', this.contextmenuHandler);
     this.term.element.addEventListener('mousedown', this.mousedownHandler);
+    // Capture phase, to run before xterm's own paste handler.
+    this.term.element.addEventListener('paste', this.pasteHandler, true);
     window.addEventListener('resize', this.resizeHandler);
 
     if (isTest()) {
@@ -78,6 +88,7 @@ class TerminalManager {
   cleanup(result) {
     this.term.element.removeEventListener('contextmenu', this.contextmenuHandler);
     this.term.element.removeEventListener('mousedown', this.mousedownHandler);
+    this.term.element.removeEventListener('paste', this.pasteHandler, true);
     window.removeEventListener('resize', this.resizeHandler);
     for (let i = 0; i < this.disposables.length; i++) {
       this.disposables[i].dispose();

@@ -23,38 +23,49 @@
 
 //go:build wasm
 
-package app
+package tests
 
 import (
-	"errors"
-	"io"
+	"syscall/js"
+	"testing"
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
-	"github.com/c2FmZQ/sshterm/internal/zmodem"
 )
 
-func (a *App) newZModemFilter() io.ReadWriter {
-	return zmodem.New(a.term, a.zmodemDownload, a.zmodemUpload)
-}
-
-func (a *App) zmodemDownload(name string, size int64, r io.Reader) error {
-	if a.streamHelper == nil {
-		if a.streamHelper = jsutil.NewStreamHelper(); a.streamHelper == nil {
-			return errors.New("streaming download unavailable")
-		}
-	}
-	return a.streamHelper.Download(io.NopCloser(r), name, size, nil, a.cfg.StreamHook)
-}
-
-func (a *App) zmodemUpload() ([]*zmodem.File, error) {
-	imported := a.importFiles("", true)
-	var files []*zmodem.File
-	for _, imp := range imported {
-		files = append(files, &zmodem.File{
-			Name: imp.Name,
-			Size: imp.Size,
-			R:    imp.Content,
+func TestTLSProxySID(t *testing.T) {
+	doc := js.Global().Get("document")
+	setCookie := func(v string) {
+		doc.Set("cookie", v)
+		t.Cleanup(func() {
+			doc.Set("cookie", v+"; max-age=0")
 		})
 	}
-	return files, nil
+
+	setCookie("x__tlsproxySid=wrong")
+	if got := jsutil.TLSProxySID(); got != "" {
+		t.Errorf("TLSProxySID() = %q, want empty", got)
+	}
+	setCookie("__tlsproxySid=right")
+	if got, want := jsutil.TLSProxySID(), "right"; got != want {
+		t.Errorf("TLSProxySID() = %q, want %q", got, want)
+	}
+}
+
+func TestIsSameOrigin(t *testing.T) {
+	origin := js.Global().Get("location").Get("origin").String()
+	for _, tc := range []struct {
+		url  string
+		want bool
+	}{
+		{"./cert", true},
+		{"/cert", true},
+		{origin + "/cert", true},
+		{"https://example.com/cert", false},
+		{"//example.com/cert", false},
+		{"http://[invalid", false},
+	} {
+		if got := jsutil.IsSameOrigin(tc.url); got != tc.want {
+			t.Errorf("IsSameOrigin(%q) = %v, want %v", tc.url, got, tc.want)
+		}
+	}
 }

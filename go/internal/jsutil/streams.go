@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"sync"
 	"sync/atomic"
 	"syscall/js"
@@ -186,12 +187,14 @@ func NewStreamHelper() *StreamHelper {
 						err = fmt.Errorf("panic: %T %v", e, e)
 					}
 					s.done <- err
+					js.Global().Get("console").Call("error", "stream helper failed:", err.Error())
 					event.Get("source").Call("postMessage",
 						NewObject(map[string]any{
 							"streamId": id,
-							"body":     err.Error(),
+							"body":     "Internal Server Error",
 							"options": NewObject(map[string]any{
-								"status": "500",
+								"status":     "500",
+								"statusText": "Internal Server Error",
 								"headers": NewObject(map[string]any{
 									"Content-Type": "text/plain",
 								}),
@@ -252,7 +255,9 @@ func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, p
 		return errors.New("streaming download unavailable")
 	}
 	hdr := map[string]any{
-		"Content-Disposition": fmt.Sprintf("attachment; filename=%q", filename),
+		// FormatMediaType uses RFC 2231 encoding for non-ASCII names.
+		// Header values must be ASCII.
+		"Content-Disposition": mime.FormatMediaType("attachment", map[string]string{"filename": filename}),
 		"Cache-Control":       "no-store",
 		"Content-Type":        "application/octet-stream",
 	}
