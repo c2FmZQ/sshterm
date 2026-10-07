@@ -138,6 +138,16 @@ Here is an example with explanations of the fields:
     *   `command`: An optional command to run on the remote server.
     *   `forwardAgent`: If `true`, enables agent forwarding for the session.
 
+### Deployment Security
+
+*   Serve SSH Term from its own origin (e.g. `https://ssh.example.com`), with no other content. Anything running on the same origin can access the keys stored in the browser.
+*   SSH Term refuses to run inside a frame. If your web server or proxy can set response headers, also add these headers to prevent framing:
+
+    ```
+    Content-Security-Policy: frame-ancestors 'none'
+    X-Frame-Options: DENY
+    ```
+
 ## Usage
 
 This section explains how to use the SSH Term application, from initial setup to a complete command reference.

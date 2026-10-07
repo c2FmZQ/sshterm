@@ -26,5 +26,12 @@
 import { TabManager } from './ssh.mjs';
 
 window.addEventListener('load', () => {
-  new TabManager(document.getElementById('terminal'));
+  const elem = document.getElementById('terminal');
+  // Refuse to run inside a frame to prevent clickjacking.
+  if (window.top !== window.self) {
+    elem.style.color = 'white';
+    elem.textContent = 'SSH Term cannot run inside a frame.';
+    return;
+  }
+  new TabManager(elem);
 });

@@ -68,7 +68,9 @@ Security is paramount for an SSH client. Running in a browser introduces a uniqu
     *   **Key Encryption:** Individual private keys are encrypted with a user-provided passphrase using the standard OpenSSH keystore format.
     *   **Database Backup:** The full database backup feature encrypts the entire dataset using a key derived from a passphrase with **PBKDF2** and then symmetrically encrypted with **XSalsa20-Poly1305** (via `nacl/secretbox`). This ensures that sensitive data, including keys and configuration, is protected when exported.
 
-*   **Cross-Site Scripting (XSS):** The application is a single-page app and does not render any user-provided HTML. The terminal output is handled by xterm.js, which is designed to safely render terminal escape sequences and text. The Content Security Policy (CSP) is set to `default-src 'self'; style-src 'unsafe-inline' 'self'; script-src 'unsafe-eval' 'self';`, which helps to mitigate XSS risks. The `'unsafe-eval'` is required for the Go WASM runtime.
+*   **Cross-Site Scripting (XSS):** The application is a single-page app and does not render any user-provided HTML. The terminal output is handled by xterm.js, which is designed to safely render terminal escape sequences and text. The Content Security Policy (CSP) is set to `default-src 'self'; style-src 'unsafe-inline' 'self'; script-src 'wasm-unsafe-eval' 'self'; base-uri 'none'; form-action 'none';`, which helps to mitigate XSS risks. The `'wasm-unsafe-eval'` is required to compile the Go WASM module.
+
+*   **Clickjacking:** The app refuses to run inside a frame. Deployments that can set HTTP headers should also send `Content-Security-Policy: frame-ancestors 'none'`, since `frame-ancestors` is ignored in a `<meta>` CSP.
 
 *   **Cross-Site Request Forgery (CSRF):** `TLSPROXY` requires a CSRF token (`__tlsproxySid` cookie and `x-csrf-token` header) for certificate requests, which is implemented in this application.
 

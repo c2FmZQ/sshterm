@@ -40,7 +40,7 @@ off as they are fixed. Delete this file once every item is done.
   `go/internal/app/agent.go` (`keyRing.Sign`), `go/internal/webauthnsk/key.go`.
   Print which key is being used for a forwarded request before prompting;
   don't hold `r.mu` for the duration of the WebAuthn call.
-- [ ] **7. CSP is meta-only; framing allowed; CSP broader than needed.**
+- [x] **7. CSP is meta-only; framing allowed; CSP broader than needed.**
   `docroot/index.html`. Document/serve CSP as an HTTP header with
   `frame-ancestors 'none'`; add `base-uri 'none'; form-action 'none'`; replace
   `'unsafe-eval'` with `'wasm-unsafe-eval'`. Add a frame-busting check if needed.
