@@ -204,6 +204,9 @@ func (d *downloader) stream(url string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("stream: %s", resp.Status)
+	}
 	body, _ := io.ReadAll(resp.Body)
 	var filename string
 	if _, params, err := mime.ParseMediaType(resp.Header.Get("Content-Disposition")); err == nil {

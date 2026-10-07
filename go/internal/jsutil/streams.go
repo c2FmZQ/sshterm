@@ -35,6 +35,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall/js"
+	"time"
 )
 
 var (
@@ -136,6 +137,12 @@ func NewStreamHelper() *StreamHelper {
 	if err != nil || !registration.Truthy() {
 		return nil
 	}
+	// The stream requests must go to this service worker. Until it
+	// controls the page, they go to the network instead.
+	if !waitForController(container, registration, 10*time.Second) {
+		js.Global().Get("console").Call("error", "service worker is not controlling the page")
+		return nil
+	}
 
 	h := &StreamHelper{
 		streams: make(map[string]stream),
@@ -162,6 +169,7 @@ func NewStreamHelper() *StreamHelper {
 				return nil
 			}
 			delete(h.streams, id)
+			close(s.started)
 
 			TryCatch(
 				// try
@@ -210,6 +218,36 @@ func NewStreamHelper() *StreamHelper {
 	return h
 }
 
+// waitForController waits until the registration's active service worker
+// controls the page. A newly registered service worker claims the page when it
+// is activated.
+func waitForController(container, registration js.Value, timeout time.Duration) bool {
+	ch := make(chan struct{}, 1)
+	notify := js.FuncOf(func(this js.Value, args []js.Value) any {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+	defer notify.Release()
+	container.Call("addEventListener", "controllerchange", notify)
+	defer container.Call("removeEventListener", "controllerchange", notify)
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		if c := container.Get("controller"); c.Truthy() && c.Equal(registration.Get("active")) {
+			return true
+		}
+		select {
+		case <-ch:
+		case <-timer.C:
+			return false
+		}
+	}
+}
+
 func UnregisterServiceWorker() {
 	if c := js.Global().Get("navigator").Get("serviceWorker"); c.Truthy() {
 		if r, err := Await(c.Call("getRegistration")); err == nil && r.Truthy() {
@@ -227,26 +265,38 @@ type stream struct {
 	reader   io.Reader
 	headers  map[string]any
 	done     chan error
+	started  chan struct{}
 	progress func(int64)
 }
 
-func (h *StreamHelper) addStream(rc io.Reader, headers map[string]any, progress func(int64)) (string, <-chan error, error) {
+func (h *StreamHelper) addStream(rc io.Reader, headers map[string]any, progress func(int64)) (string, <-chan struct{}, <-chan error, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	b := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	id := hex.EncodeToString(b)
-	ch := make(chan error, 1)
-	h.streams[id] = stream{
+	s := stream{
 		reader:   rc,
 		headers:  headers,
-		done:     ch,
+		done:     make(chan error, 1),
+		started:  make(chan struct{}),
 		progress: progress,
 	}
-	return id, ch, nil
+	h.streams[id] = s
+	return id, s.started, s.done, nil
+}
+
+// removeStream removes a stream that hasn't started. It returns false if the
+// stream already started.
+func (h *StreamHelper) removeStream(id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, exists := h.streams[id]
+	delete(h.streams, id)
+	return exists
 }
 
 func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, progress func(int64), hook func(string) error) (err error) {
@@ -264,13 +314,14 @@ func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, p
 	if size > 0 {
 		hdr["Content-Length"] = fmt.Sprintf("%d", size)
 	}
-	id, done, err := h.addStream(rc, hdr, progress)
+	id, started, done, err := h.addStream(rc, hdr, progress)
 	if err != nil {
 		return err
 	}
 	url := "./stream/" + id
 	if hook != nil {
 		if err := hook(url); err != nil {
+			h.removeStream(id)
 			return err
 		}
 	} else {
@@ -279,6 +330,16 @@ func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, p
 		Body.Call("appendChild", anchor)
 		anchor.Call("click")
 		Body.Call("removeChild", anchor)
+	}
+	// Don't wait forever if the request never reaches the service worker.
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-started:
+	case <-timer.C:
+		if h.removeStream(id) {
+			return errors.New("download did not start")
+		}
 	}
 	return <-done
 }
