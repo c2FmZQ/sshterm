@@ -104,6 +104,11 @@ func TestSSHTerm(t *testing.T) {
 		}
 		defer conn.Close()
 		req.ParseForm()
+		if req.Form.Get("text") == "true" {
+			conn.WriteMessage(websocket.TextMessage, []byte("hello"))
+			time.Sleep(time.Second)
+			return
+		}
 		if req.Form.Get("cert") == "true" {
 			sshServerWithCert.handle(&netConn{conn: conn})
 			return

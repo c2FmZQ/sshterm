@@ -51,7 +51,7 @@ off as they are fixed. Delete this file once every item is done.
   `go/internal/webauthnsk/key.go`: nil `pem.Decode` block, nil point from
   `elliptic.Unmarshal`, unbounded PBKDF2 `numIter`.
   `go/internal/app/db.go` restore: `enc[:4]` / `enc[40:]` without length check.
-- [ ] **10. WebSocket panics on bad input.**
+- [x] **10. WebSocket panics on bad input.**
   `go/internal/websocket/websocket.go`: invalid endpoint URL throws in the
   `WebSocket` constructor (Go panic); text frames make `arrayBuffer` undefined.
   Validate URL scheme in `ep add`, catch constructor errors, set

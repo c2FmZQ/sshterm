@@ -33,15 +33,16 @@ import (
 )
 
 var (
-	Uint8Array = js.Global().Get("Uint8Array")
-	Error      = js.Global().Get("Error")
-	Array      = js.Global().Get("Array")
-	Object     = js.Global().Get("Object")
-	Promise    = js.Global().Get("Promise")
-	Blob       = js.Global().Get("Blob")
-	URL        = js.Global().Get("URL")
-	Document   = js.Global().Get("document")
-	Body       = Document.Get("body")
+	ArrayBuffer = js.Global().Get("ArrayBuffer")
+	Uint8Array  = js.Global().Get("Uint8Array")
+	Error       = js.Global().Get("Error")
+	Array       = js.Global().Get("Array")
+	Object      = js.Global().Get("Object")
+	Promise     = js.Global().Get("Promise")
+	Blob        = js.Global().Get("Blob")
+	URL         = js.Global().Get("URL")
+	Document    = js.Global().Get("document")
+	Body        = Document.Get("body")
 )
 
 func TryCatch(try func(), catch func(any)) {

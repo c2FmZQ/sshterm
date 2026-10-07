@@ -282,6 +282,12 @@ func TestSSH(t *testing.T) {
 		{Expect: prompt},
 		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
+		// Invalid endpoints.
+		{Type: "ep add bad-url ws://[invalid\n", Expect: prompt},
+		{Type: "ssh testuser@bad-url\n", Expect: `(?s)websocket: .*sshterm> `},
+		{Type: "ep add text-message websocket?text=true\n", Expect: prompt},
+		{Type: "ssh testuser@text-message\n", Expect: `(?s)websocket: unexpected message type.*sshterm> `},
+
 		{Type: "ep add test-server websocket\n", Expect: prompt},
 		{Type: "ssh testuser@test-server\n", Expect: `(?s)Host key for test-server.*Choice>`},
 		{Type: "3\n", Expect: "Password: "},
