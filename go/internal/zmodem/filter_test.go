@@ -25,6 +25,7 @@ package zmodem
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -311,4 +312,70 @@ func (r *chanReader) Read(p []byte) (int, error) {
 	n := copy(p, r.buf)
 	r.buf = r.buf[n:]
 	return n, nil
+}
+
+func TestZmodemFilterDownloadError(t *testing.T) {
+	inR, inW := io.Pipe()
+	defer inW.Close()
+	term := &mockTerminal{Reader: inR}
+	download := func(name string, size int64, r io.Reader) error {
+		return errors.New("streaming download unavailable")
+	}
+	filter := New(term, download, nil)
+
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for !strings.Contains(term.String(), "[y/N]") && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		inW.Write([]byte("y"))
+	}()
+
+	// Like an SSH session, read the filter's output continuously.
+	replies := &chanReader{ch: make(chan []byte, 100)}
+	var mu sync.Mutex
+	var sent bytes.Buffer
+	go func() {
+		for {
+			buf := make([]byte, 1024)
+			n, err := filter.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				sent.Write(buf[:n])
+				mu.Unlock()
+				replies.ch <- buf[:n]
+			}
+			if err != nil {
+				close(replies.ch)
+				return
+			}
+		}
+	}()
+
+	data := []byte("hello")
+	files := []*File{{Name: "file.txt", Size: int64(len(data)), R: io.NopCloser(bytes.NewReader(data))}}
+	go func() {
+		if err := writeHexHeader(filter, header{Type: zRQINIT}); err != nil {
+			return
+		}
+		send(struct {
+			io.Reader
+			io.Writer
+		}{replies, filter}, files, nil)
+	}()
+
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		mu.Lock()
+		canceled := bytes.Contains(sent.Bytes(), cancelSeq)
+		mu.Unlock()
+		if canceled {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cancel sequence not sent. Terminal: %q", term.String())
+		}
+	}
+	if out := term.String(); !strings.Contains(out, "Receive Error: streaming download unavailable") {
+		t.Errorf("terminal output = %q", out)
+	}
 }

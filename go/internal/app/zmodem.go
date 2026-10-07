@@ -26,31 +26,28 @@
 package app
 
 import (
+	"errors"
 	"io"
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
-	"github.com/c2FmZQ/sshterm/internal/terminal"
 	"github.com/c2FmZQ/sshterm/internal/zmodem"
 )
 
-func newZModemFilter(term *terminal.Terminal) io.ReadWriter {
-	return zmodem.New(term, wasmDownload, wasmUpload)
+func (a *App) newZModemFilter() io.ReadWriter {
+	return zmodem.New(a.term, a.zmodemDownload, a.zmodemUpload)
 }
 
-func wasmDownload(name string, size int64, r io.Reader) error {
-	helper := jsutil.NewStreamHelper()
-	if helper == nil {
-		data, err := io.ReadAll(r)
-		if err == nil {
-			jsutil.ExportFile(data, name, "application/octet-stream")
+func (a *App) zmodemDownload(name string, size int64, r io.Reader) error {
+	if a.streamHelper == nil {
+		if a.streamHelper = jsutil.NewStreamHelper(); a.streamHelper == nil {
+			return errors.New("streaming download unavailable")
 		}
-		return err
 	}
-	return helper.Download(io.NopCloser(r), name, size, nil, nil)
+	return a.streamHelper.Download(io.NopCloser(r), name, size, nil, a.cfg.StreamHook)
 }
 
-func wasmUpload() ([]*zmodem.File, error) {
-	imported := jsutil.ImportFiles("", true)
+func (a *App) zmodemUpload() ([]*zmodem.File, error) {
+	imported := a.importFiles("", true)
 	var files []*zmodem.File
 	for _, imp := range imported {
 		files = append(files, &zmodem.File{

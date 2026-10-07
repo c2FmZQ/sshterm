@@ -56,7 +56,7 @@ off as they are fixed. Delete this file once every item is done.
   `WebSocket` constructor (Go panic); text frames make `arrayBuffer` undefined.
   Validate URL scheme in `ep add`, catch constructor errors, set
   `binaryType = "arraybuffer"`.
-- [ ] **11. Unbounded memory in ZMODEM download fallback.**
+- [x] **11. Unbounded memory in ZMODEM download fallback.**
   `go/internal/app/zmodem.go`: `io.ReadAll` when no service worker. Refuse or
   cap at declared size.
 
@@ -75,7 +75,7 @@ off as they are fixed. Delete this file once every item is done.
 - [ ] **16. Service worker message handling hardening.**
   `docroot/stream-helper.js`: use a `Map`, only accept responses from the
   client the request was posted to, match `/stream/` on the path only.
-- [ ] **17. Each ZMODEM download creates a new StreamHelper.**
+- [x] **17. Each ZMODEM download creates a new StreamHelper.**
   `go/internal/app/zmodem.go`: replaces `navigator.serviceWorker.onmessage`,
   breaking subsequent `sftp get`; leaks `js.FuncOf`. Share one helper and
   honor `StreamHook`.

@@ -303,6 +303,8 @@ func (f *Filter) handleReceive() {
 			f.term.Printf("\x1b[32m[ZMODEM] Received %d file%s successfully.\x1b[0m\r\n", numFiles, s)
 		} else {
 			f.term.Printf("\x1b[31m[ZMODEM] Receive Error: %s\x1b[0m\r\n", termsafe.Text(err.Error()))
+			// Tell the sender to stop.
+			f.stdinW.Write(cancelSeq)
 		}
 	}()
 }
