@@ -335,6 +335,11 @@ func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) er
 	if err := checkCertificate(cert, ssh.HostCert); err != nil {
 		errs = append(errs, err)
 	}
+	if err := checkHostCertPrincipal(cert, hostname); err != nil {
+		errs = append(errs, err)
+	}
+	// Trusting the authority only helps if the certificate itself is valid.
+	certIsValid := len(errs) == 0
 	caFP := ssh.FingerprintSHA256(cert.SignatureKey)
 	caIsTrusted := false
 	ca, exists := a.data.Authorities[caFP]
@@ -369,7 +374,8 @@ func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) er
 	a.term.Printf("Options:\n")
 	a.term.Printf(" 1- Abort the connection (default)\n")
 	a.term.Printf(" 2- Continue, this time only.\n")
-	if !caIsTrusted {
+	canTrustCA := certIsValid && !caIsTrusted
+	if canTrustCA {
 		a.term.Printf(" 3- Continue, and trust this authority in the future.\n")
 	}
 
@@ -377,7 +383,7 @@ func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) er
 	case "2":
 		return nil
 	case "3":
-		if caIsTrusted {
+		if !canTrustCA {
 			return err
 		}
 		if ca, exists := a.data.Authorities[caFP]; exists {

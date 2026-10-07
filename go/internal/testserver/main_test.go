@@ -401,6 +401,11 @@ func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {
 			KeyId:    "test-server",
 			ValidPrincipals: []string{
 				"test-server",
+				"myserver.example.com",
+				// Used by TestJumpHosts.
+				"foo",
+				"bar",
+				"baz",
 			},
 		}
 		if err := cert.SignCert(rand.Reader, authority); err != nil {

@@ -409,8 +409,10 @@ func TestHostCerts(t *testing.T) {
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 
+		// The certificate's principals don't include fooserver.
 		{Type: "ep add fooserver websocket?cert=true\n", Expect: prompt},
-		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*Choice>`},
+		{Type: "ca add-hostname testca fooserver\n", Expect: prompt},
+		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*not valid for hostname "fooserver".*Choice>`},
 		{Type: "\n", Expect: prompt},
 
 		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*Choice>`},
@@ -419,15 +421,21 @@ func TestHostCerts(t *testing.T) {
 		{Wait: time.Second, Type: "\n\n"},
 
 		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*Choice>`},
+		{Type: "3\n", Expect: prompt},
+
+		// The authority isn't trusted for test-server.
+		{Type: "ca remove-hostname testca test-server\n", Expect: prompt},
+		{Type: "ssh testuser@test-server foo\n", Expect: `(?s)Host certificate for test-server is NOT trusted.*3- Continue, and trust this authority.*Choice>`},
 		{Type: "3\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 
-		{Type: "ssh testuser@fooserver foo\n", Expect: "Password: "},
+		{Type: "ssh testuser@test-server foo\n", Expect: `Host certificate for test-server is trusted`},
+		{Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 
-		{Type: "ca list\n", Expect: "fooserver"},
+		{Type: "ca list\n", Expect: "test-server"},
 
 		{Expect: prompt},
 		{Type: "exit\n"},

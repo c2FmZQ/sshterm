@@ -26,6 +26,8 @@ package app
 import (
 	"errors"
 	"fmt"
+	"net"
+	"slices"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -53,4 +55,20 @@ func checkCertificate(cert *ssh.Certificate, certType uint32) error {
 		errs = append(errs, fmt.Errorf("certificate signature is invalid"))
 	}
 	return errors.Join(errs...)
+}
+
+// checkHostCertPrincipal verifies that hostname is one of the certificate's
+// principals. Like OpenSSH, a certificate with no principals is valid for any
+// host.
+func checkHostCertPrincipal(cert *ssh.Certificate, hostname string) error {
+	if len(cert.ValidPrincipals) == 0 {
+		return nil
+	}
+	if h, _, err := net.SplitHostPort(hostname); err == nil {
+		hostname = h
+	}
+	if slices.Contains(cert.ValidPrincipals, hostname) {
+		return nil
+	}
+	return fmt.Errorf("host certificate is not valid for hostname %q", hostname)
 }
