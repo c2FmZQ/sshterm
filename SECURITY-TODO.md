@@ -72,7 +72,7 @@ off as they are fixed. Delete this file once every item is done.
   (`updateCert`). Only send for same-origin URLs; anchor regex.
 - [x] **15. `generateKeys` with `resident: true` re-creates the resident
   credential on every page load.** `go/internal/app/app.go` (`initPresetConfig`).
-- [ ] **16. Service worker message handling hardening.**
+- [x] **16. Service worker message handling hardening.**
   `docroot/stream-helper.js`: use a `Map`, only accept responses from the
   client the request was posted to, match `/stream/` on the path only.
 - [x] **17. Each ZMODEM download creates a new StreamHelper.**
