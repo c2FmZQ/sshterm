@@ -45,6 +45,7 @@ import (
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 	"github.com/c2FmZQ/sshterm/internal/shellwords"
+	"github.com/c2FmZQ/sshterm/internal/termsafe"
 )
 
 func (a *App) sftpCommand() *cli.App {
@@ -117,7 +118,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 		if strings.HasPrefix(dir, homeDir) {
 			dir = "~" + dir[len(homeDir):]
 		}
-		prompt = fmt.Sprintf("\x1b[1;34m%s\x1b[1;32m sftp> \x1b[0m", dir)
+		prompt = fmt.Sprintf("\x1b[1;34m%s\x1b[1;32m sftp> \x1b[0m", termsafe.Name(dir))
 		t.SetPrompt(prompt)
 	}
 	setPrompt()
@@ -193,7 +194,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
-				fmt.Fprintf(t, "%s\n", cwd)
+				fmt.Fprintf(t, "%s\n", termsafe.Name(cwd))
 				return nil
 			},
 		},
@@ -437,6 +438,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 						}
 						calls.Add(1)
 					}
+					name = termsafe.Name(name)
 					fmt.Fprintf(t, "%s ", name)
 					if err := a.streamHelper.Download(r, name, size, progress, a.cfg.StreamHook); err != nil {
 						return err
@@ -478,7 +480,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 				for _, arg := range args {
 					info, err := client.Lstat(joinPath(cwd, arg))
 					if err != nil {
-						fmt.Fprintf(t, "%q: %v\n", arg, err)
+						fmt.Fprintf(t, "%q: %s\n", arg, termsafe.Text(err.Error()))
 						continue
 					}
 					if info.IsDir() || (info.Mode()&os.ModeSymlink != 0 && strings.HasSuffix(arg, "/")) {
@@ -501,7 +503,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 						var extra string
 						if f.Mode()&os.ModeSymlink != 0 {
 							if link, err := client.ReadLink(joinPath(cwd, f.name)); err == nil {
-								extra = " -> " + link
+								extra = " -> " + termsafe.Name(link)
 							}
 						}
 						var ts string
@@ -515,7 +517,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 							uid = st.UID
 							gid = st.GID
 						}
-						fmt.Fprintf(t, "%s %*d %*d %*d %s %s%s\n", f.Mode(), szUID, uid, szGID, gid, szSize, f.Size(), ts, f.name, extra)
+						fmt.Fprintf(t, "%s %*d %*d %*d %s %s%s\n", f.Mode(), szUID, uid, szGID, gid, szSize, f.Size(), ts, termsafe.Name(f.name), extra)
 					}
 				}
 				shortFormat := func(files []file) {
@@ -529,9 +531,9 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 					step := max(a.term.Cols()/w, 1)
 					for i, f := range files {
 						if (i+1)%step == 0 || i == len(files)-1 {
-							fmt.Fprintf(t, "%s\n", f.name)
+							fmt.Fprintf(t, "%s\n", termsafe.Name(f.name))
 						} else {
-							fmt.Fprintf(t, "%*s", -w, f.name)
+							fmt.Fprintf(t, "%*s", -w, termsafe.Name(f.name))
 						}
 					}
 				}
@@ -553,12 +555,12 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 					}
 					haveOutput = true
 					if len(files)+len(dirs) > 1 {
-						fmt.Fprintf(t, "%s:\n", d.name)
+						fmt.Fprintf(t, "%s:\n", termsafe.Name(d.name))
 					}
 					var files []file
 					ll, err := client.ReadDirContext(ctx.Context, joinPath(cwd, d.name))
 					if err != nil {
-						fmt.Fprintf(t, "%q: %v\n", d.name, err)
+						fmt.Fprintf(t, "%q: %s\n", d.name, termsafe.Text(err.Error()))
 						continue
 					}
 					for _, info := range ll {
@@ -627,7 +629,8 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 				} else if dirOnly {
 					continue
 				}
-				if strings.HasPrefix(name, last) {
+				// Skip names that can't be displayed safely.
+				if strings.HasPrefix(name, last) && termsafe.Name(name) == name {
 					words = append(words, name)
 				}
 			}
@@ -675,7 +678,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			for _, f := range files {
 				a.term.Printf("%s ", f.Name)
 				if err := a.sftpUploadFile(client, f, joinPath(cwd, f.Name)); err != nil {
-					a.term.Errorf("drop: %v", err)
+					a.term.Errorf("drop: %s", termsafe.Text(err.Error()))
 					return
 				}
 			}
@@ -754,7 +757,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			jsutil.TryCatch(
 				func() { // try
 					if err := cmd.RunContext(ctx, args); err != nil {
-						fmt.Fprintf(t, "%v\n", err)
+						fmt.Fprintf(t, "%s\n", termsafe.Text(err.Error()))
 					}
 				},
 				func(err any) { // catch

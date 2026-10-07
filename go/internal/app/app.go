@@ -45,6 +45,7 @@ import (
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 	"github.com/c2FmZQ/sshterm/internal/shellwords"
 	"github.com/c2FmZQ/sshterm/internal/terminal"
+	"github.com/c2FmZQ/sshterm/internal/termsafe"
 )
 
 var backupMagic = []byte{0xe2, 0x9b, 0x94, '0'}
@@ -317,7 +318,7 @@ func (a *App) Run() error {
 				}
 				target := username + "@" + a.cfg.AutoConnect.Hostname
 				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent, a.cfg.AutoConnect.JumpHosts, a.cfg.AutoConnect.ZModem); err != nil {
-					t.Errorf("%v", err)
+					t.Errorf("%s", termsafe.Text(err.Error()))
 				}
 			},
 			func(err any) { // catch
@@ -427,7 +428,8 @@ func (a *App) Run() error {
 						if errors.Is(err, context.Canceled) {
 							t.Errorf("Aborted")
 						} else {
-							t.Errorf("%v", err)
+							// Errors may contain text from the remote server.
+							t.Errorf("%s", termsafe.Text(err.Error()))
 						}
 					}
 				},

@@ -571,6 +571,14 @@ func TestSFTP(t *testing.T) {
 		{Type: "rm test/*\n", Expect: "sftp> "},
 		{Type: "rmdir test\n", Expect: "sftp> "},
 		{Type: "ls -l test\n", Expect: `(?s)"test": file does not exist.*sftp> `},
+	})
+
+	// File names from the server are sanitized.
+	fileUploader.enqueue("evil\x1b[31m.txt", "text/plain", int64(len(txt)), txt)
+	script(t, []line{
+		{Type: "put\n", Expect: "100%"},
+		{Type: "ls\n", Expect: `(?s)evil\?\[31m\.txt.*sftp> `},
+		{Type: "rm evil*\n", Expect: "sftp> "},
 		{Type: "exit\n"},
 
 		{Expect: prompt},

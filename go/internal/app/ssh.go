@@ -40,6 +40,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
+	"github.com/c2FmZQ/sshterm/internal/termsafe"
 	"github.com/c2FmZQ/sshterm/internal/websocket"
 )
 
@@ -286,14 +287,14 @@ func (a *App) sshClientFromConn(ctx context.Context, c net.Conn, username, hostn
 			ssh.RetryableAuthMethod(ssh.KeyboardInteractive(
 				func(name, instruction string, questions []string, echos []bool) ([]string, error) {
 					if name != "" {
-						t.Printf("%s\n", maskControl(name))
+						t.Printf("%s\n", termsafe.Text(name))
 					}
 					if instruction != "" {
-						t.Printf("%s\n", maskControl(instruction))
+						t.Printf("%s\n", termsafe.Text(instruction))
 					}
 					ans := make([]string, len(questions))
 					for i, q := range questions {
-						q := fmt.Sprintf("%s[%s]%s %s", t.Escape.Green, hostname, t.Escape.Reset, maskControl(q))
+						q := fmt.Sprintf("%s[%s]%s %s", t.Escape.Green, hostname, t.Escape.Reset, termsafe.Text(q))
 						var err error
 						if echos[i] {
 							ans[i], err = t.Prompt(q)
@@ -316,7 +317,7 @@ func (a *App) sshClientFromConn(ctx context.Context, c net.Conn, username, hostn
 			return a.hostKeyCallback(hostname, key)
 		},
 		BannerCallback: func(message string) error {
-			t.Printf("%s\n", message)
+			t.Printf("%s\n", termsafe.Text(message))
 			return nil
 		},
 	})
@@ -443,17 +444,6 @@ func (a *App) hostKeyCallback(hostname string, key ssh.PublicKey) error {
 	default:
 		return errors.New("host key rejected by user")
 	}
-}
-
-func maskControl(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r == '\t' || r == '\n' || r >= ' ':
-			return r
-		default:
-			return '#'
-		}
-	}, s)
 }
 
 func sshKeepAlive(ctx context.Context, client *ssh.Client, cancel context.CancelCauseFunc) {

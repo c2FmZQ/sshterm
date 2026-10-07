@@ -227,3 +227,88 @@ func TestZmodemFilterUploadConsent(t *testing.T) {
 	default:
 	}
 }
+
+func TestZmodemFilterSanitizesName(t *testing.T) {
+	inR, inW := io.Pipe()
+	defer inW.Close()
+	term := &mockTerminal{Reader: inR}
+	gotName := make(chan string, 1)
+	download := func(name string, size int64, r io.Reader) error {
+		io.ReadAll(r)
+		gotName <- name
+		return nil
+	}
+	filter := New(term, download, nil)
+
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for !strings.Contains(term.String(), "[y/N]") && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		inW.Write([]byte("y"))
+	}()
+
+	// Like an SSH session, read the filter's output continuously.
+	replies := &chanReader{ch: make(chan []byte, 100)}
+	go func() {
+		for {
+			buf := make([]byte, 1024)
+			n, err := filter.Read(buf)
+			if n > 0 {
+				replies.ch <- buf[:n]
+			}
+			if err != nil {
+				close(replies.ch)
+				return
+			}
+		}
+	}()
+
+	data := []byte("hello")
+	files := []*File{{Name: "\x1b[2Jevil\u202etxt.exe", Size: int64(len(data)), R: io.NopCloser(bytes.NewReader(data))}}
+	sendErr := make(chan error, 1)
+	go func() {
+		// Like sz, start with ZRQINIT.
+		if err := writeHexHeader(filter, header{Type: zRQINIT}); err != nil {
+			sendErr <- err
+			return
+		}
+		sendErr <- send(struct {
+			io.Reader
+			io.Writer
+		}{replies, filter}, files, nil)
+	}()
+
+	select {
+	case name := <-gotName:
+		if want := "?[2Jevil?txt.exe"; name != want {
+			t.Errorf("name = %q, want %q", name, want)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out. Terminal: %q", term.String())
+	}
+	if err := <-sendErr; err != nil {
+		t.Errorf("send: %v", err)
+	}
+	if out := term.String(); strings.Contains(out, "\x1b[2J") || strings.Contains(out, "\u202e") {
+		t.Errorf("unsafe name written to terminal: %q", out)
+	}
+}
+
+type chanReader struct {
+	ch  chan []byte
+	buf []byte
+}
+
+func (r *chanReader) Read(p []byte) (int, error) {
+	if len(r.buf) == 0 {
+		b, ok := <-r.ch
+		if !ok {
+			return 0, io.EOF
+		}
+		r.buf = b
+	}
+	n := copy(p, r.buf)
+	r.buf = r.buf[n:]
+	return n, nil
+}

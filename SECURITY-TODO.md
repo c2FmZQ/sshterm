@@ -32,7 +32,7 @@ off as they are fixed. Delete this file once every item is done.
   `new Response` throws on non-ByteString header; promise never settles and
   `Download` blocks forever. Use `filename*=UTF-8''…` with ASCII fallback;
   try/catch in the service worker; don't wait forever.
-- [ ] **5. Server-controlled strings written to the terminal unescaped.**
+- [x] **5. Server-controlled strings written to the terminal unescaped.**
   SSH banner (`ssh.go` `BannerCallback`), SFTP `ls` names and symlink targets
   (`sftp.go`), ZMODEM file names (`zmodem/filter.go`). Mask control chars (and
   bidi overrides) before printing and before using as download names.

@@ -27,6 +27,8 @@ import (
 	"bytes"
 	"io"
 	"sync"
+
+	"github.com/c2FmZQ/sshterm/internal/termsafe"
 )
 
 // TerminalPrinter is the interface that the terminal must implement.
@@ -285,6 +287,8 @@ func (f *Filter) handleReceive() {
 			if size == 1 {
 				s = ""
 			}
+			// The name comes from the remote side.
+			name = termsafe.Name(name)
 			f.term.Printf("\x1b[36m[ZMODEM] Receiving %s (%d byte%s)...\x1b[0m\r\n", name, size, s)
 			return f.download(name, size, rc)
 		})
@@ -298,7 +302,7 @@ func (f *Filter) handleReceive() {
 		if err == nil {
 			f.term.Printf("\x1b[32m[ZMODEM] Received %d file%s successfully.\x1b[0m\r\n", numFiles, s)
 		} else {
-			f.term.Printf("\x1b[31m[ZMODEM] Receive Error: %v\x1b[0m\r\n", err)
+			f.term.Printf("\x1b[31m[ZMODEM] Receive Error: %s\x1b[0m\r\n", termsafe.Text(err.Error()))
 		}
 	}()
 }
@@ -352,7 +356,7 @@ func (f *Filter) handleSend() {
 		f.finish(pr)
 
 		if err != nil {
-			f.term.Printf("\x1b[31m[ZMODEM] Send Error: %v\x1b[0m\r\n", err)
+			f.term.Printf("\x1b[31m[ZMODEM] Send Error: %s\x1b[0m\r\n", termsafe.Text(err.Error()))
 		} else {
 			f.term.Printf("\x1b[32m[ZMODEM] Sent %d file%s successfully.\x1b[0m\r\n", len(files), s)
 		}
