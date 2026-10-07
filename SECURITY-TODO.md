@@ -44,7 +44,7 @@ off as they are fixed. Delete this file once every item is done.
   `docroot/index.html`. Document/serve CSP as an HTTP header with
   `frame-ancestors 'none'`; add `base-uri 'none'; form-action 'none'`; replace
   `'unsafe-eval'` with `'wasm-unsafe-eval'`. Add a frame-busting check if needed.
-- [ ] **8. Paste can break out of bracketed paste mode.**
+- [x] **8. Paste can break out of bracketed paste mode.**
   `docroot/ssh.mjs` (right/middle-click paste), xterm 5.5 paste path. Strip
   `ESC` (at least `ESC[201~`) from pasted text.
 - [ ] **9. Crafted local files crash or hang the app.**
