@@ -1,5 +1,34 @@
 # SSH Term Release Notes
 
+## next
+
+### :lock: Security fixes
+
+This release fixes a number of issues found in a security review. Some of them change the app's behavior:
+
+* Host certificates are now only trusted when the hostname is one of the certificate's principals. Before, a certificate signed by a trusted authority was accepted for any hostname that the authority was trusted for, so any host with a valid certificate could impersonate the others. Like OpenSSH, a certificate with no principals is valid for any host.
+  * When connecting to an endpoint, the hostname is the endpoint's name, e.g. `myserver` in `ep add myserver <url>`. Endpoint names must match the principals in the host certificates.
+* ZMODEM transfers must now be confirmed before they start. Before, any output containing a ZMODEM header, e.g. `cat` of a file, could save files to the Downloads folder or open the file picker.
+  * ZMODEM downloads now require the service worker, like `sftp get`.
+* With agent forwarding (`ssh -A`), each signature request from the remote host is shown in the terminal. The remote host can no longer lock, unlock, or remove keys from the agent.
+* Text from remote servers is sanitized before it is displayed: SSH banners, host certificate details, SFTP file names, ZMODEM file names, and error messages. Like OpenSSH, banners are now displayed without colors. File names with control characters are shown with `?`.
+* Escape characters are removed from pasted text, so that text copied from a malicious web page can't end bracketed paste mode early and run commands.
+* SSH Term now refuses to run inside a frame. The README has the HTTP headers that deployments should also set when they can.
+* The Content Security Policy uses `'wasm-unsafe-eval'` instead of `'unsafe-eval'`. SSH Term now requires Chrome 97, Firefox 102, Safari 16, or newer.
+* Database backups now use 600,000 PBKDF2 iterations by default, and `db backup --iter` must be at least 100,000. Existing backups can still be restored.
+* Keys from `generateKeys` in `config.json` are no longer re-generated when they already exist. Before, they were re-generated on every page load, and resident keys were replaced on the security key each time.
+
+### :wrench: Bug fixes
+
+* Fix crashes and hangs caused by unexpected input:
+  * SFTP transfers of empty files, or of files whose size is reported as 0 by the server, e.g. in `/proc`.
+  * Downloads of files with non-ASCII names.
+  * Malformed WebAuthn key files and backup files.
+  * Invalid endpoint URLs and unexpected WebSocket messages.
+* Only send the tlsproxy CSRF token to identity providers on the same origin.
+* Harden the stream helper service worker.
+* Fix `sftp get` after a ZMODEM download.
+
 ## v0.10.0
 
 ### :star: Feature improvements
