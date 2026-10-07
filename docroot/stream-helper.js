@@ -38,7 +38,8 @@ function makeResponse(data) {
     if (data.body instanceof ReadableStream) {
       data.body.cancel(err);
     }
-    return new Response(String(err), {'status': 500, 'statusText': 'Internal Server Error'});
+    console.error('makeResponse failed:', err);
+    return new Response('Internal Server Error', {'status': 500, 'statusText': 'Internal Server Error'});
   }
 }
 
