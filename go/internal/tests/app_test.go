@@ -380,6 +380,23 @@ func TestDownload(t *testing.T) {
 		t.Errorf("content = %q, want empty", file.Content)
 	}
 
+	// Non-ASCII file name.
+	txt = []byte("Hello €!")
+	fileUploader.enqueue("héllo-€.txt", "text/plain", int64(len(txt)), txt)
+	downloadCh = fileDownloader.wait()
+	script(t, []line{
+		{Type: "put\n", Expect: "100%"},
+		{Type: "get héllo-€.txt\n", Expect: "100%"},
+		{Expect: "sftp> "},
+	})
+	file = <-downloadCh
+	if got, want := file.Name, "héllo-€.txt"; got != want {
+		t.Errorf("filename = %q, want %q", got, want)
+	}
+	if got, want := string(file.Content), string(txt); got != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+
 	// The server reports a size of 0 for files in /proc, even though they
 	// have content.
 	downloadCh = fileDownloader.wait()

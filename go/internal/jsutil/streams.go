@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"sync"
 	"sync/atomic"
 	"syscall/js"
@@ -252,7 +253,9 @@ func (h *StreamHelper) Download(rc io.ReadCloser, filename string, size int64, p
 		return errors.New("streaming download unavailable")
 	}
 	hdr := map[string]any{
-		"Content-Disposition": fmt.Sprintf("attachment; filename=%q", filename),
+		// FormatMediaType uses RFC 2231 encoding for non-ASCII names.
+		// Header values must be ASCII.
+		"Content-Disposition": mime.FormatMediaType("attachment", map[string]string{"filename": filename}),
 		"Cache-Control":       "no-store",
 		"Content-Type":        "application/octet-stream",
 	}

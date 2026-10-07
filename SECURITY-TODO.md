@@ -27,7 +27,7 @@ off as they are fixed. Delete this file once every item is done.
   `go/internal/app/sftp.go` (`get` progress, `sftpUploadFile`). Server-reported
   size 0 for a non-empty file panics in the stream `pull` goroutine (no
   recover → WASM exits). Dropping an empty file in sftp crashes too.
-- [ ] **4. Downloads hang on non-Latin-1 filenames.**
+- [x] **4. Downloads hang on non-Latin-1 filenames.**
   `go/internal/jsutil/streams.go` (`filename=%q`), `docroot/stream-helper.js`.
   `new Response` throws on non-ByteString header; promise never settles and
   `Download` blocks forever. Use `filename*=UTF-8''…` with ASCII fallback;

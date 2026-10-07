@@ -32,7 +32,14 @@ function makeResponse(data) {
   if (!data || !data.body) {
     return new Response('Errrrr!', {'status': 500, 'statusText': 'Internal Server Error'});
   }
-  return new Response(data.body, data.options);
+  try {
+    return new Response(data.body, data.options);
+  } catch (err) {
+    if (data.body instanceof ReadableStream) {
+      data.body.cancel(err);
+    }
+    return new Response(String(err), {'status': 500, 'statusText': 'Internal Server Error'});
+  }
 }
 
 let appStreams = {};
