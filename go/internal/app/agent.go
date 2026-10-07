@@ -241,8 +241,8 @@ func (r *keyRing) List() ([]*agent.Key, error) {
 
 func (r *keyRing) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.locked {
+		r.mu.Unlock()
 		return nil, errAgentLocked
 	}
 	v := key.Marshal()
@@ -250,9 +250,14 @@ func (r *keyRing) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 		return bytes.Equal(v, k.signer.PublicKey().Marshal())
 	})
 	if i < 0 {
+		r.mu.Unlock()
 		return nil, errAgentKeyNotFound
 	}
-	return r.keys[i].signer.Sign(rand.Reader, data)
+	signer := r.keys[i].signer
+	// Don't hold the lock while signing. With WebAuthn keys, Sign waits for
+	// the user to touch the security key.
+	r.mu.Unlock()
+	return signer.Sign(rand.Reader, data)
 }
 
 func (r *keyRing) AddSigner(signer ssh.Signer, comment string) error {
@@ -360,4 +365,60 @@ func (r *keyRing) Signers() ([]ssh.Signer, error) {
 		out = append(out, k.signer)
 	}
 	return out, nil
+}
+
+var errForwardedAgent = errors.New("operation not permitted on forwarded agent")
+
+// forwardedAgent is the view of the agent that is forwarded to a remote
+// host. The remote host can only list the keys and request signatures. The
+// user is notified of each signature request.
+type forwardedAgent struct {
+	agent  agent.Agent
+	host   string
+	notify func(format string, args ...any)
+}
+
+var _ agent.Agent = (*forwardedAgent)(nil)
+
+func (f *forwardedAgent) List() ([]*agent.Key, error) {
+	return f.agent.List()
+}
+
+func (f *forwardedAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
+	name := ssh.FingerprintSHA256(key)
+	if keys, err := f.agent.List(); err == nil {
+		v := key.Marshal()
+		for _, k := range keys {
+			if bytes.Equal(v, k.Blob) {
+				name = k.Comment
+				break
+			}
+		}
+	}
+	f.notify("[agent] %s requested a signature with key %q\n", f.host, name)
+	return f.agent.Sign(key, data)
+}
+
+func (f *forwardedAgent) Add(key agent.AddedKey) error {
+	return errForwardedAgent
+}
+
+func (f *forwardedAgent) Remove(key ssh.PublicKey) error {
+	return errForwardedAgent
+}
+
+func (f *forwardedAgent) RemoveAll() error {
+	return errForwardedAgent
+}
+
+func (f *forwardedAgent) Lock(passphrase []byte) error {
+	return errForwardedAgent
+}
+
+func (f *forwardedAgent) Unlock(passphrase []byte) error {
+	return errForwardedAgent
+}
+
+func (f *forwardedAgent) Signers() ([]ssh.Signer, error) {
+	return nil, errForwardedAgent
 }

@@ -120,7 +120,13 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	}()
 
 	if forwardAgent {
-		if err := agent.ForwardToAgent(client, globalAgent); err != nil {
+		_, hostname, _ := parseUserHost(target)
+		fwd := &forwardedAgent{
+			agent:  globalAgent,
+			host:   hostname,
+			notify: t.Printf,
+		}
+		if err := agent.ForwardToAgent(client, fwd); err != nil {
 			return fmt.Errorf("agent.ForwardToAgent: %w", err)
 		}
 		if err := agent.RequestAgentForwarding(session); err != nil {

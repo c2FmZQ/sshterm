@@ -36,7 +36,7 @@ off as they are fixed. Delete this file once every item is done.
   SSH banner (`ssh.go` `BannerCallback`), SFTP `ls` names and symlink targets
   (`sftp.go`), ZMODEM file names (`zmodem/filter.go`). Mask control chars (and
   bidi overrides) before printing and before using as download names.
-- [ ] **6. Forwarded-agent sign requests give no context; mutex held during WebAuthn.**
+- [x] **6. Forwarded-agent sign requests give no context; mutex held during WebAuthn.**
   `go/internal/app/agent.go` (`keyRing.Sign`), `go/internal/webauthnsk/key.go`.
   Print which key is being used for a forwarded request before prompting;
   don't hold `r.mu` for the duration of the WebAuthn call.
@@ -64,8 +64,9 @@ off as they are fixed. Delete this file once every item is done.
 
 - [ ] **12. Weak backup KDF defaults.** `go/internal/app/db.go`: 50k
   PBKDF2-SHA256 by default, `--iter 0` accepted. Raise default / enforce minimum.
-- [ ] **13. Agent unlock can be brute-forced by forwarded remote.**
+- [x] **13. Agent unlock can be brute-forced by forwarded remote.**
   `go/internal/app/agent.go` (`Unlock`): add a delay on failure.
+  Fixed with #6: the forwarded agent no longer allows Lock/Unlock.
 - [ ] **14. CSRF token sent to any identity-provider URL; cookie regex unanchored.**
   `go/internal/jsutil/jsutil.go` (`TLSProxySID`), `go/internal/app/keys.go`
   (`updateCert`). Only send for same-origin URLs; anchor regex.

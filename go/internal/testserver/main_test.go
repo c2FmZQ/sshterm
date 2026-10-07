@@ -55,6 +55,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -467,7 +468,7 @@ func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {
 }
 
 func (s *sshServer) handle(nConn net.Conn) error {
-	_, chans, reqs, err := ssh.NewServerConn(nConn, s.config)
+	sconn, chans, reqs, err := ssh.NewServerConn(nConn, s.config)
 	if err != nil {
 		return err
 	}
@@ -487,7 +488,7 @@ func (s *sshServer) handle(nConn net.Conn) error {
 		case "direct-tcpip":
 			s.handleDirectTCPIP(&wg, newChannel)
 		case "session":
-			s.handleSession(&wg, newChannel)
+			s.handleSession(&wg, sconn, newChannel)
 		default:
 			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
 		}
@@ -534,7 +535,7 @@ func (s *sshServer) handleDirectTCPIP(wg *sync.WaitGroup, newChannel ssh.NewChan
 	s.handle(fakeConn{channel})
 }
 
-func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel) {
+func (s *sshServer) handleSession(wg *sync.WaitGroup, sconn *ssh.ServerConn, newChannel ssh.NewChannel) {
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
 		s.t.Errorf("Could not accept channel: %v", err)
@@ -543,9 +544,14 @@ func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel)
 	wg.Add(1)
 	go func(in <-chan *ssh.Request) {
 		defer wg.Done()
+		var agentForwarded bool
 		for req := range in {
 			s.t.Logf("request type: %s", req.Type)
 			switch req.Type {
+			case "auth-agent-req@openssh.com":
+				agentForwarded = true
+				req.Reply(true, nil)
+
 			case "shell":
 				req.Reply(true, nil)
 				term := terminal.NewTerminal(channel, "remote> ")
@@ -567,7 +573,9 @@ func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel)
 
 			case "exec":
 				req.Reply(true, nil)
-				if len(req.Payload) > 4 {
+				if len(req.Payload) > 4 && string(req.Payload[4:]) == "agent-test" {
+					s.agentTest(channel, sconn, agentForwarded)
+				} else if len(req.Payload) > 4 {
 					fmt.Fprintf(channel, "exec: %s\n", req.Payload[4:])
 				}
 				channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
@@ -602,4 +610,33 @@ func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel)
 			}
 		}
 	}(requests)
+}
+
+// agentTest uses the forwarded agent and reports what happened.
+func (s *sshServer) agentTest(w io.Writer, sconn *ssh.ServerConn, forwarded bool) {
+	if !forwarded {
+		fmt.Fprintf(w, "agent-test: agent not forwarded\n")
+		return
+	}
+	ch, reqs, err := sconn.OpenChannel("auth-agent@openssh.com", nil)
+	if err != nil {
+		fmt.Fprintf(w, "agent-test: %v\n", err)
+		return
+	}
+	defer ch.Close()
+	go ssh.DiscardRequests(reqs)
+	client := agent.NewClient(ch)
+	keys, err := client.List()
+	if err != nil || len(keys) == 0 {
+		fmt.Fprintf(w, "agent-test: list: %d keys, %v\n", len(keys), err)
+		return
+	}
+	fmt.Fprintf(w, "agent-test: list: %d keys\n", len(keys))
+	if _, err := client.Sign(keys[0], []byte("data")); err != nil {
+		fmt.Fprintf(w, "agent-test: sign: %v\n", err)
+	} else {
+		fmt.Fprintf(w, "agent-test: sign: ok\n")
+	}
+	fmt.Fprintf(w, "agent-test: lock: %v\n", client.Lock([]byte("x")))
+	fmt.Fprintf(w, "agent-test: removeall: %v\n", client.RemoveAll())
 }

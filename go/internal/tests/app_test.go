@@ -315,6 +315,12 @@ func TestSSH(t *testing.T) {
 		{Type: "ssh testuser@test-server foo bar\n", Expect: "exec: foo bar"},
 		{Wait: time.Second, Type: "\n\n"},
 
+		// The forwarded agent can only list keys and sign.
+		{Type: "ssh -A testuser@test-server agent-test\n", Expect: `\[agent\] test-server requested a signature with key "test"`},
+		{Expect: `(?s)agent-test: sign: ok.*agent-test: lock: agent: failure.*agent-test: removeall: agent: failure`},
+		{Wait: time.Second, Type: "\n\n"},
+		{Type: "agent list\n", Expect: `(?s)test .*sshterm> `},
+
 		{Type: "sftp testuser@test-server\n", Expect: "sftp> "},
 		{Type: "put .\n", Expect: "100%"},
 		{Type: "exit\n"},
