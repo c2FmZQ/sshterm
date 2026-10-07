@@ -122,6 +122,7 @@ Here is an example with explanations of the fields:
 *   `endpoints`: Pre-defines WebSocket endpoints, equivalent to using the `ep add` command.
     *   `name`: A friendly name for the endpoint.
     *   `url`: The WebSocket URL (e.g., `wss://ssh.example.com/proxy` or a relative path `./proxy`).
+    *   `hostname`: The server's hostname, used to validate host certificates. Defaults to `name`.
 *   `hosts`: Pre-defines known host keys to avoid interactive prompts.
     *   `name`: The hostname of the server.
     *   `key`: The public key of the host.
@@ -239,7 +240,8 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 #### Endpoint Management (`ep`)
 
 *   `ep list` - Lists all configured server endpoints.
-*   `ep add <name> <url>` - Adds a new server endpoint.
+*   `ep add [--hostname <hostname>] <name> <url>` - Adds a new server endpoint.
+    *   `--hostname <hostname>`: The server's hostname. Host certificates must list it as a principal. Defaults to `<name>`.
 *   `ep delete <name>` - Deletes a server endpoint.
 
 #### SSH Agent Management (`agent`)

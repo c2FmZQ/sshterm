@@ -154,9 +154,20 @@ type authority struct {
 }
 
 type endpoint struct {
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	HostKey []byte `json:"hostKey,omitempty"` // deprecated
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// Hostname is the server's real hostname, used to validate host
+	// certificates. If empty, Name is used.
+	Hostname string `json:"hostname,omitempty"`
+	HostKey  []byte `json:"hostKey,omitempty"` // deprecated
+}
+
+// certHostname returns the hostname that host certificates must be valid for.
+func (ep *endpoint) certHostname() string {
+	if ep.Hostname != "" {
+		return ep.Hostname
+	}
+	return ep.Name
 }
 
 type host struct {
@@ -175,7 +186,12 @@ func (a *App) initPresetConfig() error {
 		}
 	}
 	for i, ep := range a.cfg.Endpoints {
-		if err := a.addEndpoint(ep.Name, ep.URL); err != nil {
+		hostname := ep.Hostname
+		// Keep the hostname that the user set, unless the config has one.
+		if old, exists := a.data.Endpoints[ep.Name]; exists && hostname == "" {
+			hostname = old.Hostname
+		}
+		if err := a.addEndpoint(ep.Name, ep.URL, hostname); err != nil {
 			return fmt.Errorf("endpoints[%d]: %w", i, err)
 		}
 	}

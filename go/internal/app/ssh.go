@@ -33,6 +33,7 @@ import (
 	"io"
 	"net"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -236,7 +237,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 	}
 	context.AfterFunc(ctx, func() { ws.Close() })
 
-	client, err := a.sshClientFromConn(ctx, ws, hops[0].u, hops[0].h, signers)
+	client, err := a.sshClientFromConn(ctx, ws, hops[0].u, hops[0].h, ep, signers)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +254,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 		}
 		a.term.Printf("✅\n")
 		context.AfterFunc(ctx, func() { conn.Close() })
-		if client, err = a.sshClientFromConn(ctx, conn, hops[i].u, hops[i].h, signers); err != nil {
+		if client, err = a.sshClientFromConn(ctx, conn, hops[i].u, hops[i].h, nil, signers); err != nil {
 			return nil, err
 		}
 	}
@@ -284,7 +285,9 @@ func (a *App) sshSigners(keyName string) ([]ssh.Signer, error) {
 	return signers, nil
 }
 
-func (a *App) sshClientFromConn(ctx context.Context, c net.Conn, username, hostname string, signers []ssh.Signer) (*ssh.Client, error) {
+// sshClientFromConn creates an SSH client using an existing connection. ep is
+// the endpoint used for the connection, if any.
+func (a *App) sshClientFromConn(ctx context.Context, c net.Conn, username, hostname string, ep *endpoint, signers []ssh.Signer) (*ssh.Client, error) {
 	t := a.term
 	conn, chans, reqs, err := ssh.NewClientConn(c, hostname, &ssh.ClientConfig{
 		User: username,
@@ -318,7 +321,7 @@ func (a *App) sshClientFromConn(ctx context.Context, c net.Conn, username, hostn
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			cert, ok := key.(*ssh.Certificate)
 			if ok {
-				return a.hostCertificateCallback(hostname, cert)
+				return a.hostCertificateCallback(hostname, ep, cert)
 			}
 			return a.hostKeyCallback(hostname, key)
 		},
@@ -337,65 +340,97 @@ func (a *App) sshClientFromConn(ctx context.Context, c net.Conn, username, hostn
 	return ssh.NewClient(conn, chans, reqs), nil
 }
 
-func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) error {
+func (a *App) hostCertificateCallback(hostname string, ep *endpoint, cert *ssh.Certificate) error {
+	// The certificate must be valid for the endpoint's hostname, which may
+	// be different from the name used to connect.
+	certHostname := hostname
+	if ep != nil {
+		certHostname = ep.certHostname()
+	}
+	displayName := hostname
+	if certHostname != hostname {
+		displayName = fmt.Sprintf("%s (%s)", hostname, certHostname)
+	}
+
 	var errs []error
-	if err := checkCertificate(cert, ssh.HostCert); err != nil {
-		errs = append(errs, err)
+	certErr := checkCertificate(cert, ssh.HostCert)
+	if certErr != nil {
+		errs = append(errs, certErr)
 	}
-	if err := checkHostCertPrincipal(cert, hostname); err != nil {
-		errs = append(errs, err)
+	principalErr := checkHostCertPrincipal(cert, certHostname)
+	if principalErr != nil {
+		errs = append(errs, principalErr)
 	}
-	// Trusting the authority only helps if the certificate itself is valid.
-	certIsValid := len(errs) == 0
 	caFP := ssh.FingerprintSHA256(cert.SignatureKey)
-	caIsTrusted := false
-	ca, exists := a.data.Authorities[caFP]
-	if !exists {
-		errs = append(errs, fmt.Errorf("host certificate is signed by an unknown authority"))
-	} else {
-		ok := false
+	ca, caExists := a.data.Authorities[caFP]
+	// caTrustedFor returns true if the authority is trusted for any of the
+	// names.
+	caTrustedFor := func(names ...string) bool {
+		if !caExists {
+			return false
+		}
 		for _, h := range ca.Hostnames {
-			if matched, err := path.Match(h, hostname); err == nil && matched {
-				ok = true
-				break
+			for _, n := range names {
+				if matched, err := path.Match(h, n); err == nil && matched {
+					return true
+				}
 			}
 		}
-		caIsTrusted = ok
-		if !ok {
-			errs = append(errs, fmt.Errorf("host certificate is signed by an authority that is not trusted for hostname %q", hostname))
-		}
+		return false
+	}
+	caIsTrusted := caTrustedFor(hostname, certHostname)
+	if !caExists {
+		errs = append(errs, fmt.Errorf("host certificate is signed by an unknown authority"))
+	} else if !caIsTrusted {
+		errs = append(errs, fmt.Errorf("host certificate is signed by an authority that is not trusted for hostname %q", certHostname))
 	}
 
 	err := errors.Join(errs...)
 	if err == nil {
-		a.term.Printf("Host certificate for %s is trusted.\n", hostname)
+		a.term.Printf("Host certificate for %s is trusted.\n", displayName)
 		return nil
 	}
 
-	a.term.Printf("Host certificate for %s:\n", hostname)
+	a.term.Printf("Host certificate for %s:\n", displayName)
 	a.printCertificate(cert)
 	a.term.Print("\n")
 
-	a.term.Errorf("Host certificate for %s is NOT trusted:\n  %v\n", hostname, strings.ReplaceAll(err.Error(), "\n", "\n  "))
+	a.term.Errorf("Host certificate for %s is NOT trusted:\n  %v\n", displayName, strings.ReplaceAll(err.Error(), "\n", "\n  "))
 
 	a.term.Printf("Options:\n")
 	a.term.Printf(" 1- Abort the connection (default)\n")
 	a.term.Printf(" 2- Continue, this time only.\n")
-	canTrustCA := certIsValid && !caIsTrusted
+
+	// Trusting the authority only helps if the certificate itself is valid.
+	canTrustCA := certErr == nil && principalErr == nil && !caIsTrusted
 	if canTrustCA {
 		a.term.Printf(" 3- Continue, and trust this authority in the future.\n")
 	}
-
-	switch ans, _ := a.term.Prompt("Choice> "); ans {
-	case "2":
-		return nil
-	case "3":
-		if !canTrustCA {
-			return err
+	// If the only problem is that the certificate is for a different
+	// hostname, offer to use one of its principals as the endpoint's
+	// hostname.
+	var hostnames []string
+	if ep != nil && certErr == nil && principalErr != nil {
+		for _, p := range cert.ValidPrincipals {
+			if strings.ContainsAny(p, "*?[") || termsafe.Name(p) != p {
+				continue
+			}
+			if caTrustedFor(hostname, p) {
+				hostnames = append(hostnames, p)
+			}
 		}
-		if ca, exists := a.data.Authorities[caFP]; exists {
-			ca.Hostnames = append(ca.Hostnames, hostname)
-			a.data.Authorities[caFP] = ca
+	}
+	for i, h := range hostnames {
+		a.term.Printf(" %d- Continue, and set the hostname of endpoint %s to %s.\n", i+3, ep.Name, h)
+	}
+
+	ans, _ := a.term.Prompt("Choice> ")
+	if ans == "2" {
+		return nil
+	}
+	if ans == "3" && canTrustCA {
+		if caExists {
+			ca.Hostnames = append(ca.Hostnames, certHostname)
 			return a.saveAuthorities(true)
 		}
 		a.data.Authorities[caFP] = &authority{
@@ -403,13 +438,17 @@ func (a *App) hostCertificateCallback(hostname string, cert *ssh.Certificate) er
 			Name:        caFP[len(caFP)-8:],
 			Public:      cert.SignatureKey.Marshal(),
 			Hostnames: []string{
-				hostname,
+				certHostname,
 			},
 		}
 		return a.saveAuthorities(true)
-	default:
-		return err
 	}
+	if n, e := strconv.Atoi(ans); e == nil && n >= 3 && n-3 < len(hostnames) {
+		ep.Hostname = hostnames[n-3]
+		a.data.Endpoints[ep.Name] = ep
+		return a.saveEndpoints(true)
+	}
+	return err
 }
 
 func (a *App) hostKeyCallback(hostname string, key ssh.PublicKey) error {

@@ -485,8 +485,30 @@ func TestHostCerts(t *testing.T) {
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 
-		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*Choice>`},
-		{Type: "3\n", Expect: prompt},
+		// Use one of the certificate's principals as the endpoint's hostname.
+		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*` +
+			`3- Continue, and set the hostname of endpoint fooserver to test-server\..*` +
+			`7- Continue, and set the hostname of endpoint fooserver to baz\..*Choice>`},
+		{Type: "3\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+		{Type: "ep list\n", Expect: `fooserver +websocket\?cert=true +test-server `},
+		{Type: "ssh testuser@fooserver foo\n", Expect: `Host certificate for fooserver \(test-server\) is trusted`},
+		{Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// Endpoint with a hostname.
+		{Type: "ep add --hostname=myserver.example.com alias websocket?cert=true\n", Expect: prompt},
+		{Type: "ssh testuser@alias foo\n", Expect: `(?s)Host certificate for alias \(myserver.example.com\) is NOT trusted.*` +
+			`not trusted for hostname "myserver.example.com".*3- Continue, and trust this authority.*Choice>`},
+		{Type: "3\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+		{Type: "ssh testuser@alias foo\n", Expect: `Host certificate for alias \(myserver.example.com\) is trusted`},
+		{Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
 
 		// The authority isn't trusted for test-server.
 		{Type: "ca remove-hostname testca test-server\n", Expect: prompt},

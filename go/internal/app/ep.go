@@ -34,8 +34,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func (a *App) addEndpoint(name, url string) error {
-	a.data.Endpoints[name] = &endpoint{Name: name, URL: url}
+func (a *App) addEndpoint(name, url, hostname string) error {
+	a.data.Endpoints[name] = &endpoint{Name: name, URL: url, Hostname: hostname}
 	return nil
 }
 
@@ -58,14 +58,15 @@ func (a *App) epCommand() *cli.App {
 						return nil
 					}
 					names := make([]string, 0, len(a.data.Endpoints))
-					szName, szURL := 5, 15
+					szName, szURL, szHostname := 5, 15, 8
 					for _, ep := range a.data.Endpoints {
 						names = append(names, ep.Name)
 						szName = max(szName, len(ep.Name))
 						szURL = max(szURL, len(ep.URL))
+						szHostname = max(szHostname, len(ep.Hostname))
 					}
 					sort.Strings(names)
-					a.term.Printf("%*s %*s %s\n", -szName, "Name", -szURL, "URL", "Host key fingerprint")
+					a.term.Printf("%*s %*s %*s %s\n", -szName, "Name", -szURL, "URL", -szHostname, "Hostname", "Host key fingerprint")
 					for _, n := range names {
 						ep := a.data.Endpoints[n]
 						fp := "n/a"
@@ -74,7 +75,11 @@ func (a *App) epCommand() *cli.App {
 								fp = ssh.FingerprintSHA256(key)
 							}
 						}
-						a.term.Printf("%*s %*s %s\n", -szName, ep.Name, -szURL, ep.URL, fp)
+						hostname := ep.Hostname
+						if hostname == "" {
+							hostname = "-"
+						}
+						a.term.Printf("%*s %*s %*s %s\n", -szName, ep.Name, -szURL, ep.URL, -szHostname, hostname, fp)
 					}
 					return nil
 				},
@@ -82,8 +87,14 @@ func (a *App) epCommand() *cli.App {
 			{
 				Name:        "add",
 				Usage:       "Add a new server endpoint",
-				UsageText:   "ep add <name> <url>",
-				Description: "This command adds a server endpoint to the client.\n\nThe value of <name> is used for host certificate validation, and\nshould match one of the principals listed therein (if any). The\n<url> is one that is configured on the proxy, e.g.\nwss://ssh.example.com/myserver.",
+				UsageText:   "ep add [--hostname <hostname>] <name> <url>",
+				Description: "This command adds a server endpoint to the client.\n\nThe <url> is one that is configured on the proxy, e.g.\nwss://ssh.example.com/myserver.\n\nThe server's host certificate, if any, must be valid for <hostname>,\ni.e. <hostname> must be one of the principals listed therein. If\n--hostname isn't set, <name> is used.",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "hostname",
+						Usage: "The server's hostname, used to validate host certificates.",
+					},
+				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.Args().Len() != 2 {
 						cli.ShowSubcommandHelp(ctx)
@@ -94,7 +105,7 @@ func (a *App) epCommand() *cli.App {
 						return errors.New("endpoint name cannot contain \":\"")
 					}
 					url := ctx.Args().Get(1)
-					if err := a.addEndpoint(name, url); err != nil {
+					if err := a.addEndpoint(name, url, ctx.String("hostname")); err != nil {
 						return err
 					}
 					return a.saveEndpoints(true)

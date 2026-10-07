@@ -107,6 +107,10 @@ func TestPresetAuthorities(t *testing.T) {
 			"endpoints": [{
 				"name": "myserver.example.com",
 				"url": "./websocket?cert=true"
+			}, {
+				"name": "myserver",
+				"hostname": "myserver.example.com",
+				"url": "./websocket?cert=true"
 			}]
 		}`),
 		&cfg,
@@ -129,6 +133,13 @@ func TestPresetAuthorities(t *testing.T) {
 		{Type: "ssh testuser@myserver.example.com foo\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
+		{Type: "ssh testuser@myserver foo\n", Expect: `(?s)Host certificate for myserver \(myserver.example.com\) is trusted.*Password: `},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// The hostname set by the user is kept when the config doesn't
+		// have one.
+		{Type: "ep add --hostname=foo myserver.example.com ./websocket?cert=true\n", Expect: prompt},
 
 		{Type: "ca remove-hostname testca *.example.com\n", Expect: prompt},
 		{Type: "ca add-hostname testca foobar\n", Expect: prompt},
@@ -149,6 +160,7 @@ func TestPresetAuthorities(t *testing.T) {
 
 	script(t, []line{
 		{Type: "ca list\n", Expect: `testca ` + regexp.QuoteMeta(fp) + ` \*\.example\.com`},
+		{Type: "ep list\n", Expect: `myserver\.example\.com +\./websocket\?cert=true +foo `},
 		{Type: "ssh testuser@myserver.example.com foo\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},

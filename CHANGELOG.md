@@ -7,7 +7,8 @@
 This release fixes a number of issues found in a security review. Some of them change the app's behavior:
 
 * Host certificates are now only trusted when the hostname is one of the certificate's principals. Before, a certificate signed by a trusted authority was accepted for any hostname that the authority was trusted for, so any host with a valid certificate could impersonate the others. Like OpenSSH, a certificate with no principals is valid for any host.
-  * When connecting to an endpoint, the hostname is the endpoint's name, e.g. `myserver` in `ep add myserver <url>`. Endpoint names must match the principals in the host certificates.
+  * Endpoints have a new optional hostname, which is used to validate host certificates when the endpoint's name is different from the server's hostname, e.g. `ep add --hostname myserver.example.com myserver <url>`, or `"hostname"` in `config.json`. Without it, the endpoint's name is used, as before.
+  * When a host certificate is otherwise trusted but doesn't list the endpoint's hostname, the prompt offers to use one of the certificate's principals as the endpoint's hostname.
 * ZMODEM transfers must now be confirmed before they start. Before, any output containing a ZMODEM header, e.g. `cat` of a file, could save files to the Downloads folder or open the file picker.
   * ZMODEM downloads now require the service worker, like `sftp get`.
 * With agent forwarding (`ssh -A`), each signature request from the remote host is shown in the terminal. The remote host can no longer lock, unlock, or remove keys from the agent.
