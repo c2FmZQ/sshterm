@@ -62,7 +62,7 @@ off as they are fixed. Delete this file once every item is done.
 
 ## Info / hardening
 
-- [ ] **12. Weak backup KDF defaults.** `go/internal/app/db.go`: 50k
+- [x] **12. Weak backup KDF defaults.** `go/internal/app/db.go`: 50k
   PBKDF2-SHA256 by default, `--iter 0` accepted. Raise default / enforce minimum.
 - [x] **13. Agent unlock can be brute-forced by forwarded remote.**
   `go/internal/app/agent.go` (`Unlock`): add a delay on failure.

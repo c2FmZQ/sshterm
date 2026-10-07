@@ -125,7 +125,7 @@ func (a *App) dbCommand() *cli.App {
 				Flags: []cli.Flag{
 					&cli.IntFlag{
 						Name:  "iter",
-						Value: 50000,
+						Value: 600000,
 						Usage: "The number of pbkdf2 iterations.",
 					},
 				},
@@ -133,6 +133,10 @@ func (a *App) dbCommand() *cli.App {
 					if ctx.Args().Len() != 0 {
 						cli.ShowSubcommandHelp(ctx)
 						return nil
+					}
+					iter := ctx.Int("iter")
+					if iter < 100000 || iter > 1000000 {
+						return fmt.Errorf("invalid iter value: must be between 100000 and 1000000")
 					}
 					passphrase, err := a.term.ReadPassword("Enter a passphrase for the backup: ")
 					if err != nil {
@@ -154,10 +158,6 @@ func (a *App) dbCommand() *cli.App {
 					salt := make([]byte, 40)
 					if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 						return fmt.Errorf("rand.ReadFull: %v", err)
-					}
-					iter := ctx.Int("iter")
-					if iter < 0 || iter > 1000000 {
-						return fmt.Errorf("invalid iter value")
 					}
 					copy(salt[:4], backupMagic)
 					binary.BigEndian.PutUint32(salt[12:16], uint32(iter))

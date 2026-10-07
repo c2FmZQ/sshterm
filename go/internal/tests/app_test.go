@@ -27,6 +27,7 @@ package tests
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"net/http"
 	"syscall/js"
@@ -237,6 +238,7 @@ func TestDB(t *testing.T) {
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
 		{Expect: prompt},
+		{Type: "db backup --iter=1000\n", Expect: `(?s)invalid iter value.*sshterm> `},
 		{Type: "db backup\n", Expect: "Enter a passphrase for the backup:"},
 		{Type: "foobar\n", Expect: "Enter the same passphrase:"},
 		{Type: "foobar\n", Expect: prompt},
@@ -247,6 +249,12 @@ func TestDB(t *testing.T) {
 		{Expect: prompt},
 	})
 	file := <-downloadCh
+	if len(file.Content) < 40 {
+		t.Fatalf("backup file too short: %d", len(file.Content))
+	}
+	if got, want := binary.BigEndian.Uint32(file.Content[12:16]), uint32(600000); got != want {
+		t.Errorf("backup iterations = %d, want %d", got, want)
+	}
 
 	fileUploader.enqueue(file.Name, file.Type, int64(len(file.Content)), file.Content)
 
