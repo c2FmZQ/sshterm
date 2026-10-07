@@ -715,7 +715,8 @@ func (k *key) updateCert() error {
 		return err
 	}
 	req.Header.Set("Content-Type", "text/plain")
-	if sid := jsutil.TLSProxySID(); sid != "" {
+	// The CSRF token is only for the proxy that serves this app.
+	if sid := jsutil.TLSProxySID(); sid != "" && jsutil.IsSameOrigin(k.Provider) {
 		req.Header.Set("x-csrf-token", sid)
 	}
 	resp, err := http.DefaultClient.Do(req)

@@ -217,12 +217,28 @@ func ExportFile(data []byte, filename, mimeType string) error {
 }
 
 func TLSProxySID() string {
-	re := regexp.MustCompile(`__tlsproxySid=([^;]*)(;|$)`)
+	re := regexp.MustCompile(`(?:^|;\s*)__tlsproxySid=([^;]*)`)
 	m := re.FindStringSubmatch(Document.Get("cookie").String())
 	if len(m) > 1 {
 		return m[1]
 	}
 	return ""
+}
+
+// IsSameOrigin returns true if url, which may be relative, has the same
+// origin as the current page.
+func IsSameOrigin(url string) (same bool) {
+	TryCatch(
+		func() { // try
+			loc := Document.Get("location")
+			u := URL.New(url, loc.Get("href"))
+			same = u.Get("origin").String() == loc.Get("origin").String()
+		},
+		func(any) { // catch
+			same = false
+		},
+	)
+	return
 }
 
 func Hostname() string {

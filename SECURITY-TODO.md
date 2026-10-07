@@ -67,7 +67,7 @@ off as they are fixed. Delete this file once every item is done.
 - [x] **13. Agent unlock can be brute-forced by forwarded remote.**
   `go/internal/app/agent.go` (`Unlock`): add a delay on failure.
   Fixed with #6: the forwarded agent no longer allows Lock/Unlock.
-- [ ] **14. CSRF token sent to any identity-provider URL; cookie regex unanchored.**
+- [x] **14. CSRF token sent to any identity-provider URL; cookie regex unanchored.**
   `go/internal/jsutil/jsutil.go` (`TLSProxySID`), `go/internal/app/keys.go`
   (`updateCert`). Only send for same-origin URLs; anchor regex.
 - [ ] **15. `generateKeys` with `resident: true` re-creates the resident
