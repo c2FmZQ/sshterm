@@ -59,6 +59,11 @@ type Filter struct {
 	mu     sync.Mutex
 	window [6]byte
 
+	// consent receives the user's answer when a transfer is waiting for
+	// confirmation.
+	consent     chan bool
+	inputClosed bool
+
 	download DownloadFunc
 	upload   UploadFunc
 }
@@ -89,9 +94,19 @@ func New(term TerminalPrinter, download DownloadFunc, upload UploadFunc) *Filter
 			if n > 0 {
 				f.mu.Lock()
 				active := f.active
+				consent := f.consent
+				f.consent = nil
 				f.mu.Unlock()
 
-				if active {
+				if consent != nil {
+					ok := buf[0] == 'y' || buf[0] == 'Y'
+					if ok {
+						f.term.Printf("y\r\n")
+					} else {
+						f.term.Printf("n\r\n")
+					}
+					consent <- ok
+				} else if active {
 					if bytes.Contains(buf[:n], []byte{'\x03'}) { // Ctrl-C
 						f.term.Printf("\x1b[31m[ZMODEM] Transfer aborted by user.\x1b[0m\r\n")
 						f.mu.Lock()
@@ -119,6 +134,14 @@ func New(term TerminalPrinter, download DownloadFunc, upload UploadFunc) *Filter
 				}
 			}
 			if err != nil {
+				f.mu.Lock()
+				f.inputClosed = true
+				consent := f.consent
+				f.consent = nil
+				f.mu.Unlock()
+				if consent != nil {
+					consent <- false
+				}
 				stdinW.CloseWithError(err)
 				break
 			}
@@ -132,6 +155,24 @@ func New(term TerminalPrinter, download DownloadFunc, upload UploadFunc) *Filter
 // session, including user input and ZMODEM protocol responses.
 func (f *Filter) Read(p []byte) (n int, err error) {
 	return f.stdinR.Read(p)
+}
+
+// askConsent asks the user to confirm a transfer requested by the remote
+// side. It returns false if the user declines or if terminal input is closed.
+// Nothing is sent to the remote side until the user answers, so a ZMODEM
+// signature that appears in unrelated output (e.g. cat of a file) doesn't
+// inject protocol replies into the remote session's input.
+func (f *Filter) askConsent(prompt string) bool {
+	ch := make(chan bool, 1)
+	f.mu.Lock()
+	if f.inputClosed {
+		f.mu.Unlock()
+		return false
+	}
+	f.consent = ch
+	f.mu.Unlock()
+	f.term.Printf("\x1b[33m[ZMODEM] %s [y/N] \x1b[0m", prompt)
+	return <-ch
 }
 
 // finish ends a transfer session: it closes the read side of the session pipe
@@ -225,6 +266,13 @@ func (f *Filter) handleReceive() {
 	pr := f.pipeR
 
 	go func() {
+		if !f.askConsent("The remote side wants to send files. Accept?") {
+			f.term.Printf("\x1b[33m[ZMODEM] Receive canceled.\x1b[0m\r\n")
+			f.finish(pr)
+			f.stdinW.Write(cancelSeq)
+			return
+		}
+
 		rw := struct {
 			io.Reader
 			io.Writer
@@ -263,6 +311,13 @@ func (f *Filter) handleSend() {
 	pr := f.pipeR
 
 	go func() {
+		if !f.askConsent("The remote side wants to receive files. Select files to upload?") {
+			f.term.Printf("\x1b[33m[ZMODEM] Send canceled.\x1b[0m\r\n")
+			f.finish(pr)
+			f.stdinW.Write(cancelSeq)
+			return
+		}
+
 		files, err := f.upload()
 		if err != nil || len(files) == 0 {
 			if err != nil {

@@ -205,7 +205,7 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
     *   `-i, --identity <keyname>`: The key to use for authentication.
     *   `-J, --jump-hosts <jump-hosts>`: Connect by going through jump hosts.
     *   `-A, --forward-agent`: Forwards access to the local SSH agent.
-    *   `-z, --zmodem`: Enable ZMODEM support for file transfers (`rz`/`sz`).
+    *   `-z, --zmodem`: Enable ZMODEM support for file transfers (`rz`/`sz`). Each transfer must be confirmed before it starts.
 *   `sftp [options] [user@]hostname` - Starts an interactive SFTP session.
     *   (Options are the same as `ssh`)
 

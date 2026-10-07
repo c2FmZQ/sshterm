@@ -14,7 +14,7 @@ off as they are fixed. Delete this file once every item is done.
 
 ## Medium
 
-- [ ] **2. ZMODEM downloads start without user consent.**
+- [x] **2. ZMODEM downloads start without user consent.**
   `go/internal/zmodem/filter.go`, `go/internal/zmodem/receive.go`,
   `go/internal/app/zmodem.go`. Any output containing `**\x18B00` (cat of a log,
   git log, etc.) starts a receive session and drops attacker-named files into
