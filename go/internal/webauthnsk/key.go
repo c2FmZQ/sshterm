@@ -194,11 +194,23 @@ func Discover(promptTouch func(string)) (*Key, string, error) {
 	return key, userName, nil
 }
 
+const (
+	// defaultIter is the number of PBKDF2 iterations used to encrypt keys.
+	defaultIter = 100000
+	// maxIter is the maximum number of PBKDF2 iterations accepted when
+	// decrypting keys. It protects against crafted files that would hang
+	// the app.
+	maxIter = 1000000
+)
+
 func Unmarshal(priv []byte, name string, rp func(string) (string, error)) (*Key, error) {
 	if !bytes.HasPrefix(priv, []byte("-----BEGIN WEBAUTHN ")) {
 		return nil, errors.New("unexpected key format")
 	}
 	block, _ := pem.Decode(priv)
+	if block == nil {
+		return nil, errors.New("invalid PEM data")
+	}
 	str := cryptobyte.String(block.Bytes)
 	var ver uint8
 	if !str.ReadUint8(&ver) {
@@ -233,6 +245,9 @@ func Unmarshal(priv []byte, name string, rp func(string) (string, error)) (*Key,
 		var numIter uint32
 		if !privBytes.ReadUint32(&numIter) {
 			return nil, errTooShort
+		}
+		if numIter > maxIter {
+			return nil, fmt.Errorf("invalid iteration count %d", numIter)
 		}
 		passphrase, err := rp("Enter the passphrase for " + name + ": ")
 		if err != nil {
@@ -276,6 +291,9 @@ func UnmarshalPublic(pub []byte) (*Key, error) {
 		return nil, fmt.Errorf("unexpected key type %q", data.Name)
 	}
 	x, y := elliptic.Unmarshal(elliptic.P256(), data.Key)
+	if x == nil {
+		return nil, errors.New("invalid public key")
+	}
 	return &Key{
 		typ:  data.Name,
 		rpID: []byte(data.Application),
@@ -307,7 +325,7 @@ func (k *Key) MarshalPrivate(passphrase string) (*pem.Block, error) {
 	}
 	salt := make([]byte, 16)
 	rand.Read(salt)
-	numIter := 100000
+	numIter := defaultIter
 	dk := pbkdf2.Key([]byte(passphrase), salt, numIter, 32, sha256.New)
 	block, err := aes.NewCipher(dk)
 	if err != nil {

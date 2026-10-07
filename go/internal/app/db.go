@@ -196,7 +196,7 @@ func (a *App) dbCommand() *cli.App {
 					if err != nil {
 						return fmt.Errorf("%q: %w", f.Name, err)
 					}
-					if !bytes.Equal(enc[:4], backupMagic) {
+					if len(enc) < 40 || !bytes.Equal(enc[:4], backupMagic) {
 						return fmt.Errorf("invalid backup file")
 					}
 					passphrase, err := a.term.ReadPassword("Enter the passphrase for the backup: ")

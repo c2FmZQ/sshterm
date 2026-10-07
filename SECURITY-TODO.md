@@ -47,7 +47,7 @@ off as they are fixed. Delete this file once every item is done.
 - [x] **8. Paste can break out of bracketed paste mode.**
   `docroot/ssh.mjs` (right/middle-click paste), xterm 5.5 paste path. Strip
   `ESC` (at least `ESC[201~`) from pasted text.
-- [ ] **9. Crafted local files crash or hang the app.**
+- [x] **9. Crafted local files crash or hang the app.**
   `go/internal/webauthnsk/key.go`: nil `pem.Decode` block, nil point from
   `elliptic.Unmarshal`, unbounded PBKDF2 `numIter`.
   `go/internal/app/db.go` restore: `enc[:4]` / `enc[40:]` without length check.
