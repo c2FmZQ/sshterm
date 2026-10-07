@@ -358,13 +358,41 @@ func TestDownload(t *testing.T) {
 
 		{Type: "get hello-again.txt\n", Expect: "100%"},
 		{Expect: "sftp> "},
+	})
+	file := <-downloadCh
+	if got, want := file.Name, "hello-again.txt"; got != want {
+		t.Errorf("filename = %q, want %q", got, want)
+	}
+
+	// Empty file.
+	fileUploader.enqueue("empty.txt", "text/plain", 0, nil)
+	downloadCh = fileDownloader.wait()
+	script(t, []line{
+		{Type: "put\n", Expect: "100%"},
+		{Type: "get empty.txt\n", Expect: "100%"},
+		{Expect: "sftp> "},
+	})
+	file = <-downloadCh
+	if got, want := file.Name, "empty.txt"; got != want {
+		t.Errorf("filename = %q, want %q", got, want)
+	}
+	if len(file.Content) != 0 {
+		t.Errorf("content = %q, want empty", file.Content)
+	}
+
+	// The server reports a size of 0 for files in /proc, even though they
+	// have content.
+	downloadCh = fileDownloader.wait()
+	script(t, []line{
+		{Type: "get /proc/self/status\n", Expect: "100%"},
+		{Expect: "sftp> "},
 		{Type: "exit\n"},
 
 		{Expect: prompt},
 		{Type: "exit\n"},
 	})
-	file := <-downloadCh
-	if got, want := file.Name, "hello-again.txt"; got != want {
+	file = <-downloadCh
+	if got, want := file.Name, "status"; got != want {
 		t.Errorf("filename = %q, want %q", got, want)
 	}
 	if err := <-result; err != nil {

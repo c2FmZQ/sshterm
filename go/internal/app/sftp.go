@@ -433,7 +433,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 					calls := new(atomic.Int32)
 					progress := func(total int64) {
 						if calls.Load()%100 == 0 {
-							fmt.Fprintf(t, "%3d%%\b\b\b\b", 100*total/size)
+							fmt.Fprintf(t, "%3d%%\b\b\b\b", percent(total, size))
 						}
 						calls.Add(1)
 					}
@@ -785,11 +785,11 @@ func (a *App) sftpUploadFile(client *sftp.Client, f jsutil.ImportedFile, fn stri
 			}
 			total += int64(n)
 			if loop%100 == 0 {
-				fmt.Fprintf(a.term, "%3d%%\b\b\b\b", 100*total/f.Size)
+				fmt.Fprintf(a.term, "%3d%%\b\b\b\b", percent(total, f.Size))
 			}
 		}
 		if err == io.EOF {
-			fmt.Fprintf(a.term, "%3d%%\n", 100*total/f.Size)
+			fmt.Fprintf(a.term, "%3d%%\n", percent(total, f.Size))
 			break
 		}
 		if err != nil {
@@ -799,4 +799,13 @@ func (a *App) sftpUploadFile(client *sftp.Client, f jsutil.ImportedFile, fn stri
 
 	}
 	return w.Close()
+}
+
+// percent returns n as a percentage of total, between 0 and 100. The total
+// may come from the remote server and can't be trusted to be accurate.
+func percent(n, total int64) int64 {
+	if total <= 0 {
+		return 100
+	}
+	return min(max(100*n/total, 0), 100)
 }

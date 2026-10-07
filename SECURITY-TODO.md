@@ -23,7 +23,7 @@ off as they are fixed. Delete this file once every item is done.
 
 ## Low
 
-- [ ] **3. Divide-by-zero in SFTP progress crashes the app.**
+- [x] **3. Divide-by-zero in SFTP progress crashes the app.**
   `go/internal/app/sftp.go` (`get` progress, `sftpUploadFile`). Server-reported
   size 0 for a non-empty file panics in the stream `pull` goroutine (no
   recover → WASM exits). Dropping an empty file in sftp crashes too.
