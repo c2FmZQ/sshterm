@@ -187,12 +187,14 @@ func NewStreamHelper() *StreamHelper {
 						err = fmt.Errorf("panic: %T %v", e, e)
 					}
 					s.done <- err
+					js.Global().Get("console").Call("error", "stream helper failed:", err.Error())
 					event.Get("source").Call("postMessage",
 						NewObject(map[string]any{
 							"streamId": id,
-							"body":     err.Error(),
+							"body":     "Internal Server Error",
 							"options": NewObject(map[string]any{
-								"status": "500",
+								"status":     "500",
+								"statusText": "Internal Server Error",
 								"headers": NewObject(map[string]any{
 									"Content-Type": "text/plain",
 								}),
