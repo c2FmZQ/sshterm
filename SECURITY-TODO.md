@@ -70,7 +70,7 @@ off as they are fixed. Delete this file once every item is done.
 - [x] **14. CSRF token sent to any identity-provider URL; cookie regex unanchored.**
   `go/internal/jsutil/jsutil.go` (`TLSProxySID`), `go/internal/app/keys.go`
   (`updateCert`). Only send for same-origin URLs; anchor regex.
-- [ ] **15. `generateKeys` with `resident: true` re-creates the resident
+- [x] **15. `generateKeys` with `resident: true` re-creates the resident
   credential on every page load.** `go/internal/app/app.go` (`initPresetConfig`).
 - [ ] **16. Service worker message handling hardening.**
   `docroot/stream-helper.js`: use a `Map`, only accept responses from the

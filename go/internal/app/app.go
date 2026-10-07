@@ -185,9 +185,15 @@ func (a *App) initPresetConfig() error {
 		}
 	}
 	for i, k := range a.cfg.GenerateKeys {
-		key, err := a.generateKey(k.Name, "", k.IdentityProvider, k.Type, k.Bits, k.Resident)
-		if err != nil {
-			return fmt.Errorf("generateKeys[%d]: %w", i, err)
+		// Keep existing keys. This runs every time the app starts, and
+		// re-creating a resident key would replace the credential on the
+		// security key.
+		key, exists := a.data.Keys[k.Name]
+		if !exists {
+			var err error
+			if key, err = a.generateKey(k.Name, "", k.IdentityProvider, k.Type, k.Bits, k.Resident); err != nil {
+				return fmt.Errorf("generateKeys[%d]: %w", i, err)
+			}
 		}
 		if k.AddToAgent {
 			signer, err := key.Signer(nil)

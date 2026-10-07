@@ -60,7 +60,8 @@ type Config struct {
 		Key  string `json:"key,omitempty"`
 	} `json:"hosts,omitempty"`
 
-	// GenerateKeys instructs the app to generate SSH keys when it starts.
+	// GenerateKeys instructs the app to generate SSH keys when it starts,
+	// unless keys with the same names already exist in the database.
 	// These keys are passwordless and are intended to be used with an
 	// Identity Provider.
 	GenerateKeys []struct {

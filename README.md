@@ -125,7 +125,7 @@ Here is an example with explanations of the fields:
 *   `hosts`: Pre-defines known host keys to avoid interactive prompts.
     *   `name`: The hostname of the server.
     *   `key`: The public key of the host.
-*   `generateKeys`: Can be used to generate a new SSH key on first use if no keys exist.
+*   `generateKeys`: Can be used to generate new SSH keys on first use. Keys that already exist with the same names are kept.
     *   `name`: The name to give the new key.
     *   `type`: The key type (e.g., `ecdsa`, `ecdsa-sk`, `ed25519`, `rsa`).
     *   `identityProvider`: If specified, the application will send a request to this URL to get the newly generated public key signed, creating a certificate.
