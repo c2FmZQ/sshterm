@@ -538,15 +538,17 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	focusEvent := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		debugf("X11: Window %d focused", xid)
 		w.focusedWindowID = xid
-		w.server.SetInputFocus(xid)
+		go w.server.SetInputFocus(xid)
 		w.document.Call("addEventListener", "keydown", keyDownEvent)
 		w.document.Call("addEventListener", "keyup", keyUpEvent)
 		return nil
 	})
 	blurEvent := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		debugf("X11: Window %d blurred", xid)
-		w.focusedWindowID = 0
-		w.server.SetInputFocus(0)
+		if w.focusedWindowID == xid {
+			w.focusedWindowID = 0
+		}
+		go w.server.SetInputFocus(0)
 		w.document.Call("removeEventListener", "keydown", keyDownEvent)
 		w.document.Call("removeEventListener", "keyup", keyUpEvent)
 		if isTopLevel {
@@ -3847,6 +3849,12 @@ func uint32SliceToAnySlice(s []uint32) []any {
 }
 
 func (w *wasmX11Frontend) DestroyAllWindowsForClient(client uint32) {
+	for xid, winInfo := range w.windows {
+		if (uint32(xid)>>resourceIDShift)&clientIDMask == client {
+			winInfo.div.Call("removeEventListener", "focus", winInfo.focusEvent)
+			winInfo.div.Call("removeEventListener", "blur", winInfo.blurEvent)
+		}
+	}
 	for xid := range w.windows {
 		if (uint32(xid)>>resourceIDShift)&clientIDMask == client {
 			w.destroyWindow(xid, false)
