@@ -7,6 +7,10 @@ node_modules
 xterm.css
 xterm.js
 xterm.mjs
+bin/
+cache/
+config.yaml
+tlsproxy.env
 js_tests/.npm-cache
 .gemini/
 /testserver

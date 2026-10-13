@@ -31,6 +31,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -203,10 +204,13 @@ func (d *downloader) stream(url string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("stream: %s", resp.Status)
+	}
 	body, _ := io.ReadAll(resp.Body)
 	var filename string
-	if m := regexp.MustCompile(`^attachment; filename="(.*)"`).FindStringSubmatch(resp.Header.Get("Content-Disposition")); len(m) > 1 {
-		filename = m[1]
+	if _, params, err := mime.ParseMediaType(resp.Header.Get("Content-Disposition")); err == nil {
+		filename = params["filename"]
 	}
 	d.receiver <- downloadedFile{filename, resp.Header.Get("Content-Type"), body}
 	return nil

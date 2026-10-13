@@ -10,6 +10,7 @@ The core client is written in Go and compiled to WebAssembly (WASM), allowing it
 
 *   Connect to any SSH server, including via jump hosts.
 *   SFTP client with streaming uploads and downloads.
+*   ZMODEM support for in-band file transfers (`rz`/`sz`).
 *   In-memory SSH agent and agent forwarding.
 *   Public key authentication with certificates.
 *   WebAuthn support for security keys and passkeys.
@@ -121,20 +122,32 @@ Here is an example with explanations of the fields:
 *   `endpoints`: Pre-defines WebSocket endpoints, equivalent to using the `ep add` command.
     *   `name`: A friendly name for the endpoint.
     *   `url`: The WebSocket URL (e.g., `wss://ssh.example.com/proxy` or a relative path `./proxy`).
+    *   `hostname`: The server's hostname, used to validate host certificates. Defaults to `name`.
 *   `hosts`: Pre-defines known host keys to avoid interactive prompts.
     *   `name`: The hostname of the server.
     *   `key`: The public key of the host.
-*   `generateKeys`: Can be used to generate a new SSH key on first use if no keys exist.
+*   `generateKeys`: Can be used to generate new SSH keys on first use. Keys that already exist with the same names are kept.
     *   `name`: The name to give the new key.
     *   `type`: The key type (e.g., `ecdsa`, `ecdsa-sk`, `ed25519`, `rsa`).
     *   `identityProvider`: If specified, the application will send a request to this URL to get the newly generated public key signed, creating a certificate.
     *   `addToAgent`: If `true`, the new key will be automatically added to the in-memory agent.
+    *   `resident`: If `true`, request a discoverable (resident) credential on the security key. Only valid with type `ecdsa-sk`.
 *   `autoConnect`: Automatically connect to a specified host on startup.
     *   `username`: The user to connect as.
     *   `hostname`: The host to connect to (must match an endpoint name).
     *   `identity`: The name of the key to use for authentication.
     *   `command`: An optional command to run on the remote server.
     *   `forwardAgent`: If `true`, enables agent forwarding for the session.
+
+### Deployment Security
+
+*   Serve SSH Term from its own origin (e.g. `https://ssh.example.com`), with no other content. Anything running on the same origin can access the keys stored in the browser.
+*   SSH Term refuses to run inside a frame. If your web server or proxy can set response headers, also add these headers to prevent framing:
+
+    ```
+    Content-Security-Policy: frame-ancestors 'none'
+    X-Frame-Options: DENY
+    ```
 
 ## Usage
 
@@ -203,6 +216,7 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
     *   `-i, --identity <keyname>`: The key to use for authentication.
     *   `-J, --jump-hosts <jump-hosts>`: Connect by going through jump hosts.
     *   `-A, --forward-agent`: Forwards access to the local SSH agent.
+    *   `-z, --zmodem`: Enable ZMODEM support for file transfers (`rz`/`sz`). Each transfer must be confirmed before it starts.
 *   `sftp [options] [user@]hostname` - Starts an interactive SFTP session.
     *   (Options are the same as `ssh`)
 
@@ -212,6 +226,9 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 *   `keys generate [options] <name>` - Generates a new key.
     *   `-t, --type <type>`: The type of key to generate (`ecdsa`, `ecdsa-sk`, `ed25519`, `rsa`).
     *   `-b, --bits <bits>`: The key size in bits.
+    *   `--idp <url>`: The URL of the identity provider to use.
+    *   `-r, --resident`: Request a discoverable (resident) key on the security key. Only valid with `--type ecdsa-sk`.
+*   `keys discover [options] [<name>]` - Imports a discoverable (resident) key from a security key. The key is touched twice: once to select the credential, once to recover its public key. If `<name>` is omitted, the name stored on the security key is offered as the default.
     *   `--idp <url>`: The URL of the identity provider to use.
 *   `keys delete <name>` - Deletes a key.
 *   `keys show <name>` - Shows a key's public part and certificate details.
@@ -223,7 +240,8 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 #### Endpoint Management (`ep`)
 
 *   `ep list` - Lists all configured server endpoints.
-*   `ep add <name> <url>` - Adds a new server endpoint.
+*   `ep add [--hostname <hostname>] <name> <url>` - Adds a new server endpoint.
+    *   `--hostname <hostname>`: The server's hostname. Host certificates must list it as a principal. Defaults to `<name>`.
 *   `ep delete <name>` - Deletes a server endpoint.
 
 #### SSH Agent Management (`agent`)

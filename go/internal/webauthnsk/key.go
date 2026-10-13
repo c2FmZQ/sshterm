@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"strings"
 
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/pbkdf2"
@@ -56,20 +57,35 @@ type Key struct {
 	rpID   []byte
 }
 
-func Create(name string) (*Key, error) {
+func Create(name string, resident bool) (*Key, error) {
 	challenge := make([]byte, 32)
 	if _, err := rand.Read(challenge); err != nil {
 		return nil, fmt.Errorf("failed to generate random challenge: %w", err)
 	}
-	uid := make([]byte, 32)
-	if _, err := rand.Read(uid); err != nil {
-		return nil, fmt.Errorf("failed to generate random user ID: %w", err)
+	// user.id is the only field that an assertion returns (as userHandle), so
+	// for a discoverable credential it carries the key name and lets Discover
+	// restore it. The spec asks for an opaque value that doesn't identify the
+	// user, so this is limited to resident keys, where it buys something;
+	// everything else gets a random handle.
+	//
+	// Note that authenticators key discoverable credentials on
+	// (rpID, user.id), so creating a resident key replaces any existing one
+	// with the same name. Callers are expected to confirm overwrites.
+	var uid []byte
+	if resident && len(name) > 0 && len(name) <= 64 && isPrintableASCII(name) {
+		uid = []byte(name)
+	} else {
+		uid = make([]byte, 32)
+		if _, err := rand.Read(uid); err != nil {
+			return nil, fmt.Errorf("failed to generate random user ID: %w", err)
+		}
 	}
 	resp, err := jsutil.WebAuthnCreate(jsutil.CreateOptions{
 		Challenge: challenge,
 		Alg:       algES256,
 		UserID:    uid,
 		UserName:  name,
+		Resident:  resident,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("WebAuthnCreate: %w", err)
@@ -105,11 +121,96 @@ func Create(name string) (*Key, error) {
 	}, nil
 }
 
+// Discover discovers a resident key on an authenticator by performing
+// two assertions to recover and verify the public key.
+// It returns the Key, the username from userHandle (if available), and any error.
+func Discover(promptTouch func(string)) (*Key, string, error) {
+	challenge1 := make([]byte, 32)
+	if _, err := rand.Read(challenge1); err != nil {
+		return nil, "", err
+	}
+	if promptTouch != nil {
+		promptTouch("Touch your security key to discover resident keys...\n")
+	}
+	resp1, err := jsutil.WebAuthnGet(jsutil.GetOptions{
+		Challenge: challenge1,
+		Allow:     nil,
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("WebAuthnGet: %w", err)
+	}
+	if err := verifyClientData(resp1.ClientDataJSON, "webauthn.get", challenge1); err != nil {
+		return nil, "", fmt.Errorf("assertion 1: %w", err)
+	}
+
+	challenge2 := make([]byte, 32)
+	if _, err := rand.Read(challenge2); err != nil {
+		return nil, "", err
+	}
+	if promptTouch != nil {
+		promptTouch("Touch your security key again to verify public key...\n")
+	}
+	resp2, err := jsutil.WebAuthnGet(jsutil.GetOptions{
+		Challenge: challenge2,
+		Allow:     [][]byte{resp1.ID},
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("WebAuthnGet: %w", err)
+	}
+	if err := verifyClientData(resp2.ClientDataJSON, "webauthn.get", challenge2); err != nil {
+		return nil, "", fmt.Errorf("assertion 2: %w", err)
+	}
+	if !bytes.Equal(resp1.ID, resp2.ID) {
+		return nil, "", errors.New("the authenticator returned a different credential for the second assertion")
+	}
+
+	pk, err := RecoverPublicKey(resp1.AuthenticatorData, resp1.ClientDataJSON, resp1.Signature, resp2.AuthenticatorData, resp2.ClientDataJSON, resp2.Signature)
+	if err != nil {
+		// An assertion with an empty allow list can return any discoverable
+		// credential for this origin, including one that isn't an ES256 key.
+		// Those fail while parsing the ECDSA signature, which is worth
+		// translating into something the user can act on.
+		var structErr asn1.StructuralError
+		var syntaxErr asn1.SyntaxError
+		if errors.As(err, &structErr) || errors.As(err, &syntaxErr) {
+			return nil, "", errors.New("the selected credential is not an ECDSA P-256 key; only ecdsa-sk keys can be discovered")
+		}
+		return nil, "", fmt.Errorf("RecoverPublicKey: %w", err)
+	}
+
+	// The user handle holds the key name when the credential was created by
+	// Create. Anything else is treated as not having a name.
+	var userName string
+	if cand := strings.TrimSpace(string(resp1.UserHandle)); cand != "" && isPrintableASCII(cand) {
+		userName = cand
+	}
+
+	key := &Key{
+		typ:    ecdsa256KeyType,
+		id:     resp1.ID,
+		pubKey: pk,
+		rpID:   []byte(jsutil.Hostname()),
+	}
+	return key, userName, nil
+}
+
+const (
+	// defaultIter is the number of PBKDF2 iterations used to encrypt keys.
+	defaultIter = 100000
+	// maxIter is the maximum number of PBKDF2 iterations accepted when
+	// decrypting keys. It protects against crafted files that would hang
+	// the app.
+	maxIter = 1000000
+)
+
 func Unmarshal(priv []byte, name string, rp func(string) (string, error)) (*Key, error) {
 	if !bytes.HasPrefix(priv, []byte("-----BEGIN WEBAUTHN ")) {
 		return nil, errors.New("unexpected key format")
 	}
 	block, _ := pem.Decode(priv)
+	if block == nil {
+		return nil, errors.New("invalid PEM data")
+	}
 	str := cryptobyte.String(block.Bytes)
 	var ver uint8
 	if !str.ReadUint8(&ver) {
@@ -144,6 +245,9 @@ func Unmarshal(priv []byte, name string, rp func(string) (string, error)) (*Key,
 		var numIter uint32
 		if !privBytes.ReadUint32(&numIter) {
 			return nil, errTooShort
+		}
+		if numIter > maxIter {
+			return nil, fmt.Errorf("invalid iteration count %d", numIter)
 		}
 		passphrase, err := rp("Enter the passphrase for " + name + ": ")
 		if err != nil {
@@ -187,6 +291,9 @@ func UnmarshalPublic(pub []byte) (*Key, error) {
 		return nil, fmt.Errorf("unexpected key type %q", data.Name)
 	}
 	x, y := elliptic.Unmarshal(elliptic.P256(), data.Key)
+	if x == nil {
+		return nil, errors.New("invalid public key")
+	}
 	return &Key{
 		typ:  data.Name,
 		rpID: []byte(data.Application),
@@ -220,7 +327,7 @@ func (k *Key) MarshalPrivate(passphrase string) (*pem.Block, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("failed to generate random salt: %w", err)
 	}
-	numIter := 100000
+	numIter := defaultIter
 	dk := pbkdf2.Key([]byte(passphrase), salt, numIter, 32, sha256.New)
 	block, err := aes.NewCipher(dk)
 	if err != nil {

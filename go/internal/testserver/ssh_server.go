@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -64,6 +65,11 @@ func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {
 			KeyId:    "test-server",
 			ValidPrincipals: []string{
 				"test-server",
+				"myserver.example.com",
+				// Used by TestJumpHosts.
+				"foo",
+				"bar",
+				"baz",
 			},
 		}
 		if err := cert.SignCert(rand.Reader, authority); err != nil {
@@ -180,9 +186,14 @@ func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel,
 	wg.Add(1)
 	go func(in <-chan *ssh.Request) {
 		defer wg.Done()
+		var agentForwarded bool
 		for req := range in {
 			s.t.Logf("request type: %s", req.Type)
 			switch req.Type {
+			case "auth-agent-req@openssh.com":
+				agentForwarded = true
+				req.Reply(true, nil)
+
 			case "x11-req":
 				s.t.Logf("X11 request received: %q", req.Payload)
 				var x11req struct {
@@ -231,7 +242,9 @@ func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel,
 
 			case "exec":
 				req.Reply(true, nil)
-				if len(req.Payload) > 4 {
+				if len(req.Payload) > 4 && string(req.Payload[4:]) == "agent-test" {
+					s.agentTest(channel, serverConn, agentForwarded)
+				} else if len(req.Payload) > 4 {
 					fmt.Fprintf(channel, "exec: %s\n", req.Payload[4:])
 				}
 				channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
@@ -266,6 +279,35 @@ func (s *sshServer) handleSession(wg *sync.WaitGroup, newChannel ssh.NewChannel,
 			}
 		}
 	}(requests)
+}
+
+// agentTest uses the forwarded agent and reports what happened.
+func (s *sshServer) agentTest(w io.Writer, sconn *ssh.ServerConn, forwarded bool) {
+	if !forwarded {
+		fmt.Fprintf(w, "agent-test: agent not forwarded\n")
+		return
+	}
+	ch, reqs, err := sconn.OpenChannel("auth-agent@openssh.com", nil)
+	if err != nil {
+		fmt.Fprintf(w, "agent-test: %v\n", err)
+		return
+	}
+	defer ch.Close()
+	go ssh.DiscardRequests(reqs)
+	client := agent.NewClient(ch)
+	keys, err := client.List()
+	if err != nil || len(keys) == 0 {
+		fmt.Fprintf(w, "agent-test: list: %d keys, %v\n", len(keys), err)
+		return
+	}
+	fmt.Fprintf(w, "agent-test: list: %d keys\n", len(keys))
+	if _, err := client.Sign(keys[0], []byte("data")); err != nil {
+		fmt.Fprintf(w, "agent-test: sign: %v\n", err)
+	} else {
+		fmt.Fprintf(w, "agent-test: sign: ok\n")
+	}
+	fmt.Fprintf(w, "agent-test: lock: %v\n", client.Lock([]byte("x")))
+	fmt.Fprintf(w, "agent-test: removeall: %v\n", client.RemoveAll())
 }
 
 func (s *sshServer) handleX11Channel(wg *sync.WaitGroup, newChannel ssh.NewChannel) {

@@ -83,3 +83,25 @@ func TestCheckCertificate(t *testing.T) {
 		t.Logf("[#%d] OK checkCertificate(): %v", i, err)
 	}
 }
+
+func TestCheckHostCertPrincipal(t *testing.T) {
+	for i, tc := range []struct {
+		principals []string
+		hostname   string
+		expectErr  bool
+	}{
+		{principals: nil, hostname: "foo.example.com"},
+		{principals: []string{"foo.example.com"}, hostname: "foo.example.com"},
+		{principals: []string{"foo.example.com"}, hostname: "foo.example.com:2222"},
+		{principals: []string{"bar.example.com", "foo.example.com"}, hostname: "foo.example.com"},
+		{principals: []string{"bar.example.com"}, hostname: "foo.example.com", expectErr: true},
+		{principals: []string{"bar.example.com"}, hostname: "foo.example.com:22", expectErr: true},
+		{principals: []string{"*.example.com"}, hostname: "foo.example.com", expectErr: true},
+		{principals: []string{"foo.example.com"}, hostname: "FOO.example.com", expectErr: true},
+	} {
+		cert := &ssh.Certificate{CertType: ssh.HostCert, ValidPrincipals: tc.principals}
+		if err := checkHostCertPrincipal(cert, tc.hostname); (err != nil) != tc.expectErr {
+			t.Errorf("[#%d] checkHostCertPrincipal(%q, %q): %v", i, tc.principals, tc.hostname, err)
+		}
+	}
+}

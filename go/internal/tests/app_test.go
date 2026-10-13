@@ -27,6 +27,7 @@ package tests
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"net/http"
 	"syscall/js"
@@ -237,6 +238,7 @@ func TestDB(t *testing.T) {
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
 		{Expect: prompt},
+		{Type: "db backup --iter=1000\n", Expect: `(?s)invalid iter value.*sshterm> `},
 		{Type: "db backup\n", Expect: "Enter a passphrase for the backup:"},
 		{Type: "foobar\n", Expect: "Enter the same passphrase:"},
 		{Type: "foobar\n", Expect: prompt},
@@ -247,6 +249,12 @@ func TestDB(t *testing.T) {
 		{Expect: prompt},
 	})
 	file := <-downloadCh
+	if len(file.Content) < 40 {
+		t.Fatalf("backup file too short: %d", len(file.Content))
+	}
+	if got, want := binary.BigEndian.Uint32(file.Content[12:16]), uint32(600000); got != want {
+		t.Errorf("backup iterations = %d, want %d", got, want)
+	}
 
 	fileUploader.enqueue(file.Name, file.Type, int64(len(file.Content)), file.Content)
 
@@ -282,6 +290,12 @@ func TestSSH(t *testing.T) {
 		{Expect: prompt},
 		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
+		// Invalid endpoints.
+		{Type: "ep add bad-url ws://[invalid\n", Expect: prompt},
+		{Type: "ssh testuser@bad-url\n", Expect: `(?s)websocket: .*sshterm> `},
+		{Type: "ep add text-message websocket?text=true\n", Expect: prompt},
+		{Type: "ssh testuser@text-message\n", Expect: `(?s)websocket: unexpected message type.*sshterm> `},
+
 		{Type: "ep add test-server websocket\n", Expect: prompt},
 		{Type: "ssh testuser@test-server\n", Expect: `(?s)Host key for test-server.*Choice>`},
 		{Type: "3\n", Expect: "Password: "},
@@ -314,6 +328,12 @@ func TestSSH(t *testing.T) {
 		{Wait: time.Second, Type: "\n\n"},
 		{Type: "ssh testuser@test-server foo bar\n", Expect: "exec: foo bar"},
 		{Wait: time.Second, Type: "\n\n"},
+
+		// The forwarded agent can only list keys and sign.
+		{Type: "ssh -A testuser@test-server agent-test\n", Expect: `\[agent\] test-server requested a signature with key "test"`},
+		{Expect: `(?s)agent-test: sign: ok.*agent-test: lock: agent: failure.*agent-test: removeall: agent: failure`},
+		{Wait: time.Second, Type: "\n\n"},
+		{Type: "agent list\n", Expect: `(?s)test .*sshterm> `},
 
 		{Type: "sftp testuser@test-server\n", Expect: "sftp> "},
 		{Type: "put .\n", Expect: "100%"},
@@ -358,13 +378,58 @@ func TestDownload(t *testing.T) {
 
 		{Type: "get hello-again.txt\n", Expect: "100%"},
 		{Expect: "sftp> "},
+	})
+	file := <-downloadCh
+	if got, want := file.Name, "hello-again.txt"; got != want {
+		t.Errorf("filename = %q, want %q", got, want)
+	}
+
+	// Empty file.
+	fileUploader.enqueue("empty.txt", "text/plain", 0, nil)
+	downloadCh = fileDownloader.wait()
+	script(t, []line{
+		{Type: "put\n", Expect: "100%"},
+		{Type: "get empty.txt\n", Expect: "100%"},
+		{Expect: "sftp> "},
+	})
+	file = <-downloadCh
+	if got, want := file.Name, "empty.txt"; got != want {
+		t.Errorf("filename = %q, want %q", got, want)
+	}
+	if len(file.Content) != 0 {
+		t.Errorf("content = %q, want empty", file.Content)
+	}
+
+	// Non-ASCII file name.
+	txt = []byte("Hello €!")
+	fileUploader.enqueue("héllo-€.txt", "text/plain", int64(len(txt)), txt)
+	downloadCh = fileDownloader.wait()
+	script(t, []line{
+		{Type: "put\n", Expect: "100%"},
+		{Type: "get héllo-€.txt\n", Expect: "100%"},
+		{Expect: "sftp> "},
+	})
+	file = <-downloadCh
+	if got, want := file.Name, "héllo-€.txt"; got != want {
+		t.Errorf("filename = %q, want %q", got, want)
+	}
+	if got, want := string(file.Content), string(txt); got != want {
+		t.Errorf("content = %q, want %q", got, want)
+	}
+
+	// The server reports a size of 0 for files in /proc, even though they
+	// have content.
+	downloadCh = fileDownloader.wait()
+	script(t, []line{
+		{Type: "get /proc/self/status\n", Expect: "100%"},
+		{Expect: "sftp> "},
 		{Type: "exit\n"},
 
 		{Expect: prompt},
 		{Type: "exit\n"},
 	})
-	file := <-downloadCh
-	if got, want := file.Name, "hello-again.txt"; got != want {
+	file = <-downloadCh
+	if got, want := file.Name, "status"; got != want {
 		t.Errorf("filename = %q, want %q", got, want)
 	}
 	if err := <-result; err != nil {
@@ -409,8 +474,10 @@ func TestHostCerts(t *testing.T) {
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 
+		// The certificate's principals don't include fooserver.
 		{Type: "ep add fooserver websocket?cert=true\n", Expect: prompt},
-		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*Choice>`},
+		{Type: "ca add-hostname testca fooserver\n", Expect: prompt},
+		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*not valid for hostname "fooserver".*Choice>`},
 		{Type: "\n", Expect: prompt},
 
 		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*Choice>`},
@@ -418,16 +485,44 @@ func TestHostCerts(t *testing.T) {
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 
-		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*Choice>`},
+		// Use one of the certificate's principals as the endpoint's hostname.
+		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*` +
+			`3- Continue, and set the hostname of endpoint fooserver to test-server\..*` +
+			`7- Continue, and set the hostname of endpoint fooserver to baz\..*Choice>`},
+		{Type: "3\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+		{Type: "ep list\n", Expect: `fooserver +websocket\?cert=true +test-server `},
+		{Type: "ssh testuser@fooserver foo\n", Expect: `Host certificate for fooserver \(test-server\) is trusted`},
+		{Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// Endpoint with a hostname.
+		{Type: "ep add --hostname=myserver.example.com alias websocket?cert=true\n", Expect: prompt},
+		{Type: "ssh testuser@alias foo\n", Expect: `(?s)Host certificate for alias \(myserver.example.com\) is NOT trusted.*` +
+			`not trusted for hostname "myserver.example.com".*3- Continue, and trust this authority.*Choice>`},
+		{Type: "3\n", Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+		{Type: "ssh testuser@alias foo\n", Expect: `Host certificate for alias \(myserver.example.com\) is trusted`},
+		{Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// The authority isn't trusted for test-server.
+		{Type: "ca remove-hostname testca test-server\n", Expect: prompt},
+		{Type: "ssh testuser@test-server foo\n", Expect: `(?s)Host certificate for test-server is NOT trusted.*3- Continue, and trust this authority.*Choice>`},
 		{Type: "3\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 
-		{Type: "ssh testuser@fooserver foo\n", Expect: "Password: "},
+		{Type: "ssh testuser@test-server foo\n", Expect: `Host certificate for test-server is trusted`},
+		{Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 
-		{Type: "ca list\n", Expect: "fooserver"},
+		{Type: "ca list\n", Expect: "test-server"},
 
 		{Expect: prompt},
 		{Type: "exit\n"},
@@ -518,6 +613,14 @@ func TestSFTP(t *testing.T) {
 		{Type: "rm test/*\n", Expect: "sftp> "},
 		{Type: "rmdir test\n", Expect: "sftp> "},
 		{Type: "ls -l test\n", Expect: `(?s)"test": file does not exist.*sftp> `},
+	})
+
+	// File names from the server are sanitized.
+	fileUploader.enqueue("evil\x1b[31m.txt", "text/plain", int64(len(txt)), txt)
+	script(t, []line{
+		{Type: "put\n", Expect: "100%"},
+		{Type: "ls\n", Expect: `(?s)evil\?\[31m\.txt.*sftp> `},
+		{Type: "rm evil*\n", Expect: "sftp> "},
 		{Type: "exit\n"},
 
 		{Expect: prompt},

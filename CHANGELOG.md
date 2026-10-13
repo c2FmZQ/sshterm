@@ -1,5 +1,77 @@
 # SSH Term Release Notes
 
+## v0.11.2
+
+### :lock: Security fixes
+
+This release fixes a number of issues found in a security review. Some of them change the app's behavior:
+
+* Host certificates are now only trusted when the hostname is one of the certificate's principals. Before, a certificate signed by a trusted authority was accepted for any hostname that the authority was trusted for, so any host with a valid certificate could impersonate the others. Like OpenSSH, a certificate with no principals is valid for any host.
+  * Endpoints have a new optional hostname, which is used to validate host certificates when the endpoint's name is different from the server's hostname, e.g. `ep add --hostname myserver.example.com myserver <url>`, or `"hostname"` in `config.json`. Without it, the endpoint's name is used, as before.
+  * When a host certificate is otherwise trusted but doesn't list the endpoint's hostname, the prompt offers to use one of the certificate's principals as the endpoint's hostname.
+* ZMODEM transfers must now be confirmed before they start. Before, any output containing a ZMODEM header, e.g. `cat` of a file, could save files to the Downloads folder or open the file picker.
+  * ZMODEM downloads now require the service worker, like `sftp get`.
+* With agent forwarding (`ssh -A`), each signature request from the remote host is shown in the terminal. The remote host can no longer lock, unlock, or remove keys from the agent.
+* Text from remote servers is sanitized before it is displayed: SSH banners, host certificate details, SFTP file names, ZMODEM file names, and error messages. Like OpenSSH, banners are now displayed without colors. File names with control characters are shown with `?`.
+* Escape characters are removed from pasted text, so that text copied from a malicious web page can't end bracketed paste mode early and run commands.
+* SSH Term now refuses to run inside a frame. The README has the HTTP headers that deployments should also set when they can.
+* The Content Security Policy uses `'wasm-unsafe-eval'` instead of `'unsafe-eval'`. SSH Term now requires Chrome 97, Firefox 102, Safari 16, or newer.
+* Database backups now use 600,000 PBKDF2 iterations by default, and `db backup --iter` must be at least 100,000. Existing backups can still be restored.
+* Keys from `generateKeys` in `config.json` are no longer re-generated when they already exist. Before, they were re-generated on every page load, and resident keys were replaced on the security key each time.
+
+### :wrench: Bug fixes
+
+* Fix crashes and hangs caused by unexpected input:
+  * SFTP transfers of empty files, or of files whose size is reported as 0 by the server, e.g. in `/proc`.
+  * Downloads of files with non-ASCII names.
+  * Malformed WebAuthn key files and backup files.
+  * Invalid endpoint URLs and unexpected WebSocket messages.
+* Only send the tlsproxy CSRF token to identity providers on the same origin.
+* Harden the stream helper service worker.
+* Fix `sftp get` after a ZMODEM download.
+
+## v0.10.0
+
+### :star: Feature improvements
+
+* Add support for discoverable WebAuthn keys. (Thanks to @tbutter)
+  * WebAuthn keys generated with `--resident` (or `-r`) can easily be recovered without backups with `keys discover`.
+
+### :wrench: Misc
+
+* Update go dependencies:
+  * upgraded github.com/fxamacker/cbor/v2 v2.9.3 => v2.9.4
+  * upgraded golang.org/x/crypto v0.56.0 => v0.57.0
+  * upgraded golang.org/x/sys v0.47.0 => v0.48.0
+  * upgraded golang.org/x/term v0.45.0 => v0.46.0
+
+## v0.9.0
+
+### :star2: New features
+
+* Add support for ZMODEM in-band file transfers (`rz`/`sz`). File uploads and downloads can now be triggered natively within SSH sessions using the `-z` or `--zmodem` flag.
+
+### :wrench: Misc
+* Update go 1.27.1
+* Update go dependencies:
+  * golang.org/x/crypto v0.55.0 => v0.56.0
+
+## v0.8.5
+
+* Update go 1.27.0
+* Update go dependencies:
+  * upgraded github.com/fxamacker/cbor/v2 v2.9.2 => v2.9.3
+
+## v0.8.4
+
+* Update go 1.26.6
+* Update go dependencies:
+  * github.com/fxamacker/cbor/v2 v2.9.1 => v2.9.2
+  * github.com/pkg/sftp v1.13.10 => v1.13.11
+  * golang.org/x/crypto v0.49.0 => v0.55.0
+  * golang.org/x/term v0.42.0 => v0.45.0
+  * golang.org/x/sys v0.43.0 => v0.47.0
+
 ## v0.8.3
 
 * Update go 1.26.2

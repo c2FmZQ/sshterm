@@ -47,18 +47,22 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
+	"github.com/c2FmZQ/sshterm/internal/termsafe"
 	"github.com/c2FmZQ/sshterm/internal/webauthnsk"
 )
 
-func (a *App) generateKey(name, passphrase, idp, typ string, bits int) (*key, error) {
+func (a *App) generateKey(name, passphrase, idp, typ string, bits int, resident bool) (*key, error) {
 	var sshPub ssh.PublicKey
 	var privPEM *pem.Block
 
+	if resident && typ != "ecdsa-sk" {
+		return nil, errors.New("resident keys require key type ecdsa-sk")
+	}
 	if typ == "ecdsa-sk" {
 		if bits != 0 && bits != 256 {
 			return nil, fmt.Errorf("invalid key length %d", bits)
 		}
-		sk, err := webauthnsk.Create(name)
+		sk, err := webauthnsk.Create(name, resident)
 		if err != nil {
 			return nil, fmt.Errorf("webauthnsk.Create: %w", err)
 		}
@@ -99,7 +103,7 @@ func (a *App) keysCommand() *cli.App {
 	return &cli.App{
 		Name:            "keys",
 		Usage:           "Manage user keys and certificates",
-		UsageText:       "keys <list|generate|delete|show|change-pass|import|import-cert|export>",
+		UsageText:       "keys <list|generate|discover|delete|show|change-pass|import|import-cert|export>",
 		Description:     "The keys command is used to manage user keys and certificates.",
 		HideHelpCommand: true,
 		DefaultCommand:  "list",
@@ -152,6 +156,11 @@ func (a *App) keysCommand() *cli.App {
 						Name:  "idp",
 						Usage: "The URL of the identity provider to use.",
 					},
+					&cli.BoolFlag{
+						Name:    "resident",
+						Aliases: []string{"r"},
+						Usage:   "Generate a discoverable (resident) key on the security key. Requires --type ecdsa-sk.",
+					},
 				},
 				Action: func(ctx *cli.Context) error {
 					if ctx.Args().Len() != 1 {
@@ -159,6 +168,11 @@ func (a *App) keysCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
+					if _, exists := a.data.Keys[name]; exists {
+						if !a.term.Confirm(fmt.Sprintf("Key %q already exists. Overwrite?", name), false) {
+							return errors.New("aborted")
+						}
+					}
 					passphrase, err := a.term.ReadPassword("Enter a passphrase for the private key: ")
 					if err != nil {
 						return fmt.Errorf("ReadPassword: %w", err)
@@ -171,13 +185,106 @@ func (a *App) keysCommand() *cli.App {
 						return fmt.Errorf("passphrase doesn't match")
 					}
 
-					if _, err := a.generateKey(name, passphrase, ctx.String("idp"), ctx.String("type"), ctx.Int("bits")); err != nil {
+					if _, err := a.generateKey(name, passphrase, ctx.String("idp"), ctx.String("type"), ctx.Int("bits"), ctx.Bool("resident")); err != nil {
 						return err
 					}
 					if err := a.saveKeys(true); err != nil {
 						return err
 					}
 					a.term.Printf("New key %q added\n", name)
+					return nil
+				},
+			},
+			{
+				Name:        "discover",
+				Usage:       "Discover a resident key from a security key",
+				UsageText:   "keys discover [--idp <url>] [<name>]",
+				Description: "The discover command imports a resident (discoverable) credential from a\nsecurity key. The key is touched twice: once to select the credential, once\nto recover its public key.",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "idp",
+						Usage: "The URL of the identity provider to use.",
+					},
+				},
+				Action: func(ctx *cli.Context) error {
+					if ctx.Args().Len() > 1 {
+						cli.ShowSubcommandHelp(ctx)
+						return nil
+					}
+					name := ctx.Args().Get(0)
+
+					sk, discoveredName, err := webauthnsk.Discover(func(msg string) {
+						a.term.Print(msg)
+					})
+					if err != nil {
+						return err
+					}
+
+					if name == "" {
+						// discoveredName comes from the authenticator, so it is
+						// offered as a default rather than used outright.
+						dflt := discoveredName
+						if dflt == "" {
+							dflt = "default"
+						}
+						n, err := a.term.Prompt(fmt.Sprintf("Enter a name for the discovered key [%s]: ", dflt))
+						if err != nil {
+							return err
+						}
+						if name = strings.TrimSpace(n); name == "" {
+							name = dflt
+						}
+					}
+
+					if _, exists := a.data.Keys[name]; exists {
+						if !a.term.Confirm(fmt.Sprintf("Key %q already exists. Overwrite?", name), false) {
+							return errors.New("aborted")
+						}
+					}
+
+					passphrase, err := a.term.ReadPassword("Enter a passphrase for the private key (optional, press Enter for none): ")
+					if err != nil {
+						return fmt.Errorf("ReadPassword: %w", err)
+					}
+					if passphrase != "" {
+						passphrase2, err := a.term.ReadPassword("Re-enter the same passphrase: ")
+						if err != nil {
+							return fmt.Errorf("ReadPassword: %w", err)
+						}
+						if passphrase != passphrase2 {
+							return fmt.Errorf("passphrase doesn't match")
+						}
+					}
+
+					privPEM, err := sk.MarshalPrivate(passphrase)
+					if err != nil {
+						return fmt.Errorf("sk.MarshalPrivate: %w", err)
+					}
+					sshPub := sk.PublicKey()
+
+					k := &key{
+						Name:     name,
+						Public:   sshPub.Marshal(),
+						Private:  pem.EncodeToMemory(privPEM),
+						Provider: ctx.String("idp"),
+						errorf:   a.term.Errorf,
+					}
+					if k.Provider != "" {
+						if err := k.updateCert(); err != nil {
+							a.term.Errorf("certificate update: %v", err)
+						}
+					}
+					a.data.Keys[name] = k
+					if err := a.saveKeys(true); err != nil {
+						return err
+					}
+					a.term.Printf("Discovered key %q added\n", name)
+					pub, err := k.sshPublicKey()
+					if err == nil {
+						m := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub)))
+						a.term.Printf("Public key:  %s %s\n", m, name)
+						a.term.Printf("Fingerprint: %s\n", ssh.FingerprintSHA256(pub))
+					}
 					return nil
 				},
 			},
@@ -506,7 +613,7 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 	a.term.Printf("  Public key:...... %s", ssh.MarshalAuthorizedKey(cert.Key))
 	a.term.Printf("  Public key fp:... %s\n", ssh.FingerprintSHA256(cert.Key))
 	a.term.Printf("  Type:............ %s\n", cert.Type())
-	a.term.Printf("  Key ID:.......... %s\n", cert.KeyId)
+	a.term.Printf("  Key ID:.......... %s\n", termsafe.Name(cert.KeyId))
 	if cert.ValidBefore != 0 {
 		a.term.Printf("  Validity:........ %s - %s (UTC)\n",
 			time.Unix(int64(cert.ValidAfter), 0).UTC().Format(time.DateTime),
@@ -517,7 +624,7 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 	if len(cert.ValidPrincipals) > 0 {
 		a.term.Printf("  Principals:\n")
 		for _, p := range cert.ValidPrincipals {
-			a.term.Printf("    %s\n", p)
+			a.term.Printf("    %s\n", termsafe.Name(p))
 		}
 	}
 	if len(cert.CriticalOptions) > 0 {
@@ -529,9 +636,9 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 		a.term.Printf("  Critical options:\n")
 		for _, k := range keys {
 			if v := cert.CriticalOptions[k]; v != "" {
-				a.term.Printf("    %s: %s\n", k, v)
+				a.term.Printf("    %s: %s\n", termsafe.Name(k), termsafe.Name(v))
 			} else {
-				a.term.Printf("    %s\n", k)
+				a.term.Printf("    %s\n", termsafe.Name(k))
 			}
 		}
 	}
@@ -544,9 +651,9 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 		a.term.Printf("  Extensions:\n")
 		for _, k := range keys {
 			if v := cert.Extensions[k]; v != "" {
-				a.term.Printf("    %s: %s\n", k, v)
+				a.term.Printf("    %s: %s\n", termsafe.Name(k), termsafe.Name(v))
 			} else {
-				a.term.Printf("    %s\n", k)
+				a.term.Printf("    %s\n", termsafe.Name(k))
 			}
 		}
 	}
@@ -608,7 +715,8 @@ func (k *key) updateCert() error {
 		return err
 	}
 	req.Header.Set("Content-Type", "text/plain")
-	if sid := jsutil.TLSProxySID(); sid != "" {
+	// The CSRF token is only for the proxy that serves this app.
+	if sid := jsutil.TLSProxySID(); sid != "" && jsutil.IsSameOrigin(k.Provider) {
 		req.Header.Set("x-csrf-token", sid)
 	}
 	resp, err := http.DefaultClient.Do(req)
@@ -619,7 +727,7 @@ func (k *key) updateCert() error {
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain" {
 		if resp.StatusCode == http.StatusForbidden {
 			msg, _ := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 1024})
-			return fmt.Errorf("%q: %s: %s", k.Provider, resp.Status, maskControl(string(msg)))
+			return fmt.Errorf("%q: %s: %s", k.Provider, resp.Status, termsafe.Text(string(msg)))
 		}
 		return fmt.Errorf("%q: status code %q content-type %q", k.Provider, resp.Status, resp.Header.Get("Content-Type"))
 	}

@@ -24,9 +24,13 @@
 package webauthnsk
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
+	"encoding/asn1"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -186,4 +190,186 @@ func parseClientData(js []byte) (*clientData, error) {
 	var out clientData
 	err := json.Unmarshal(js, &out)
 	return &out, err
+}
+
+// verifyClientData checks that a ClientDataJSON blob belongs to the ceremony
+// the caller just requested, i.e. that it has the expected type and echoes back
+// the challenge that was sent.
+func verifyClientData(js []byte, wantType string, wantChallenge []byte) error {
+	cd, err := parseClientData(js)
+	if err != nil {
+		return fmt.Errorf("ParseClientData: %w", err)
+	}
+	if cd.Type != wantType {
+		return fmt.Errorf("unexpected client data type %q", cd.Type)
+	}
+	challenge, err := base64.RawURLEncoding.DecodeString(cd.Challenge)
+	if err != nil {
+		return fmt.Errorf("invalid client data challenge: %w", err)
+	}
+	if !bytes.Equal(challenge, wantChallenge) {
+		return errors.New("client data challenge doesn't match")
+	}
+	return nil
+}
+
+// isPrintableASCII reports whether s consists only of printable ASCII
+// characters. It deliberately works a byte at a time so that any non-ASCII
+// byte, including a fragment of a truncated multi-byte rune, is rejected.
+func isPrintableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 32 || s[i] > 126 {
+			return false
+		}
+	}
+	return true
+}
+
+// recoverCandidatesP256 returns every ECDSA public key that could have produced
+// the signature (r, s) over hash. There are up to four, and a second signature
+// over a different hash is needed to tell them apart.
+//
+// The implementation is specific to P-256: it relies on the curve equation
+// having a == -3, and on p ≡ 3 (mod 4) so that a square root modulo p can be
+// computed as ySq^((p+1)/4).
+func recoverCandidatesP256(hash []byte, r, s *big.Int) []*ecdsa.PublicKey {
+	curve := elliptic.P256()
+	params := curve.Params()
+	p := params.P
+	n := params.N
+
+	// r and s are used below both as a curve coordinate and as scalars, and
+	// crypto/elliptic panics (rather than returning an error) when handed a
+	// point that is not on the curve. Callers validate these too; this guard
+	// keeps the panic unreachable if a new caller forgets.
+	if r.Sign() <= 0 || r.Cmp(n) >= 0 || s.Sign() <= 0 || s.Cmp(n) >= 0 {
+		return nil
+	}
+
+	e := new(big.Int).SetBytes(hash)
+	e.Mod(e, n)
+	rInv := new(big.Int).ModInverse(r, n)
+	if rInv == nil {
+		return nil
+	}
+
+	eGx, eGy := curve.ScalarBaseMult(e.Bytes())
+	// Negate eG. crypto/elliptic represents the point at infinity as (0, 0),
+	// whose negation must stay (0, 0) rather than becoming (0, p).
+	neGy := new(big.Int)
+	if eGy.Sign() != 0 {
+		neGy.Sub(p, eGy)
+	}
+
+	var res []*ecdsa.PublicKey
+
+	xs := []*big.Int{r}
+	if rPlusN := new(big.Int).Add(r, n); rPlusN.Cmp(p) < 0 {
+		xs = append(xs, rPlusN)
+	}
+
+	for _, x := range xs {
+		x3 := new(big.Int).Mul(x, x)
+		x3.Mul(x3, x)
+		threeX := new(big.Int).Mul(big.NewInt(3), x)
+		ySq := new(big.Int).Sub(x3, threeX)
+		ySq.Add(ySq, params.B)
+		ySq.Mod(ySq, p)
+
+		exp := new(big.Int).Add(p, big.NewInt(1))
+		exp.Div(exp, big.NewInt(4))
+		y := new(big.Int).Exp(ySq, exp, p)
+
+		check := new(big.Int).Exp(y, big.NewInt(2), p)
+		if check.Cmp(ySq) != 0 {
+			// ySq is not a quadratic residue, so this x is not on the curve.
+			continue
+		}
+
+		yCands := []*big.Int{y}
+		if y.Sign() != 0 {
+			yCands = append(yCands, new(big.Int).Sub(p, y))
+		}
+
+		for _, yCand := range yCands {
+			sRx, sRy := curve.ScalarMult(x, yCand, s.Bytes())
+			diffX, diffY := curve.Add(sRx, sRy, eGx, neGy)
+			qx, qy := curve.ScalarMult(diffX, diffY, rInv.Bytes())
+			if qx.Sign() == 0 && qy.Sign() == 0 {
+				// Point at infinity; not a usable public key.
+				continue
+			}
+			res = append(res, &ecdsa.PublicKey{
+				Curve: curve,
+				X:     qx,
+				Y:     qy,
+			})
+		}
+	}
+	return res
+}
+
+// RecoverPublicKey recovers the ECDSA P-256 public key from two WebAuthn assertions
+// using different challenges. Two assertions are required to uniquely identify the
+// public key among the mathematically possible ECDSA recovery candidates.
+func RecoverPublicKey(authData1, clientDataJSON1, sig1Bytes, authData2, clientDataJSON2, sig2Bytes []byte) (*ecdsa.PublicKey, error) {
+	curve := elliptic.P256()
+	n := curve.Params().N
+
+	var sig1, sig2 struct {
+		R, S *big.Int
+	}
+	if _, err := asn1.Unmarshal(sig1Bytes, &sig1); err != nil {
+		return nil, fmt.Errorf("sig1: %w", err)
+	}
+	if _, err := asn1.Unmarshal(sig2Bytes, &sig2); err != nil {
+		return nil, fmt.Errorf("sig2: %w", err)
+	}
+	// asn1.Unmarshal accepts negative integers and values larger than the group
+	// order. Both are out of range for ECDSA and would panic inside
+	// crypto/elliptic, so reject them here with a usable error message.
+	for i, sig := range []struct{ R, S *big.Int }{sig1, sig2} {
+		if sig.R.Sign() <= 0 || sig.R.Cmp(n) >= 0 || sig.S.Sign() <= 0 || sig.S.Cmp(n) >= 0 {
+			return nil, fmt.Errorf("sig%d: signature value out of range", i+1)
+		}
+	}
+
+	h1 := sha256.Sum256(clientDataJSON1)
+	signed1 := append(append([]byte(nil), authData1...), h1[:]...)
+	hash1 := sha256.Sum256(signed1)
+
+	h2 := sha256.Sum256(clientDataJSON2)
+	signed2 := append(append([]byte(nil), authData2...), h2[:]...)
+	hash2 := sha256.Sum256(signed2)
+
+	cands1 := recoverCandidatesP256(hash1[:], sig1.R, sig1.S)
+	cands2 := recoverCandidatesP256(hash2[:], sig2.R, sig2.S)
+
+	seen := make(map[string]bool)
+	var matches []*ecdsa.PublicKey
+	for _, c1 := range cands1 {
+		for _, c2 := range cands2 {
+			if c1.X.Cmp(c2.X) != 0 || c1.Y.Cmp(c2.Y) != 0 {
+				continue
+			}
+			k := string(elliptic.Marshal(curve, c1.X, c1.Y))
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+			matches = append(matches, c1)
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, errors.New("no matching public key found from assertions")
+	}
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("multiple matching public keys found (%d)", len(matches))
+	}
+	pk := matches[0]
+	if !ecdsa.Verify(pk, hash1[:], sig1.R, sig1.S) || !ecdsa.Verify(pk, hash2[:], sig2.R, sig2.S) {
+		return nil, errors.New("recovered public key failed signature verification")
+	}
+	return pk, nil
 }

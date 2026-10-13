@@ -32,25 +32,36 @@ function makeResponse(data) {
   if (!data || !data.body) {
     return new Response('Errrrr!', {'status': 500, 'statusText': 'Internal Server Error'});
   }
-  return new Response(data.body, data.options);
+  try {
+    return new Response(data.body, data.options);
+  } catch (err) {
+    if (data.body instanceof ReadableStream) {
+      data.body.cancel(err);
+    }
+    console.error('makeResponse failed:', err);
+    return new Response('Internal Server Error', {'status': 500, 'statusText': 'Internal Server Error'});
+  }
 }
 
-let appStreams = {};
+const appStreams = new Map();
 
 self.onmessage = e => {
-  const id = e.data.streamId;
-  if (id in appStreams) {
-    appStreams[id](e.data);
-    delete appStreams[id];
+  const id = e.data?.streamId;
+  const s = appStreams.get(id);
+  // Only accept the response from the client that made the request.
+  if (s && e.source?.id === s.clientId) {
+    appStreams.delete(id);
+    s.resolve(e.data);
   }
 };
 
-const streamWord = '/stream/';
+const streamPath = /\/stream\/([0-9a-f]{32})$/;
 self.onfetch = e => {
   if (!e.clientId || e.request.method !== 'GET') return;
-  const pos = e.request.url.lastIndexOf(streamWord);
-  if (pos === -1) return;
-  const id = e.request.url.substring(pos+streamWord.length);
+  const url = new URL(e.request.url);
+  const m = url.origin === self.location.origin && url.pathname.match(streamPath);
+  if (!m) return;
+  const id = m[1];
   e.respondWith(new Promise(resolve => {
     self.clients.get(e.clientId).then(c => {
       if (!c) {
@@ -58,13 +69,16 @@ self.onfetch = e => {
         return;
       }
       const timeoutId = setTimeout(() => {
-        delete appStreams[id];
+        appStreams.delete(id);
         resolve(new Response('client did not respond in time', {status: 504, statusText: 'Gateway Timeout'}));
       }, 5000);
-      appStreams[id] = data => {
-        clearTimeout(timeoutId);
-        resolve(makeResponse(data));
-      };
+      appStreams.set(id, {
+        clientId: c.id,
+        resolve: data => {
+          clearTimeout(timeoutId);
+          resolve(makeResponse(data));
+        },
+      });
       c.postMessage({streamId: id});
     });
   }));
