@@ -215,9 +215,9 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	windowDiv := w.document.Call("createElement", "div")
 	windowDiv.Set("id", js.ValueOf(fmt.Sprintf("x11-window-%s", xid)))
 	style := windowDiv.Get("style")
+	style.Set("display", "none")
 	style.Set("position", "absolute")
 	style.Set("width", js.ValueOf(fmt.Sprintf("%dpx", width)))
-	style.Set("border", "1px solid black")
 	winZIndex := w.getHighestZIndex() + 1
 	if len(w.windows) == 0 {
 		winZIndex = 100
@@ -244,6 +244,11 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	offscreenCtx := offscreenCanvas.Call("getContext", "2d", ctxOptions)
 
 	isTopLevel := parent == xID(w.server.rootWindowID())
+	if isTopLevel {
+		style.Set("border", "1px solid black")
+	} else if srvWin, ok := w.server.windows[xid]; ok && srvWin.borderWidth > 0 {
+		style.Set("border", fmt.Sprintf("%dpx solid black", srvWin.borderWidth))
+	}
 	var titleBarHeight int
 	var titleBar, windowTitleSpan, closeButton js.Value
 	var closeClick js.Func
@@ -691,9 +696,59 @@ func (w *wasmX11Frontend) ReparentWindow(windowID, parentID xID, x, y int16) {
 		return
 	}
 
+	style := winInfo.div.Get("style")
+	isNowTopLevel := uint32(parentID) == w.server.rootWindowID()
+	if winInfo.isTopLevel && !isNowTopLevel {
+		if !winInfo.closeButton.IsUndefined() && !winInfo.closeButton.IsNull() {
+			winInfo.closeButton.Call("removeEventListener", "click", winInfo.closeClick)
+			winInfo.closeClick.Release()
+		}
+		if !winInfo.titleBar.IsUndefined() && !winInfo.titleBar.IsNull() {
+			winInfo.titleBar.Call("removeEventListener", "mousedown", winInfo.dragMouseDown)
+			winInfo.titleBar.Call("remove")
+		}
+		w.document.Call("removeEventListener", "mousemove", winInfo.dragMouseMove)
+		w.document.Call("removeEventListener", "mouseup", winInfo.dragMouseUp)
+		winInfo.dragMouseDown.Release()
+		winInfo.dragMouseMove.Release()
+		winInfo.dragMouseUp.Release()
+
+		for _, handle := range winInfo.resizeHandles {
+			handle.Call("removeEventListener", "mousedown", winInfo.resizeMouseDown)
+			handle.Call("remove")
+		}
+		w.document.Call("removeEventListener", "mousemove", winInfo.resizeMouseMove)
+		w.document.Call("removeEventListener", "mouseup", winInfo.resizeMouseUp)
+		winInfo.resizeMouseDown.Release()
+		winInfo.resizeMouseMove.Release()
+		winInfo.resizeMouseUp.Release()
+
+		winInfo.isTopLevel = false
+		winInfo.titleBar = js.Undefined()
+		winInfo.windowTitle = js.Undefined()
+		winInfo.closeButton = js.Undefined()
+		winInfo.resizeHandles = nil
+
+		canvasH := winInfo.canvas.Get("height").Int()
+		style.Set("height", fmt.Sprintf("%dpx", canvasH))
+		if srvWin, ok := w.server.windows[windowID]; ok && srvWin.borderWidth > 0 {
+			style.Set("border", fmt.Sprintf("%dpx solid black", srvWin.borderWidth))
+		} else {
+			style.Set("border", "none")
+		}
+
+		for childID, childInfo := range w.windows {
+			if childInfo.parentID == windowID {
+				if childWin, ok := w.server.windows[childID]; ok {
+					childInfo.div.Get("style").Set("top", fmt.Sprintf("%dpx", childWin.y))
+				}
+			}
+		}
+	}
+
 	var parentDiv js.Value
 	finalY := int(y)
-	if uint32(parentID) == w.server.rootWindowID() {
+	if isNowTopLevel {
 		parentDiv = w.body
 	} else if parentInfo, ok := w.windows[parentID]; ok {
 		parentDiv = parentInfo.div
@@ -706,7 +761,6 @@ func (w *wasmX11Frontend) ReparentWindow(windowID, parentID xID, x, y int16) {
 	}
 
 	winInfo.parentID = parentID
-	style := winInfo.div.Get("style")
 	style.Set("left", fmt.Sprintf("%dpx", x))
 	style.Set("top", fmt.Sprintf("%dpx", finalY))
 
@@ -894,6 +948,14 @@ func (w *wasmX11Frontend) ConfigureWindow(xid xID, valueMask uint16, values []ui
 			valueIndex++
 		}
 		if valueMask&CWBorderWidth != 0 && valueIndex < len(values) {
+			bw := values[valueIndex]
+			if !winInfo.isTopLevel {
+				if bw > 0 {
+					style.Set("border", fmt.Sprintf("%dpx solid black", bw))
+				} else {
+					style.Set("border", "none")
+				}
+			}
 			valueIndex++
 		}
 		if valueMask&CWSibling != 0 && valueIndex < len(values) {
@@ -1393,7 +1455,11 @@ func (w *wasmX11Frontend) applyGCState(ctx js.Value, colormap xID, gc wire.GC, c
 	color := w.getForegroundColor(colormap, gc)
 	ctx.Set("strokeStyle", color)
 	ctx.Set("fillStyle", color)
-	ctx.Set("lineWidth", gc.LineWidth)
+	lineWidth := gc.LineWidth
+	if lineWidth == 0 {
+		lineWidth = 1
+	}
+	ctx.Set("lineWidth", lineWidth)
 
 	switch gc.LineStyle {
 	case wire.LineStyleOnOffDash, wire.LineStyleDoubleDash:
@@ -1671,17 +1737,25 @@ func (w *wasmX11Frontend) PolyLine(drawable xID, gcID xID, points []uint32) {
 			px, py := int(int16(points[i])), int(int16(points[i+1]))
 			opBounds = opBounds.Union(image.Rect(px, py, px+1, py+1))
 		}
-		opBounds = opBounds.Inset(-int(gc.LineWidth))
+		lw := int(gc.LineWidth)
+		if lw < 1 {
+			lw = 1
+		}
+		opBounds = opBounds.Inset(-lw)
 	}
 
 	color := w.getForegroundColor(0, gc) // Colormap ignored for logging color
+	offset := 0.0
+	if gc.LineWidth <= 1 {
+		offset = 0.5
+	}
 
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
 		targetCtx.Call("beginPath")
 		if len(points) >= 2 {
-			targetCtx.Call("moveTo", int(int16(points[0])), int(int16(points[1])))
+			targetCtx.Call("moveTo", float64(int16(points[0]))+offset, float64(int16(points[1]))+offset)
 			for i := 2; i+1 < len(points); i += 2 {
-				targetCtx.Call("lineTo", int(int16(points[i])), int(int16(points[i+1])))
+				targetCtx.Call("lineTo", float64(int16(points[i]))+offset, float64(int16(points[i+1]))+offset)
 			}
 		}
 		targetCtx.Call("stroke")
@@ -1788,15 +1862,23 @@ func (w *wasmX11Frontend) PolySegment(drawable xID, gcID xID, segments []uint32)
 			opBounds = opBounds.Union(r)
 		}
 	}
-	opBounds = opBounds.Inset(-int(gc.LineWidth))
+	lw := int(gc.LineWidth)
+	if lw < 1 {
+		lw = 1
+	}
+	opBounds = opBounds.Inset(-lw)
 
 	color := w.getForegroundColor(0, gc)
+	offset := 0.0
+	if gc.LineWidth <= 1 {
+		offset = 0.5
+	}
 
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
 		for i := 0; i+3 < len(segments); i += 4 {
 			targetCtx.Call("beginPath")
-			targetCtx.Call("moveTo", int(int16(segments[i])), int(int16(segments[i+1])))
-			targetCtx.Call("lineTo", int(int16(segments[i+2])), int(int16(segments[i+3])))
+			targetCtx.Call("moveTo", float64(int16(segments[i]))+offset, float64(int16(segments[i+1]))+offset)
+			targetCtx.Call("lineTo", float64(int16(segments[i+2]))+offset, float64(int16(segments[i+3]))+offset)
 			targetCtx.Call("stroke")
 		}
 	}, opBounds)
@@ -1852,20 +1934,28 @@ func (w *wasmX11Frontend) PolyRectangle(drawable xID, gcID xID, rects []uint32) 
 	for i := 0; i+3 < len(rects); i += 4 {
 		rx, ry := int(int16(rects[i])), int(int16(rects[i+1]))
 		rw, rh := int(uint16(rects[i+2])), int(uint16(rects[i+3]))
-		r := image.Rect(rx, ry, rx+rw, ry+rh)
+		r := image.Rect(rx, ry, rx+rw+1, ry+rh+1)
 		if i == 0 {
 			opBounds = r
 		} else {
 			opBounds = opBounds.Union(r)
 		}
 	}
-	opBounds = opBounds.Inset(-int(gc.LineWidth))
+	lw := int(gc.LineWidth)
+	if lw < 1 {
+		lw = 1
+	}
+	opBounds = opBounds.Inset(-lw)
 
 	color := w.getForegroundColor(0, gc)
+	offset := 0.0
+	if gc.LineWidth <= 1 {
+		offset = 0.5
+	}
 
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
 		for i := 0; i+3 < len(rects); i += 4 {
-			targetCtx.Call("strokeRect", int(int16(rects[i])), int(int16(rects[i+1])), int(uint16(rects[i+2])), int(uint16(rects[i+3])))
+			targetCtx.Call("strokeRect", float64(int16(rects[i]))+offset, float64(int16(rects[i+1]))+offset, int(uint16(rects[i+2])), int(uint16(rects[i+3])))
 		}
 	}, opBounds)
 

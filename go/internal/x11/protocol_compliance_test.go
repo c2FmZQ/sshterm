@@ -379,3 +379,62 @@ func TestXInput_DynamicOffsets(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, byte(64), decodedEvent.BaseEventCode)
 }
+
+func TestPolyCoordinateModePrevious(t *testing.T) {
+	server, client, mockFrontend, _ := setupTestServerWithClient(t)
+	windowID := clientXID(client, 1)
+	server.windows[windowID] = &window{xid: windowID, depth: 24, eventMasks: make(map[uint32]uint32)}
+	gcID := clientXID(client, 2)
+	server.gcs[gcID] = wire.GC{}
+
+	// 1. PolyLine with CoordinateMode = 1 (Previous): rectangle at (100, 2) of size 6x13
+	m6, m13 := int16(-6), int16(-13)
+	neg6 := uint32(int32(m6))
+	neg13 := uint32(int32(m13))
+	polyLineReq := &wire.PolyLineRequest{
+		CoordinateMode: 1,
+		Drawable:       wire.Drawable(windowID),
+		Gc:             wire.GContext(gcID),
+		Coordinates:    []uint32{100, 2, 6, 0, 0, 13, neg6, 0, 0, neg13},
+	}
+	reply := server.handlePolyLine(client, polyLineReq, 1)
+	assert.Nil(t, reply)
+	require.Len(t, mockFrontend.PolyLineCalls, 1)
+	assert.Equal(t, []uint32{100, 2, 106, 2, 106, 15, 100, 15, 100, 2}, mockFrontend.PolyLineCalls[0].points)
+
+	// 2. PolyPoint with CoordinateMode = 1 (Previous)
+	polyPointReq := &wire.PolyPointRequest{
+		CoordinateMode: 1,
+		Drawable:       wire.Drawable(windowID),
+		Gc:             wire.GContext(gcID),
+		Coordinates:    []uint32{10, 20, 5, 5, neg6, 2},
+	}
+	reply = server.handlePolyPoint(client, polyPointReq, 2)
+	assert.Nil(t, reply)
+	require.Len(t, mockFrontend.PolyPointCalls, 1)
+	assert.Equal(t, []uint32{10, 20, 15, 25, 9, 27}, mockFrontend.PolyPointCalls[0].points)
+
+	// 3. FillPoly with CoordinateMode = 1 (Previous)
+	fillPolyReq := &wire.FillPolyRequest{
+		Drawable:       wire.Drawable(windowID),
+		Gc:             wire.GContext(gcID),
+		Shape:          0,
+		CoordinateMode: 1,
+		Coordinates:    []uint32{50, 50, 10, 0, 0, 10},
+	}
+	reply = server.handleFillPoly(client, fillPolyReq, 3)
+	assert.Nil(t, reply)
+	require.Len(t, mockFrontend.FillPolyCalls, 1)
+	assert.Equal(t, []uint32{50, 50, 60, 50, 60, 60}, mockFrontend.FillPolyCalls[0].points)
+
+	// 4. Invalid CoordinateMode (> 1) returns ValueErrorCode
+	badPolyLine := &wire.PolyLineRequest{
+		CoordinateMode: 2,
+		Drawable:       wire.Drawable(windowID),
+		Gc:             wire.GContext(gcID),
+	}
+	reply = server.handlePolyLine(client, badPolyLine, 4)
+	errReply, ok := reply.(wire.Error)
+	require.True(t, ok)
+	assert.Equal(t, wire.ValueErrorCode, errReply.Code())
+}

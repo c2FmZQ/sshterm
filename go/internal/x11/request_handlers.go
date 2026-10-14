@@ -1948,8 +1948,29 @@ func (s *x11Server) handleCopyPlane(client *x11Client, req wire.Request, seq uin
 	return nil
 }
 
+func resolveCoordinates(mode byte, coords []uint32) []uint32 {
+	if mode != 1 || len(coords) < 4 {
+		return coords
+	}
+	out := make([]uint32, len(coords))
+	curX := int16(coords[0])
+	curY := int16(coords[1])
+	out[0] = uint32(int32(curX))
+	out[1] = uint32(int32(curY))
+	for i := 2; i+1 < len(coords); i += 2 {
+		curX += int16(coords[i])
+		curY += int16(coords[i+1])
+		out[i] = uint32(int32(curX))
+		out[i+1] = uint32(int32(curY))
+	}
+	return out
+}
+
 func (s *x11Server) handlePolyPoint(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.PolyPointRequest)
+	if p.CoordinateMode > 1 {
+		return wire.NewGenericError(seq, uint32(p.CoordinateMode), 0, wire.PolyPoint, wire.ValueErrorCode)
+	}
 	drawable := xID(p.Drawable)
 	gcID := xID(p.Gc)
 	if err := s.checkGC(gcID, seq, wire.PolyPoint, 0); err != nil {
@@ -1958,12 +1979,15 @@ func (s *x11Server) handlePolyPoint(client *x11Client, req wire.Request, seq uin
 	if err := s.checkDrawable(drawable, seq, wire.PolyPoint, 0); err != nil {
 		return err
 	}
-	s.frontend.PolyPoint(drawable, gcID, p.Coordinates)
+	s.frontend.PolyPoint(drawable, gcID, resolveCoordinates(p.CoordinateMode, p.Coordinates))
 	return nil
 }
 
 func (s *x11Server) handlePolyLine(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.PolyLineRequest)
+	if p.CoordinateMode > 1 {
+		return wire.NewGenericError(seq, uint32(p.CoordinateMode), 0, wire.PolyLine, wire.ValueErrorCode)
+	}
 	drawable := xID(p.Drawable)
 	gcID := xID(p.Gc)
 	if err := s.checkGC(gcID, seq, wire.PolyLine, 0); err != nil {
@@ -1972,7 +1996,7 @@ func (s *x11Server) handlePolyLine(client *x11Client, req wire.Request, seq uint
 	if err := s.checkDrawable(drawable, seq, wire.PolyLine, 0); err != nil {
 		return err
 	}
-	s.frontend.PolyLine(drawable, gcID, p.Coordinates)
+	s.frontend.PolyLine(drawable, gcID, resolveCoordinates(p.CoordinateMode, p.Coordinates))
 	return nil
 }
 
@@ -2020,6 +2044,12 @@ func (s *x11Server) handlePolyArc(client *x11Client, req wire.Request, seq uint1
 
 func (s *x11Server) handleFillPoly(client *x11Client, req wire.Request, seq uint16) messageEncoder {
 	p := req.(*wire.FillPolyRequest)
+	if p.Shape > 2 {
+		return wire.NewGenericError(seq, uint32(p.Shape), 0, wire.FillPoly, wire.ValueErrorCode)
+	}
+	if p.CoordinateMode > 1 {
+		return wire.NewGenericError(seq, uint32(p.CoordinateMode), 0, wire.FillPoly, wire.ValueErrorCode)
+	}
 	drawable := xID(p.Drawable)
 	gcID := xID(p.Gc)
 	if err := s.checkGC(gcID, seq, wire.FillPoly, 0); err != nil {
@@ -2028,7 +2058,7 @@ func (s *x11Server) handleFillPoly(client *x11Client, req wire.Request, seq uint
 	if err := s.checkDrawable(drawable, seq, wire.FillPoly, 0); err != nil {
 		return err
 	}
-	s.frontend.FillPoly(drawable, gcID, p.Coordinates)
+	s.frontend.FillPoly(drawable, gcID, resolveCoordinates(p.CoordinateMode, p.Coordinates))
 	return nil
 }
 

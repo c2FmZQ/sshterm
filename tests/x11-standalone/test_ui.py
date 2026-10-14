@@ -12,41 +12,109 @@ def log_event(msg):
 
 root = tk.Tk()
 root.title("Tkinter Test UI")
-# Set a fixed size so coordinate clicking is deterministic
-root.geometry("400x500+0+0")
+# Set a fixed size and non-overlapping position so coordinate clicking and screenshots are deterministic
+root.geometry("400x500+500+50")
 root.resizable(False, False)
+root.configure(bg="#e0e0e0")
 
 log_event("Tkinter UI started")
 
 # 1. Entry widget (text input) at y=30
 entry_var = tk.StringVar(value="")
 entry_var.trace_add("write", lambda *args: log_event(f"entry_var changed to: {entry_var.get()}"))
-entry = tk.Entry(root, textvariable=entry_var, font=("Courier", 12))
+entry = tk.Entry(
+    root,
+    textvariable=entry_var,
+    font=("Courier", 12),
+    bg="#ffffff",
+    fg="#000000",
+    insertbackground="#000000",
+    highlightthickness=0,
+    bd=1,
+)
 entry.place(x=50, y=30, width=300, height=30)
 entry.focus_set()
 
 # 2. Checkbutton widget at y=80
 check_var = tk.BooleanVar(value=False)
 check_var.trace_add("write", lambda *args: log_event(f"check_var changed to: {check_var.get()}"))
-check = tk.Checkbutton(root, text="Enable Feature", variable=check_var, font=("Courier", 12))
+check = tk.Checkbutton(
+    root,
+    text="Enable Feature",
+    variable=check_var,
+    font=("Courier", 12),
+    bg="#e0e0e0",
+    fg="#000000",
+    activebackground="#e0e0e0",
+    activeforeground="#000000",
+    selectcolor="#ff0000",
+    highlightthickness=0,
+)
 check.place(x=50, y=80)
 
 # 3. Radiobuttons group at y=130
 radio_var = tk.IntVar(value=1)
 radio_var.trace_add("write", lambda *args: log_event(f"radio_var changed to: {radio_var.get()}"))
-radio1 = tk.Radiobutton(root, text="Option A", variable=radio_var, value=1, font=("Courier", 12))
+radio1 = tk.Radiobutton(
+    root,
+    text="Option A",
+    variable=radio_var,
+    value=1,
+    font=("Courier", 12),
+    bg="#e0e0e0",
+    fg="#000000",
+    activebackground="#e0e0e0",
+    activeforeground="#000000",
+    selectcolor="#ff0000",
+    highlightthickness=0,
+)
 radio1.place(x=50, y=130)
-radio2 = tk.Radiobutton(root, text="Option B", variable=radio_var, value=2, font=("Courier", 12))
+radio2 = tk.Radiobutton(
+    root,
+    text="Option B",
+    variable=radio_var,
+    value=2,
+    font=("Courier", 12),
+    bg="#e0e0e0",
+    fg="#000000",
+    activebackground="#e0e0e0",
+    activeforeground="#000000",
+    selectcolor="#ff0000",
+    highlightthickness=0,
+)
 radio2.place(x=180, y=130)
 
 # 4. Scale widget (slider) at y=180
-scale_var = tk.DoubleVar(value=10.0)
+scale_var = tk.DoubleVar(value=0.0)
 scale_var.trace_add("write", lambda *args: log_event(f"scale_var changed to: {scale_var.get()}"))
-scale = tk.Scale(root, from_=0, to=100, orient=tk.HORIZONTAL, variable=scale_var, font=("Courier", 10))
+scale = tk.Scale(
+    root,
+    from_=0,
+    to=100,
+    resolution=80,
+    orient=tk.HORIZONTAL,
+    variable=scale_var,
+    font=("Courier", 10),
+    bg="#0055aa",
+    fg="#ffffff",
+    activebackground="#0055aa",
+    troughcolor="#ffff00",
+    highlightthickness=0,
+)
 scale.place(x=50, y=180, width=300, height=45)
 
 # 5. Listbox widget at y=240
-listbox = tk.Listbox(root, selectmode=tk.SINGLE, font=("Courier", 12))
+listbox = tk.Listbox(
+    root,
+    selectmode=tk.SINGLE,
+    font=("Courier", 12),
+    bg="#ffffff",
+    fg="#000000",
+    selectbackground="#0000ff",
+    selectforeground="#ffffff",
+    highlightthickness=0,
+    activestyle="none",
+)
 for item in ["Apple", "Banana", "Cherry", "Date"]:
     listbox.insert(tk.END, item)
 listbox.place(x=50, y=240, width=300, height=80)
@@ -84,8 +152,26 @@ def on_submit():
         root.destroy()
 
 # 6. Button widget at y=360
-submit_btn = tk.Button(root, text="Submit Form", command=on_submit, font=("Courier", 12))
+submit_btn = tk.Button(
+    root,
+    text="Submit Form",
+    command=on_submit,
+    font=("Courier", 12),
+    bg="#008000",
+    fg="#ffffff",
+    activebackground="#008000",
+    activeforeground="#ffffff",
+    highlightthickness=0,
+)
 submit_btn.place(x=130, y=360, width=140, height=40)
 
+# 7. Canvas widget with geometric primitives at y=420
+shapes_canvas = tk.Canvas(root, bg="#ffffff", highlightthickness=0, bd=0)
+shapes_canvas.place(x=50, y=420, width=300, height=60)
+shapes_canvas.create_rectangle(10, 10, 80, 50, fill="#ff00ff", outline="")
+shapes_canvas.create_oval(110, 10, 180, 50, fill="#00ffff", outline="")
+shapes_canvas.create_polygon(210, 50, 250, 10, 290, 50, fill="#ff8000", outline="")
+
 root.mainloop()
+
 
