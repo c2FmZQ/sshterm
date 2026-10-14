@@ -291,3 +291,55 @@ var KeyCodeToKeysym = map[byte]uint32{
 	202: 0xffd5, // XK_F24
 	248: 0,      // Unidentified
 }
+
+// KeyCodeToShiftedKeysym maps X11 keycodes to their shifted keysyms (index 1).
+var KeyCodeToShiftedKeysym = map[byte]uint32{
+	10: 0x0021, // XK_exclam (!)
+	11: 0x0040, // XK_at (@)
+	12: 0x0023, // XK_numbersign (#)
+	13: 0x0024, // XK_dollar ($)
+	14: 0x0025, // XK_percent (%)
+	15: 0x005e, // XK_asciicircum (^)
+	16: 0x0026, // XK_ampersand (&)
+	17: 0x002a, // XK_asterisk (*)
+	18: 0x0028, // XK_parenleft (()
+	19: 0x0029, // XK_parenright ())
+	20: 0x005f, // XK_underscore (_)
+	21: 0x002b, // XK_plus (+)
+	24: 0x0051, // XK_Q
+	25: 0x0057, // XK_W
+	26: 0x0045, // XK_E
+	27: 0x0052, // XK_R
+	28: 0x0054, // XK_T
+	29: 0x0059, // XK_Y
+	30: 0x0055, // XK_U
+	31: 0x0049, // XK_I
+	32: 0x004f, // XK_O
+	33: 0x0050, // XK_P
+	34: 0x007b, // XK_braceleft ({)
+	35: 0x007d, // XK_braceright (})
+	38: 0x0041, // XK_A
+	39: 0x0053, // XK_S
+	40: 0x0044, // XK_D
+	41: 0x0046, // XK_F
+	42: 0x0047, // XK_G
+	43: 0x0048, // XK_H
+	44: 0x004a, // XK_J
+	45: 0x004b, // XK_K
+	46: 0x004c, // XK_L
+	47: 0x003a, // XK_colon (:)
+	48: 0x0022, // XK_quotedbl (")
+	49: 0x007e, // XK_asciitilde (~)
+	51: 0x007c, // XK_bar (|)
+	52: 0x005a, // XK_Z
+	53: 0x0058, // XK_X
+	54: 0x0043, // XK_C
+	55: 0x0056, // XK_V
+	56: 0x0042, // XK_B
+	57: 0x004e, // XK_N
+	58: 0x004d, // XK_M
+	59: 0x003c, // XK_less (<)
+	60: 0x003e, // XK_greater (>)
+	61: 0x003f, // XK_question (?)
+	94: 0x007c, // XK_bar (|)
+}

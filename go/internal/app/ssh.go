@@ -33,7 +33,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"path"
 	"strconv"
@@ -146,7 +145,6 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	}
 
 	if forwardX11 && !x11.Enabled() {
-		t.Errorf("X11 support is not included in this build")
 		return fmt.Errorf("X11 forwarding requested, but X11 support is not included in this build")
 	}
 	if forwardX11 && x11.Enabled() {
@@ -167,19 +165,15 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 			AuthenticationCookie:   hex.EncodeToString(cookie),
 			ScreenNumber:           0,
 		}
-		logger := &termLogger{t}
+		logger := &termLogger{t: t, inShell: a.inShell}
 		x11.HandleX11Forwarding(logger, client, payload.AuthenticationProtocol, cookie)
 
-		log.Printf("Sending x11-req with payload: %+v\n", payload)
 		ok, err := session.SendRequest("x11-req", true, ssh.Marshal(payload))
 		if err != nil {
-			log.Printf("session.SendRequest x11-req failed: %v\n", err)
 			return fmt.Errorf("session.SendRequest x11-req: %w", err)
 		}
 		if !ok {
-			log.Printf("session.SendRequest x11-req returned false (X11 forwarding rejected by server)\n")
-		} else {
-			log.Printf("session.SendRequest x11-req returned true\n")
+			t.Errorf("X11 forwarding request rejected by remote server")
 		}
 	}
 

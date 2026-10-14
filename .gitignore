@@ -11,7 +11,9 @@ bin/
 cache/
 config.yaml
 tlsproxy.env
-js_tests/.npm-cache
 .gemini/
 /testserver
 tests/x11-standalone/*.png
+tests/x11-standalone/tkinter_ui.log
+tests/x11-standalone/tkinter_state.json
+tests/x11-standalone/standalone.config.json

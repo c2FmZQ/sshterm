@@ -410,7 +410,7 @@ func (m *MockX11Frontend) CopyPlane(srcDrawable, dstDrawable xID, gcID xID, srcX
 
 func (m *MockX11Frontend) GetImage(drawable xID, x, y, width, height int32, format uint32) ([]byte, error) {
 	m.GetImageCalls = append(m.GetImageCalls, &getImageCall{drawable, uint32(x), uint32(y), uint32(width), uint32(height), format})
-	return m.GetImageReturn, nil
+	return m.GetImageReturn, m.GetImageError
 }
 
 func (m *MockX11Frontend) ImageText8(drawable xID, gcID xID, x, y int32, text []byte) {
@@ -485,8 +485,6 @@ func (m *MockX11Frontend) GrabKeyboard(grabWindow xID, ownerEvents bool, time ui
 }
 
 func (m *MockX11Frontend) UngrabKeyboard(time uint32) {}
-
-func (m *MockX11Frontend) SetCursor(window xID, cursor uint32) {}
 
 func (m *MockX11Frontend) WarpPointer(x, y int16) {}
 

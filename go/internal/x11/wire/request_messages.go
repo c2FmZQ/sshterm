@@ -5,7 +5,6 @@ package wire
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 )
 
 // Request is an interface implemented by all X11 request structs.
@@ -106,7 +105,11 @@ func ParseRequest(order binary.ByteOrder, raw []byte, seq uint16, bigRequestsEna
 		return ParseGetAtomNameRequest(order, body, seq)
 
 	case ChangeProperty:
-		return ParseChangePropertyRequest(order, body, seq)
+		req, err := ParseChangePropertyRequest(order, body, seq)
+		if err == nil {
+			req.Mode = data
+		}
+		return req, err
 
 	case DeleteProperty:
 		return ParseDeletePropertyRequest(order, body, seq)
@@ -235,7 +238,11 @@ func ParseRequest(order binary.ByteOrder, raw []byte, seq uint16, bigRequestsEna
 		return ParseFreeGCRequest(order, body, seq)
 
 	case ClearArea:
-		return ParseClearAreaRequest(order, body, seq)
+		req, err := ParseClearAreaRequest(order, body, seq)
+		if err == nil {
+			req.Exposures = data != 0
+		}
+		return req, err
 
 	case CopyArea:
 		return ParseCopyAreaRequest(order, body, seq)
@@ -331,7 +338,11 @@ func ParseRequest(order binary.ByteOrder, raw []byte, seq uint16, bigRequestsEna
 		return ParseRecolorCursorRequest(order, body, seq)
 
 	case QueryBestSize:
-		return ParseQueryBestSizeRequest(order, body, seq)
+		req, err := ParseQueryBestSizeRequest(order, body, seq)
+		if err == nil {
+			req.Class = data
+		}
+		return req, err
 
 	case QueryExtension:
 		return ParseQueryExtensionRequest(order, body, seq)
@@ -409,7 +420,7 @@ func ParseRequest(order binary.ByteOrder, raw []byte, seq uint16, bigRequestsEna
 		return ParseCopyPlaneRequest(order, body, seq)
 
 	case ListExtensions:
-		return ParseListExtensionsRequest(order, raw, seq)
+		return ParseListExtensionsRequest(order, body, seq)
 
 	case ChangePointerControl:
 		return ParseChangePointerControlRequest(order, body, seq)
@@ -418,7 +429,7 @@ func ParseRequest(order binary.ByteOrder, raw []byte, seq uint16, bigRequestsEna
 		return ParseGetPointerControlRequest(order, body, seq)
 
 	default:
-		return nil, fmt.Errorf("x11: unhandled opcode %d", opcode)
+		return nil, NewError(RequestErrorCode, seq, 0, Opcodes{Major: opcode, Minor: data})
 	}
 }
 
@@ -1220,6 +1231,7 @@ n                                     LISTofBYTE, LISTofCARD16,
 p                                     padding
 */
 type ChangePropertyRequest struct {
+	Mode     byte
 	Window   Window
 	Property Atom
 	Type     Atom
@@ -1230,14 +1242,21 @@ type ChangePropertyRequest struct {
 func (r *ChangePropertyRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := new(bytes.Buffer)
 	binary.Write(buf, order, r.OpCode())
-	buf.WriteByte(0)
+	buf.WriteByte(r.Mode)
 	binary.Write(buf, order, uint16(6+(len(r.Data)+PadLen(len(r.Data)))/4)) // length
 	binary.Write(buf, order, r.Window)
 	binary.Write(buf, order, r.Property)
 	binary.Write(buf, order, r.Type)
 	buf.WriteByte(r.Format)
 	buf.Write([]byte{0, 0, 0}) // unused
-	binary.Write(buf, order, uint32(len(r.Data)))
+	nElements := uint32(len(r.Data))
+	switch r.Format {
+	case 16:
+		nElements = uint32(len(r.Data) / 2)
+	case 32:
+		nElements = uint32(len(r.Data) / 4)
+	}
+	binary.Write(buf, order, nElements)
 	buf.Write(r.Data)
 	buf.Write(make([]byte, PadLen(len(r.Data))))
 	return buf.Bytes()
@@ -1254,21 +1273,25 @@ func ParseChangePropertyRequest(order binary.ByteOrder, requestBody []byte, seq 
 	req.Property = Atom(order.Uint32(requestBody[4:8]))
 	req.Type = Atom(order.Uint32(requestBody[8:12]))
 	req.Format = requestBody[12]
-	nElements := order.Uint32(requestBody[16:20])
+	nElements := uint64(order.Uint32(requestBody[16:20]))
 
-	var dataLen int
+	var dataLen64 uint64
 	switch req.Format {
 	case 8:
-		dataLen = int(nElements)
+		dataLen64 = nElements
 	case 16:
-		dataLen = int(nElements) * 2
+		dataLen64 = nElements * 2
 	case 32:
-		dataLen = int(nElements) * 4
+		dataLen64 = nElements * 4
 	default:
 		return nil, NewError(ValueErrorCode, seq, uint32(req.Format), Opcodes{Major: ChangeProperty, Minor: 0})
 	}
 
-	if len(requestBody) < 20+dataLen {
+	if dataLen64 > uint64(len(requestBody)-20) {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: ChangeProperty, Minor: 0})
+	}
+	dataLen := int(dataLen64)
+	if len(requestBody) != 20+dataLen+PadLen(dataLen) {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: ChangeProperty, Minor: 0})
 	}
 	req.Data = requestBody[20 : 20+dataLen]
@@ -2046,6 +2069,9 @@ func (r *GrabServerRequest) EncodeMessage(order binary.ByteOrder) []byte {
 func (GrabServerRequest) OpCode() ReqCode { return GrabServer }
 
 func ParseGrabServerRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GrabServerRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: GrabServer, Minor: 0})
+	}
 	return &GrabServerRequest{}, nil
 }
 
@@ -2069,6 +2095,9 @@ func (r *UngrabServerRequest) EncodeMessage(order binary.ByteOrder) []byte {
 func (UngrabServerRequest) OpCode() ReqCode { return UngrabServer }
 
 func ParseUngrabServerRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*UngrabServerRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: UngrabServer, Minor: 0})
+	}
 	return &UngrabServerRequest{}, nil
 }
 
@@ -2309,6 +2338,9 @@ func (r *GetInputFocusRequest) EncodeMessage(order binary.ByteOrder) []byte {
 func (GetInputFocusRequest) OpCode() ReqCode { return GetInputFocus }
 
 func ParseGetInputFocusRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetInputFocusRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: GetInputFocus, Minor: 0})
+	}
 	return &GetInputFocusRequest{}, nil
 }
 
@@ -2332,6 +2364,9 @@ func (r *QueryKeymapRequest) EncodeMessage(order binary.ByteOrder) []byte {
 func (QueryKeymapRequest) OpCode() ReqCode { return QueryKeymap }
 
 func ParseQueryKeymapRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*QueryKeymapRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: QueryKeymap, Minor: 0})
+	}
 	return &QueryKeymapRequest{}, nil
 }
 
@@ -2661,6 +2696,9 @@ type GetFontPathRequest struct{}
 func (GetFontPathRequest) OpCode() ReqCode { return GetFontPath }
 
 func ParseGetFontPathRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetFontPathRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: GetFontPath, Minor: 0})
+	}
 	return &GetFontPathRequest{}, nil
 }
 
@@ -2749,9 +2787,12 @@ func ParseCreateGCRequest(order binary.ByteOrder, requestBody []byte, seq uint16
 	req.Cid = GContext(order.Uint32(requestBody[0:4]))
 	req.Drawable = Drawable(order.Uint32(requestBody[4:8]))
 	req.ValueMask = order.Uint32(requestBody[8:12])
-	values, _, err := ParseGCValues(order, req.ValueMask, requestBody[12:], seq)
+	values, bytesRead, err := ParseGCValues(order, req.ValueMask, requestBody[12:], seq)
 	if err != nil {
 		return nil, err
+	}
+	if len(requestBody) != 12+bytesRead {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: CreateGC, Minor: 0})
 	}
 	req.Values = values
 	return req, nil
@@ -2782,9 +2823,12 @@ func ParseChangeGCRequest(order binary.ByteOrder, requestBody []byte, seq uint16
 	req := &ChangeGCRequest{}
 	req.Gc = GContext(order.Uint32(requestBody[0:4]))
 	req.ValueMask = order.Uint32(requestBody[4:8])
-	values, _, err := ParseGCValues(order, req.ValueMask, requestBody[8:], seq)
+	values, bytesRead, err := ParseGCValues(order, req.ValueMask, requestBody[8:], seq)
 	if err != nil {
 		return nil, err
+	}
+	if len(requestBody) != 8+bytesRead {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: ChangeGC, Minor: 0})
 	}
 	req.Values = values
 	return req, nil
@@ -3205,7 +3249,7 @@ type PolyArcRequest struct {
 func (PolyArcRequest) OpCode() ReqCode { return PolyArc }
 
 func ParsePolyArcRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*PolyArcRequest, error) {
-	if len(requestBody) < 8 {
+	if len(requestBody) < 8 || (len(requestBody)-8)%12 != 0 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: PolyArc, Minor: 0})
 	}
 	req := &PolyArcRequest{}
@@ -3267,7 +3311,7 @@ func (r *FillPolyRequest) EncodeMessage(order binary.ByteOrder) []byte {
 func (FillPolyRequest) OpCode() ReqCode { return FillPoly }
 
 func ParseFillPolyRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*FillPolyRequest, error) {
-	if len(requestBody) < 12 {
+	if len(requestBody) < 12 || (len(requestBody)-12)%4 != 0 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: FillPoly, Minor: 0})
 	}
 	req := &FillPolyRequest{}
@@ -3304,7 +3348,7 @@ type PolyFillRectangleRequest struct {
 func (PolyFillRectangleRequest) OpCode() ReqCode { return PolyFillRectangle }
 
 func ParsePolyFillRectangleRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*PolyFillRectangleRequest, error) {
-	if len(requestBody) < 8 {
+	if len(requestBody) < 8 || (len(requestBody)-8)%8 != 0 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: PolyFillRectangle, Minor: 0})
 	}
 	req := &PolyFillRectangleRequest{}
@@ -3341,7 +3385,7 @@ type PolyFillArcRequest struct {
 func (PolyFillArcRequest) OpCode() ReqCode { return PolyFillArc }
 
 func ParsePolyFillArcRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*PolyFillArcRequest, error) {
-	if len(requestBody) < 8 {
+	if len(requestBody) < 8 || (len(requestBody)-8)%12 != 0 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: PolyFillArc, Minor: 0})
 	}
 	req := &PolyFillArcRequest{}
@@ -3486,7 +3530,7 @@ func (r *PolyText8Request) EncodeMessage(order binary.ByteOrder) []byte {
 			itemsBytes.Write(i.Str)
 		case PolyTextFont:
 			itemsBytes.WriteByte(255)
-			binary.Write(itemsBytes, order, i.Font)
+			binary.Write(itemsBytes, binary.BigEndian, i.Font)
 		}
 	}
 	length := uint16(4 + (itemsBytes.Len()+PadLen(itemsBytes.Len()))/4)
@@ -3528,7 +3572,7 @@ func ParsePolyText8Request(order binary.ByteOrder, data []byte, seq uint16) (*Po
 			if i+itemSize > len(data) {
 				break
 			}
-			font := Font(order.Uint32(data[i+1 : i+5]))
+			font := Font(binary.BigEndian.Uint32(data[i+1 : i+5]))
 			req.Items = append(req.Items, PolyTextFont{Font: font})
 			i += itemSize
 		} else {
@@ -3581,7 +3625,7 @@ func (r *PolyText16Request) EncodeMessage(order binary.ByteOrder) []byte {
 			}
 		case PolyTextFont:
 			itemsBytes.WriteByte(255)
-			binary.Write(itemsBytes, order, i.Font)
+			binary.Write(itemsBytes, binary.BigEndian, i.Font)
 		}
 	}
 	length := uint16(4 + (itemsBytes.Len()+PadLen(itemsBytes.Len()))/4)
@@ -3623,7 +3667,7 @@ func ParsePolyText16Request(order binary.ByteOrder, data []byte, seq uint16) (*P
 			if i+itemSize > len(data) {
 				break
 			}
-			font := Font(order.Uint32(data[i+1 : i+5]))
+			font := Font(binary.BigEndian.Uint32(data[i+1 : i+5]))
 			req.Items = append(req.Items, PolyTextFont{Font: font})
 			i += itemSize
 		} else {
@@ -4027,7 +4071,7 @@ StoreColors
 12n   LISTofCOLORITEM                 items
 */
 func ParseStoreColorsRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*StoreColorsRequest, error) {
-	if len(requestBody) < 4 {
+	if len(requestBody) < 4 || (len(requestBody)-4)%12 != 0 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: StoreColors, Minor: 0})
 	}
 	req := &StoreColorsRequest{}
@@ -4076,8 +4120,9 @@ func ParseStoreNamedColorRequest(order binary.ByteOrder, data byte, requestBody 
 	req := &StoreNamedColorRequest{}
 	req.Cmap = Colormap(order.Uint32(requestBody[0:4]))
 	req.Pixel = order.Uint32(requestBody[4:8])
-	nameLen := order.Uint16(requestBody[8:10])
-	if len(requestBody) < 12+int(nameLen) {
+	nameLen := int(order.Uint16(requestBody[8:10]))
+	paddedLen := 12 + nameLen + PadLen(nameLen)
+	if len(requestBody) != paddedLen {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: StoreNamedColor, Minor: 0})
 	}
 	req.Name = string(requestBody[12 : 12+nameLen])
@@ -4102,7 +4147,7 @@ QueryColors
 4n    LISTofCARD32                    pixels
 */
 func ParseQueryColorsRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*QueryColorsRequest, error) {
-	if len(requestBody) < 4 {
+	if len(requestBody) < 4 || (len(requestBody)-4)%4 != 0 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: QueryColors, Minor: 0})
 	}
 	req := &QueryColorsRequest{}
@@ -4369,7 +4414,7 @@ n     LISTofBYTE                      map
 func ParseSetPointerMappingRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*SetPointerMappingRequest, error) {
 	req := &SetPointerMappingRequest{}
 	mapLen := int(data)
-	if len(requestBody) < mapLen {
+	if len(requestBody) < mapLen || len(requestBody) > mapLen+PadLen(mapLen) {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: SetPointerMapping, Minor: 0})
 	}
 	req.Map = requestBody[:mapLen]
@@ -4396,6 +4441,9 @@ GetPointerMapping
 2     1                               request length
 */
 func ParseGetPointerMappingRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetPointerMappingRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: GetPointerMapping, Minor: 0})
+	}
 	return &GetPointerMappingRequest{}, nil
 }
 
@@ -4419,6 +4467,9 @@ GetPointerControl
 2     1                               request length
 */
 func ParseGetPointerControlRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetPointerControlRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: GetPointerControl, Minor: 0})
+	}
 	return &GetPointerControlRequest{}, nil
 }
 
@@ -4478,7 +4529,7 @@ func ParseChangeKeyboardMappingRequest(order binary.ByteOrder, data byte, reques
 	req.FirstKeyCode = KeyCode(requestBody[0])
 	req.KeySymsPerKeyCode = requestBody[1]
 	numKeySyms := int(req.KeyCodeCount) * int(req.KeySymsPerKeyCode)
-	if len(requestBody) < 4+numKeySyms*4 {
+	if len(requestBody) != 4+numKeySyms*4 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: ChangeKeyboardMapping, Minor: 0})
 	}
 	for i := 0; i < numKeySyms; i++ {
@@ -4510,9 +4561,12 @@ func ParseChangeKeyboardControlRequest(order binary.ByteOrder, requestBody []byt
 	}
 	req := &ChangeKeyboardControlRequest{}
 	req.ValueMask = order.Uint32(requestBody[0:4])
-	values, _, err := ParseKeyboardControl(order, req.ValueMask, requestBody[4:], seq)
+	values, bytesRead, err := ParseKeyboardControl(order, req.ValueMask, requestBody[4:], seq)
 	if err != nil {
 		return nil, err
+	}
+	if len(requestBody) != 4+bytesRead {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: ChangeKeyboardControl, Minor: 0})
 	}
 	req.Values = values
 	return req, nil
@@ -4530,6 +4584,9 @@ GetKeyboardControl
 2     1                               request length
 */
 func ParseGetKeyboardControlRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetKeyboardControlRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: GetKeyboardControl, Minor: 0})
+	}
 	return &GetKeyboardControlRequest{}, nil
 }
 
@@ -4578,6 +4635,9 @@ GetScreenSaver
 2     1                               request length
 */
 func ParseGetScreenSaverRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetScreenSaverRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: GetScreenSaver, Minor: 0})
+	}
 	return &GetScreenSaverRequest{}, nil
 }
 
@@ -4611,8 +4671,9 @@ func ParseChangeHostsRequest(order binary.ByteOrder, data byte, requestBody []by
 	req := &ChangeHostsRequest{}
 	req.Mode = data
 	family := requestBody[0]
-	addressLen := order.Uint16(requestBody[2:4])
-	if len(requestBody) < 4+int(addressLen) {
+	addressLen := int(order.Uint16(requestBody[2:4]))
+	paddedLen := 4 + addressLen + PadLen(addressLen)
+	if len(requestBody) != paddedLen {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: ChangeHosts, Minor: 0})
 	}
 	req.Host = Host{
@@ -4634,6 +4695,9 @@ ListHosts
 2     1                               request length
 */
 func ParseListHostsRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*ListHostsRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: ListHosts, Minor: 0})
+	}
 	return &ListHostsRequest{}, nil
 }
 
@@ -4651,6 +4715,9 @@ SetAccessControl
 2     1                               request length
 */
 func ParseSetAccessControlRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*SetAccessControlRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: SetAccessControl, Minor: 0})
+	}
 	req := &SetAccessControlRequest{}
 	req.Mode = data
 	return req, nil
@@ -4673,6 +4740,9 @@ SetCloseDownMode
 2     1                               request length
 */
 func ParseSetCloseDownModeRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*SetCloseDownModeRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: SetCloseDownMode, Minor: 0})
+	}
 	req := &SetCloseDownModeRequest{}
 	req.Mode = data
 	return req, nil
@@ -4728,7 +4798,7 @@ func ParseRotatePropertiesRequest(order binary.ByteOrder, requestBody []byte, se
 	req.Window = Window(order.Uint32(requestBody[0:4]))
 	numAtoms := order.Uint16(requestBody[4:6])
 	req.Delta = int16(order.Uint16(requestBody[6:8]))
-	if len(requestBody) < 8+int(numAtoms)*4 {
+	if len(requestBody) != 8+int(numAtoms)*4 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: RotateProperties, Minor: 0})
 	}
 	for i := 0; i < int(numAtoms); i++ {
@@ -4752,6 +4822,9 @@ ForceScreenSaver
 2     1                               request length
 */
 func ParseForceScreenSaverRequest(order binary.ByteOrder, data byte, requestBody []byte, seq uint16) (*ForceScreenSaverRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: ForceScreenSaver, Minor: 0})
+	}
 	req := &ForceScreenSaverRequest{}
 	req.Mode = data
 	return req, nil
@@ -4817,6 +4890,9 @@ GetModifierMapping
 2     1                               request length
 */
 func ParseGetModifierMappingRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*GetModifierMappingRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: GetModifierMapping, Minor: 0})
+	}
 	return &GetModifierMappingRequest{}, nil
 }
 
@@ -5394,7 +5470,10 @@ ListExtensions
 1                                     unused
 2     1                               request length
 */
-func ParseListExtensionsRequest(order binary.ByteOrder, raw []byte, seq uint16) (*ListExtensionsRequest, error) {
+func ParseListExtensionsRequest(order binary.ByteOrder, requestBody []byte, seq uint16) (*ListExtensionsRequest, error) {
+	if len(requestBody) != 0 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: ListExtensions, Minor: 0})
+	}
 	return &ListExtensionsRequest{}, nil
 }
 

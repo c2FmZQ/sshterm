@@ -282,7 +282,8 @@ func (t *Terminal) Errorf(f string, args ...any) {
 }
 
 func (t *Terminal) Infof(f string, args ...any) {
-	t.Printf(f, args...)
+	s := fmt.Sprintf(f, args...)
+	t.Printf("%s\n", s)
 }
 
 func (t *Terminal) Greenf(f string, args ...any) {

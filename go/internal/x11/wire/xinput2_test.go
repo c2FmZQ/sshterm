@@ -29,8 +29,9 @@ func TestXIBarrierReleasePointerRequest_EncodeDecode(t *testing.T) {
 		NumBarriers: 1,
 		Barriers: []XIBarrier{
 			{
-				Barrier: 1,
-				EventID: 2,
+				DeviceID: 3,
+				Barrier:  1,
+				EventID:  2,
 			},
 		},
 	}
@@ -327,7 +328,7 @@ func TestXIChangeHierarchyRequest_EncodeDecode(t *testing.T) {
 		Changes: []XIChangeHierarchyChange{
 			&XIDetachSlave{
 				Type:     4,
-				Length:   8,
+				Length:   2,
 				DeviceID: 5,
 			},
 		},

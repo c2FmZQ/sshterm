@@ -3,8 +3,6 @@
 package x11
 
 import (
-	"bytes"
-	"encoding/binary"
 	"testing"
 
 	"github.com/c2FmZQ/sshterm/internal/x11/wire"
@@ -444,10 +442,4 @@ func TestAllocColorPlanes_Visuals(t *testing.T) {
 	msg, err := wire.ParseError(clientBuffer.Bytes(), client.byteOrder)
 	require.NoError(t, err)
 	assert.Equal(t, wire.MatchErrorCode, msg.Code(), "AllocColorPlanes on TrueColor should return BadMatch")
-}
-
-// Helper to decode a single message from a buffer for testing replies.
-func decodeSingleReply(t *testing.T, buffer *bytes.Buffer, order binary.ByteOrder, seq uint16, opcodes wire.Opcodes) (wire.ServerMessage, error) {
-	t.Helper()
-	return wire.ParseReply(opcodes, buffer.Bytes(), order)
 }

@@ -26,20 +26,11 @@
 package jsutil
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"regexp"
 	"syscall/js"
 )
-
-func Uint32ArrayToBytes(in []uint32) []byte {
-	out := make([]byte, len(in)*4)
-	for i, v := range in {
-		binary.LittleEndian.PutUint32(out[i*4:(i+1)*4], v)
-	}
-	return out
-}
 
 var (
 	ArrayBuffer       = js.Global().Get("ArrayBuffer")
@@ -103,21 +94,34 @@ func NewPromise(f func() (any, error)) js.Value {
 }
 
 func Await(p js.Value) (js.Value, error) {
+	if p.IsUndefined() || p.IsNull() {
+		return p, nil
+	}
 	if then := p.Get("then"); then.IsUndefined() || then.Type() != js.TypeFunction {
 		return p, nil
 	}
 	v := make(chan js.Value, 1)
 	e := make(chan error, 1)
-	resolve := func(this js.Value, args []js.Value) any {
-		v <- args[0]
+	resolveFn := js.FuncOf(func(this js.Value, args []js.Value) any {
+		var val js.Value
+		if len(args) > 0 {
+			val = args[0]
+		}
+		v <- val
 		return nil
-	}
-	reject := func(this js.Value, args []js.Value) any {
-		e <- fmt.Errorf("%s", args[0].Call("toString"))
+	})
+	defer resolveFn.Release()
+	rejectFn := js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) > 0 {
+			e <- fmt.Errorf("%s", args[0].Call("toString"))
+		} else {
+			e <- fmt.Errorf("promise rejected")
+		}
 		return nil
-	}
-	p.Call("then", js.FuncOf(resolve)).
-		Call("catch", js.FuncOf(reject))
+	})
+	defer rejectFn.Release()
+	p.Call("then", resolveFn).
+		Call("catch", rejectFn)
 	select {
 	case value := <-v:
 		return value, nil
@@ -139,7 +143,9 @@ func Uint8ArrayToBytes(v js.Value) []byte {
 }
 
 func Uint8ClampedArrayFromBytes(in []byte) js.Value {
-	return Uint8ClampedArray.New(Uint8ArrayFromBytes(in))
+	out := Uint8ClampedArray.New(js.ValueOf(len(in)))
+	js.CopyBytesToJS(out, in)
+	return out
 }
 
 func GetImageDataBytes(imageData js.Value) []byte {

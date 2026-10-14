@@ -11,7 +11,7 @@ import (
 
 func (s *sshServer) simulateGrabOperations(channel ssh.Channel) {
 	s.t.Log("Simulating Grab operations")
-	
+
 	// Use existing window (Client 1, ID 1) from previous simulation
 	grabWindowID := s.clientXID(1)
 
@@ -22,7 +22,7 @@ func (s *sshServer) simulateGrabOperations(channel ssh.Channel) {
 		s.t.Errorf("Failed to grab pointer: %v", err)
 		return
 	}
-	
+
 	// Wait a bit to ensure the grab is processed and active on the client side
 	time.Sleep(100 * time.Millisecond)
 

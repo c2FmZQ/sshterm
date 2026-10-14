@@ -30,10 +30,13 @@ type windowInfo struct {
 	zIndex          int
 	backgroundPixel uint32
 	colormap        xID
+	parentID        xID
 	isTopLevel      bool
 
 	titleBar      js.Value
 	windowTitle   js.Value
+	closeButton   js.Value
+	closeClick    js.Func
 	dragMouseDown js.Func
 	dragMouseMove js.Func
 	dragMouseUp   js.Func
@@ -71,7 +74,6 @@ type wasmX11Frontend struct {
 	pixmaps            map[xID]*pixmapInfo    // Map to store pixmap elements (canvas)
 	gcs                map[xID]wire.GC        // Map to store graphics contexts (Go representation)
 	fonts              map[xID]*fontInfo      // Map to store opened fonts
-	cursors            map[xID]*cursorInfo    // Map to store cursor info
 	focusedWindowID    xID                    // Track the currently focused window
 	server             *x11Server             // To call back into the server for pointer updates
 	canvasOperations   []CanvasOperation      // Store canvas operations for testing
@@ -123,7 +125,6 @@ func newX11Frontend(logger Logger, s *x11Server) *wasmX11Frontend {
 		pixmaps:            make(map[xID]*pixmapInfo),
 		gcs:                make(map[xID]wire.GC),
 		fonts:              make(map[xID]*fontInfo),
-		cursors:            make(map[xID]*cursorInfo),
 		server:             s,
 		cursorStyles:       make(map[uint32]*cursorInfo),
 		deviceModifierMaps: make(map[byte][]byte),
@@ -236,9 +237,16 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	offscreenCanvas.Set("width", width)
 	offscreenCanvas.Set("height", height)
 
+	// Enable alpha channel for transparency
+	ctxOptions := js.Global().Get("Object").New()
+	ctxOptions.Set("alpha", true)
+	ctx := canvas.Call("getContext", "2d", ctxOptions)
+	offscreenCtx := offscreenCanvas.Call("getContext", "2d", ctxOptions)
+
 	isTopLevel := parent == xID(w.server.rootWindowID())
 	var titleBarHeight int
-	var titleBar, windowTitleSpan js.Value
+	var titleBar, windowTitleSpan, closeButton js.Value
+	var closeClick js.Func
 	var dragMouseDown, dragMouseMove, dragMouseUp js.Func
 	var resizeHandlesMap map[string]js.Value
 	var resizeMouseDown, resizeMouseMove, resizeMouseUp js.Func
@@ -275,7 +283,7 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 		titleBar.Call("appendChild", windowTitleSpan)
 
 		// Close button
-		closeButton := w.document.Call("createElement", "button")
+		closeButton = w.document.Call("createElement", "button")
 		closeButton.Set("textContent", "X")
 		closeButton.Set("ariaLabel", "Close Window")
 		closeButtonStyle := closeButton.Get("style")
@@ -285,10 +293,11 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 		closeButtonStyle.Set("border", "none")
 		closeButtonStyle.Set("height", "100%")
 		closeButtonStyle.Set("cursor", "pointer")
-		closeButton.Call("addEventListener", "click", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		closeClick = js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 			w.CloseWindow(xid)
 			return nil
-		}))
+		})
+		closeButton.Call("addEventListener", "click", closeClick)
 		titleBar.Call("appendChild", closeButton)
 
 		// Dragging functionality
@@ -310,7 +319,11 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 			titleBarStyle.Set("cursor", "move")
 			w.document.Call("removeEventListener", "mousemove", dragMouseMove)
 			w.document.Call("removeEventListener", "mouseup", dragMouseUp)
-			w.SendConfigureAndExposeEvent(xid, int16(windowDiv.Get("offsetLeft").Int()), int16(windowDiv.Get("offsetTop").Int()), uint16(canvas.Get("width").Int()), uint16(canvas.Get("height").Int()))
+			newLeft := int16(windowDiv.Get("offsetLeft").Int())
+			newTop := int16(windowDiv.Get("offsetTop").Int())
+			newW := uint16(canvas.Get("width").Int())
+			newH := uint16(canvas.Get("height").Int())
+			go w.SendConfigureAndExposeEvent(xid, newLeft, newTop, newW, newH)
 			return nil
 		})
 
@@ -442,10 +455,22 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 			style.Set("left", js.ValueOf(fmt.Sprintf("%dpx", newX)))
 			style.Set("top", js.ValueOf(fmt.Sprintf("%dpx", newY)))
 
+			oldW := offscreenCanvas.Get("width").Int()
+			oldH := offscreenCanvas.Get("height").Int()
+			var savedData js.Value
+			if oldW > 0 && oldH > 0 {
+				savedData = offscreenCtx.Call("getImageData", 0, 0, oldW, oldH)
+			}
+
 			canvas.Set("width", newWidth)
 			canvas.Set("height", newHeight-20) // Adjust for title bar height
 			offscreenCanvas.Set("width", newWidth)
 			offscreenCanvas.Set("height", newHeight-20)
+
+			if !savedData.IsUndefined() && !savedData.IsNull() {
+				offscreenCtx.Call("putImageData", savedData, 0, 0)
+				ctx.Call("drawImage", offscreenCanvas, 0, 0)
+			}
 
 			return nil
 		})
@@ -458,7 +483,11 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 			if !ok {
 				return nil
 			}
-			w.SendConfigureAndExposeEvent(xid, int16(winInfo.div.Get("offsetLeft").Int()), int16(winInfo.div.Get("offsetTop").Int()), uint16(winInfo.canvas.Get("width").Int()), uint16(winInfo.canvas.Get("height").Int()))
+			newLeft := int16(winInfo.div.Get("offsetLeft").Int())
+			newTop := int16(winInfo.div.Get("offsetTop").Int())
+			newW := uint16(winInfo.canvas.Get("width").Int())
+			newH := uint16(winInfo.canvas.Get("height").Int())
+			go w.SendConfigureAndExposeEvent(xid, newLeft, newTop, newW, newH)
 			return nil
 		})
 
@@ -483,14 +512,6 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	}
 
 	windowDiv.Call("appendChild", canvas)
-
-	// Enable alpha channel for transparency
-	ctxOptions := js.Global().Get("Object").New()
-	ctxOptions.Set("alpha", true)
-	ctx := canvas.Call("getContext", "2d", ctxOptions)
-
-	// Get offscreen context
-	offscreenCtx := offscreenCanvas.Call("getContext", "2d", ctxOptions)
 
 	var finalX, finalY int32 = x, y
 	var parentDiv js.Value = w.body
@@ -519,19 +540,6 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	mouseEvents["mouseenter"] = w.pointerCrossingEventHandler(xid, true)
 	mouseEvents["mouseleave"] = w.pointerCrossingEventHandler(xid, false)
 
-	w.mainContainer.Call("addEventListener", "gotpointercapture", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		debugf("X11: gotpointercapture")
-		return nil
-	}))
-	w.mainContainer.Call("addEventListener", "lostpointercapture", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-		debugf("X11: lostpointercapture")
-		if w.grabbedWindowID != 0 {
-			debugf("X11: Lost pointer capture, informing server")
-			w.grabbedWindowID = 0
-		}
-		return nil
-	}))
-
 	keyDownEvent := w.keyboardEventHandler(xid, "keydown")
 	keyUpEvent := w.keyboardEventHandler(xid, "keyup")
 
@@ -547,8 +555,14 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 		debugf("X11: Window %d blurred", xid)
 		if w.focusedWindowID == xid {
 			w.focusedWindowID = 0
+			go func() {
+				w.server.mu.Lock()
+				defer w.server.mu.Unlock()
+				if w.server.inputFocus == xid {
+					w.server.setInputFocus(0, nil, 0)
+				}
+			}()
 		}
-		go w.server.SetInputFocus(0)
 		w.document.Call("removeEventListener", "keydown", keyDownEvent)
 		w.document.Call("removeEventListener", "keyup", keyUpEvent)
 		if isTopLevel {
@@ -581,7 +595,7 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 	windowDiv.Call("addEventListener", "blur", blurEvent)
 
 	// Store window info in the map
-	w.windows[xid] = &windowInfo{
+	winInfo := &windowInfo{
 		div:             windowDiv,
 		canvas:          canvas,
 		ctx:             ctx,
@@ -594,9 +608,12 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 		keyUpEvent:      keyUpEvent,   // Store for removal
 		xInputEvents:    make(map[string]js.Func),
 		zIndex:          winZIndex,
+		parentID:        parent,
 		isTopLevel:      isTopLevel,
 		titleBar:        titleBar,
 		windowTitle:     windowTitleSpan,
+		closeButton:     closeButton,
+		closeClick:      closeClick,
 		dragMouseDown:   dragMouseDown,
 		dragMouseMove:   dragMouseMove,
 		dragMouseUp:     dragMouseUp,
@@ -606,7 +623,25 @@ func (w *wasmX11Frontend) CreateWindow(xid xID, parent xID, x, y int32, width, h
 		resizeMouseUp:   resizeMouseUp,
 	}
 	if values.Colormap != 0 {
-		w.windows[xid].colormap = xID(values.Colormap)
+		winInfo.colormap = xID(values.Colormap)
+	}
+	w.windows[xid] = winInfo
+
+	if valueMask&wire.CWBackPixel != 0 {
+		winInfo.backgroundPixel = values.BackgroundPixel
+		r, g, b := w.GetRGBColor(winInfo.colormap, values.BackgroundPixel)
+		bgColor := fmt.Sprintf("rgb(%d, %d, %d)", r, g, b)
+		style.Set("backgroundColor", bgColor)
+	}
+	if valueMask&wire.CWBorderPixel != 0 {
+		r, g, b := w.GetRGBColor(winInfo.colormap, values.BorderPixel)
+		borderColor := fmt.Sprintf("rgb(%d, %d, %d)", r, g, b)
+		style.Set("borderColor", borderColor)
+	}
+	if valueMask&wire.CWCursor != 0 && values.Cursor != 0 {
+		if cursor, ok := w.cursorStyles[uint32(values.Cursor)]; ok {
+			canvas.Get("style").Set("cursor", cursor.style)
+		}
 	}
 
 	parentDiv.Call("appendChild", windowDiv)
@@ -630,24 +665,15 @@ func (w *wasmX11Frontend) DestroyWindow(wid xID) {
 
 func (w *wasmX11Frontend) DestroySubwindows(xid xID) {
 	debugf("X11: destroySubwindows id=%d", xid)
-	if winInfo, ok := w.windows[xid]; ok {
-		// Create a slice to hold children to be removed, to avoid modifying the list while iterating
-		var toRemove []js.Value
-		children := winInfo.div.Get("childNodes")
-		for i := 0; i < children.Length(); i++ {
-			child := children.Index(i)
-			// Check if the child is a window managed by us
-			childXIDStr := child.Get("id").String()
-			if strings.HasPrefix(childXIDStr, "x11-window-") {
-				toRemove = append(toRemove, child)
+	if _, ok := w.windows[xid]; ok {
+		var toRemove []xID
+		for childID, childInfo := range w.windows {
+			if childInfo.parentID == xid {
+				toRemove = append(toRemove, childID)
 			}
 		}
-		for _, child := range toRemove {
-			childXIDStr := strings.TrimPrefix(child.Get("id").String(), "x11-window-")
-			id, err := strconv.Atoi(childXIDStr)
-			if err == nil {
-				w.destroyWindow(xID(id), false)
-			}
+		for _, childID := range toRemove {
+			w.destroyWindow(childID, false)
 		}
 	}
 	w.recordOperation(CanvasOperation{
@@ -666,18 +692,23 @@ func (w *wasmX11Frontend) ReparentWindow(windowID, parentID xID, x, y int16) {
 	}
 
 	var parentDiv js.Value
+	finalY := int(y)
 	if uint32(parentID) == w.server.rootWindowID() {
 		parentDiv = w.body
 	} else if parentInfo, ok := w.windows[parentID]; ok {
 		parentDiv = parentInfo.div
+		if parentInfo.isTopLevel {
+			finalY += 20
+		}
 	} else {
 		debugf("X11: ReparentWindow: parent window %d not found", parentID)
 		return
 	}
 
+	winInfo.parentID = parentID
 	style := winInfo.div.Get("style")
 	style.Set("left", fmt.Sprintf("%dpx", x))
-	style.Set("top", fmt.Sprintf("%dpx", y))
+	style.Set("top", fmt.Sprintf("%dpx", finalY))
 
 	parentDiv.Call("appendChild", winInfo.div)
 
@@ -691,6 +722,9 @@ func (w *wasmX11Frontend) destroyWindow(wid xID, logit bool) {
 	if winInfo, ok := w.windows[wid]; ok {
 		// Remove event listeners from the document and window elements
 		if winInfo.isTopLevel {
+			if !winInfo.closeButton.IsUndefined() && !winInfo.closeButton.IsNull() {
+				winInfo.closeButton.Call("removeEventListener", "click", winInfo.closeClick)
+			}
 			winInfo.titleBar.Call("removeEventListener", "mousedown", winInfo.dragMouseDown)
 			w.document.Call("removeEventListener", "mousemove", winInfo.dragMouseMove)
 			w.document.Call("removeEventListener", "mouseup", winInfo.dragMouseUp)
@@ -732,6 +766,7 @@ func (w *wasmX11Frontend) destroyWindow(wid xID, logit bool) {
 		winInfo.keyUpEvent.Release()   // Release keyboard event listeners
 
 		if winInfo.isTopLevel {
+			winInfo.closeClick.Release()
 			winInfo.dragMouseDown.Release()
 			winInfo.dragMouseMove.Release()
 			winInfo.dragMouseUp.Release()
@@ -751,38 +786,10 @@ func (w *wasmX11Frontend) destroyWindow(wid xID, logit bool) {
 }
 
 func (w *wasmX11Frontend) CloseWindow(xid xID) {
-	_, ok := w.windows[xid]
-	if !ok {
+	if _, ok := w.windows[xid]; !ok {
 		return
 	}
-
-	wmProtocolsAtom := w.server.GetAtom("WM_PROTOCOLS")
-	wmDeleteWindowAtom := w.server.GetAtom("WM_DELETE_WINDOW")
-
-	supportsDelete := false
-	protocolsProp := w.server.GetProperty(xid, wmProtocolsAtom)
-	if protocolsProp != nil && protocolsProp.format == 32 {
-		// The property contains a list of atoms (CARD32).
-		for i := 0; i < len(protocolsProp.data); i += 4 {
-			atom := w.server.byteOrder.Uint32(protocolsProp.data[i : i+4])
-			if atom == wmDeleteWindowAtom {
-				supportsDelete = true
-				break
-			}
-		}
-	}
-
-	if supportsDelete {
-		debugf("X11: Sending WM_DELETE_WINDOW ClientMessage to window %d", xid)
-		var data [20]byte
-		w.server.byteOrder.PutUint32(data[0:4], wmDeleteWindowAtom)
-		// The second element is a timestamp, which we can leave as 0 for now.
-		w.server.byteOrder.PutUint32(data[4:8], 0) // Timestamp
-		w.server.SendClientMessageEvent(xid, wmProtocolsAtom, data)
-	} else {
-		debugf("X11: WM_DELETE_WINDOW not supported for window %d, destroying directly", xid)
-		w.destroyWindow(xid, false)
-	}
+	go w.server.CloseWindow(xid)
 }
 
 func (w *wasmX11Frontend) MapWindow(wid xID) {
@@ -834,37 +841,76 @@ func (w *wasmX11Frontend) ConfigureWindow(xid xID, valueMask uint16, values []ui
 	if winInfo, ok := w.windows[xid]; ok {
 		style := winInfo.div.Get("style")
 		var valueIndex int
-		if valueMask&CWX != 0 {
-			style.Set("left", fmt.Sprintf("%dpx", values[valueIndex]))
+		if valueMask&CWX != 0 && valueIndex < len(values) {
+			style.Set("left", fmt.Sprintf("%dpx", int32(int16(values[valueIndex]))))
 			valueIndex++
 		}
-		if valueMask&CWY != 0 {
-			style.Set("top", fmt.Sprintf("%dpx", values[valueIndex]))
+		if valueMask&CWY != 0 && valueIndex < len(values) {
+			finalY := int32(int16(values[valueIndex]))
+			if !winInfo.isTopLevel {
+				if parentInfo, ok := w.windows[winInfo.parentID]; ok && parentInfo.isTopLevel {
+					finalY += 20
+				}
+			}
+			style.Set("top", fmt.Sprintf("%dpx", finalY))
 			valueIndex++
 		}
-		if valueMask&CWWidth != 0 {
-			style.Set("width", fmt.Sprintf("%dpx", values[valueIndex]))
-			winInfo.canvas.Set("width", values[valueIndex])
-			winInfo.offscreenCanvas.Set("width", values[valueIndex])
+		if valueMask&CWWidth != 0 && valueIndex < len(values) {
+			newWidth := values[valueIndex]
+			oldW := winInfo.offscreenCanvas.Get("width").Int()
+			oldH := winInfo.offscreenCanvas.Get("height").Int()
+			var savedData js.Value
+			if oldW > 0 && oldH > 0 {
+				savedData = winInfo.offscreenCtx.Call("getImageData", 0, 0, oldW, oldH)
+			}
+			style.Set("width", fmt.Sprintf("%dpx", newWidth))
+			winInfo.canvas.Set("width", newWidth)
+			winInfo.offscreenCanvas.Set("width", newWidth)
+			if !savedData.IsUndefined() && !savedData.IsNull() {
+				winInfo.offscreenCtx.Call("putImageData", savedData, 0, 0)
+				winInfo.ctx.Call("drawImage", winInfo.offscreenCanvas, 0, 0)
+			}
 			valueIndex++
 		}
-		if valueMask&CWHeight != 0 {
-			style.Set("height", fmt.Sprintf("%dpx", values[valueIndex]))
-			winInfo.canvas.Set("height", values[valueIndex])
-			winInfo.offscreenCanvas.Set("height", values[valueIndex])
+		if valueMask&CWHeight != 0 && valueIndex < len(values) {
+			newHeight := values[valueIndex]
+			divHeight := newHeight
+			if winInfo.isTopLevel {
+				divHeight += 20
+			}
+			oldW := winInfo.offscreenCanvas.Get("width").Int()
+			oldH := winInfo.offscreenCanvas.Get("height").Int()
+			var savedData js.Value
+			if oldW > 0 && oldH > 0 {
+				savedData = winInfo.offscreenCtx.Call("getImageData", 0, 0, oldW, oldH)
+			}
+			style.Set("height", fmt.Sprintf("%dpx", divHeight))
+			winInfo.canvas.Set("height", newHeight)
+			winInfo.offscreenCanvas.Set("height", newHeight)
+			if !savedData.IsUndefined() && !savedData.IsNull() {
+				winInfo.offscreenCtx.Call("putImageData", savedData, 0, 0)
+				winInfo.ctx.Call("drawImage", winInfo.offscreenCanvas, 0, 0)
+			}
 			valueIndex++
 		}
-		if valueMask&CWSibling != 0 {
+		if valueMask&CWBorderWidth != 0 && valueIndex < len(values) {
+			valueIndex++
+		}
+		if valueMask&CWSibling != 0 && valueIndex < len(values) {
 			// Sibling is not implemented yet
 			valueIndex++
 		}
-		if valueMask&CWStackMode != 0 {
+		if valueMask&CWStackMode != 0 && valueIndex < len(values) {
 			stackMode := values[valueIndex]
 			switch stackMode {
 			case 0: // Above
 				winInfo.zIndex = w.getHighestZIndex() + 1
 			case 1: // Below
-				winInfo.zIndex = w.getLowestZIndex() - 1
+				z := w.getLowestZIndex() - 1
+				if z < 1 {
+					z = 1
+				}
+				winInfo.zIndex = z
 			}
 			style.Set("zIndex", fmt.Sprintf("%d", winInfo.zIndex))
 			valueIndex++
@@ -887,14 +933,18 @@ func (w *wasmX11Frontend) getHighestZIndex() int {
 }
 
 func (w *wasmX11Frontend) getLowestZIndex() int {
-	lowest := 0
+	lowest := -1
 	for _, winInfo := range w.windows {
-		if winInfo.zIndex < lowest {
+		if lowest == -1 || winInfo.zIndex < lowest {
 			lowest = winInfo.zIndex
 		}
 	}
+	if lowest < 1 {
+		return 1
+	}
 	return lowest
 }
+
 func (w *wasmX11Frontend) CreateGC(xid xID, valueMask uint32, values wire.GC) {
 	debugf("X11: createGC id=%d gc=%+v", xid, values)
 	w.gcs[xid] = values
@@ -1091,8 +1141,8 @@ func (w *wasmX11Frontend) PutImage(drawable xID, gcID xID, format uint8, width, 
 
 	var currentColormap xID
 	var ctx js.Value
-	winInfo, ok := w.windows[drawable]
-	if ok {
+	_, isWindow := w.windows[drawable]
+	if winInfo, ok := w.windows[drawable]; ok {
 		ctx = winInfo.offscreenCtx
 		currentColormap = winInfo.colormap
 	} else if pixmapInfo, ok := w.pixmaps[drawable]; ok {
@@ -1107,17 +1157,29 @@ func (w *wasmX11Frontend) PutImage(drawable xID, gcID xID, format uint8, width, 
 	if ctx.IsNull() || width == 0 || height == 0 {
 		return
 	}
+
+	scanlinePad := int(w.server.bitmapFormatScanlinePad)
+	if scanlinePad == 0 {
+		scanlinePad = 32
+	}
+
 	switch format {
 	case 0: // Bitmap
-		r, g, b := w.GetRGBColor(currentColormap, gc.Foreground)
-		fgR, fgG, fgB := r, g, b
+		fgR, fgG, fgB := w.GetRGBColor(currentColormap, gc.Foreground)
+		bgR, bgG, bgB := w.GetRGBColor(currentColormap, gc.Background)
+		if !isWindow && depth == 1 && fgR == bgR && fgG == bgG && fgB == bgB {
+			fgR, fgG, fgB = 255, 255, 255
+			bgR, bgG, bgB = 0, 0, 0
+		}
 
-		r, g, b = w.GetRGBColor(currentColormap, gc.Background)
-		bgR, bgG, bgB := r, g, b
-
-		rgbaData := make([]byte, int(width*height*4))
+		rgbaData := make([]byte, int(width)*int(height)*4)
 		dataIndex := 0
-		scanlineStride := (int(width) + int(leftPad) + 7) / 8
+		paddedStride := ((int(width) + int(leftPad) + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
+		unpaddedStride := (int(width) + int(leftPad) + 7) / 8
+		scanlineStride := paddedStride
+		if len(imgData) < int(height)*paddedStride {
+			scanlineStride = unpaddedStride
+		}
 
 		for row := 0; row < int(height); row++ {
 			scanlineOffset := row * scanlineStride
@@ -1126,7 +1188,11 @@ func (w *wasmX11Frontend) PutImage(drawable xID, gcID xID, format uint8, width, 
 				byteIndex := scanlineOffset + (bitPos / 8)
 				bitIndex := bitPos % 8
 
-				if (imgData[byteIndex]>>(bitIndex))&1 == 1 {
+				var bitOn bool
+				if byteIndex < len(imgData) {
+					bitOn = (imgData[byteIndex]>>bitIndex)&1 == 1
+				}
+				if bitOn {
 					rgbaData[dataIndex] = fgR
 					rgbaData[dataIndex+1] = fgG
 					rgbaData[dataIndex+2] = fgB
@@ -1144,18 +1210,29 @@ func (w *wasmX11Frontend) PutImage(drawable xID, gcID xID, format uint8, width, 
 		ctx.Call("putImageData", imageData, dstX, dstY)
 
 	case 1: // XYPixmap
-		rgbaData := make([]byte, int(width*height*4))
-		pixelValues := make([]uint32, width*height)
-		scanlineStride := (int(width) + 7) / 8
+		rgbaData := make([]byte, int(width)*int(height)*4)
+		pixelValues := make([]uint32, int(width)*int(height))
+		paddedStride := ((int(width) + int(leftPad) + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
+		unpaddedStride := (int(width) + int(leftPad) + 7) / 8
+		scanlineStride := paddedStride
+		if len(imgData) < int(depth)*int(height)*paddedStride {
+			scanlineStride = unpaddedStride
+		}
 
 		for d := 0; d < int(depth); d++ {
-			plane := imgData[d*int(height)*scanlineStride:]
+			planeOffset := d * int(height) * scanlineStride
+			if planeOffset >= len(imgData) {
+				break
+			}
+			plane := imgData[planeOffset:]
+			bitShift := uint(int(depth) - 1 - d)
 			for y := 0; y < int(height); y++ {
 				for x := 0; x < int(width); x++ {
-					byteIndex := (y*scanlineStride + x/8)
-					bitIndex := x % 8
-					if (plane[byteIndex]>>bitIndex)&1 != 0 {
-						pixelValues[y*int(width)+x] |= (1 << d)
+					bitPos := int(leftPad) + x
+					byteIndex := y*scanlineStride + bitPos/8
+					bitIndex := bitPos % 8
+					if byteIndex < len(plane) && (plane[byteIndex]>>bitIndex)&1 != 0 {
+						pixelValues[y*int(width)+x] |= (1 << bitShift)
 					}
 				}
 			}
@@ -1175,22 +1252,30 @@ func (w *wasmX11Frontend) PutImage(drawable xID, gcID xID, format uint8, width, 
 
 	case 2: // ZPixmap
 		bpp := int(depth)
-		scanlinePad := 8
+		zScanlinePad := 8
 		for _, f := range w.server.pixmapFormats {
 			if f.Depth == depth {
 				bpp = int(f.BitsPerPixel)
-				scanlinePad = int(f.ScanlinePad)
+				zScanlinePad = int(f.ScanlinePad)
 				break
 			}
 		}
 		if bpp == 0 {
 			bpp = 8
 		}
-		scanlineStride := ((int(width)*bpp + scanlinePad - 1) / scanlinePad) * (scanlinePad / 8)
+		scanlineStride := ((int(width)*bpp + zScanlinePad - 1) / zScanlinePad) * (zScanlinePad / 8)
+		order := w.server.byteOrder
+		if order == nil {
+			order = binary.LittleEndian
+		}
 
 		rgbaData := make([]byte, int(width)*int(height)*4)
 		for y := 0; y < int(height); y++ {
-			line := imgData[y*scanlineStride:]
+			lineOffset := y * scanlineStride
+			if lineOffset >= len(imgData) {
+				break
+			}
+			line := imgData[lineOffset:]
 			for x := 0; x < int(width); x++ {
 				var pixel uint32
 				bitOffset := x * bpp
@@ -1198,16 +1283,33 @@ func (w *wasmX11Frontend) PutImage(drawable xID, gcID xID, format uint8, width, 
 
 				switch bpp {
 				case 1:
-					pixel = uint32((line[byteIndex] >> (bitOffset % 8)) & 1)
+					if byteIndex < len(line) {
+						pixel = uint32((line[byteIndex] >> (bitOffset % 8)) & 1)
+					}
 				case 4:
-					pixel = uint32((line[byteIndex] >> (bitOffset % 8)) & 0x0F)
+					if byteIndex < len(line) {
+						pixel = uint32((line[byteIndex] >> (bitOffset % 8)) & 0x0F)
+					}
 				case 8:
-					pixel = uint32(line[x])
+					if x < len(line) {
+						pixel = uint32(line[x])
+					}
 				case 16:
-					pixel = uint32(binary.LittleEndian.Uint16(line[x*2 : x*2+2]))
-				case 24, 32:
-					// We assume 32-bit for 24-bit depth on wire as per our setup
-					pixel = binary.LittleEndian.Uint32(line[x*4 : x*4+4])
+					if x*2+2 <= len(line) {
+						pixel = uint32(order.Uint16(line[x*2 : x*2+2]))
+					}
+				case 24:
+					if x*3+3 <= len(line) {
+						if order == binary.BigEndian {
+							pixel = (uint32(line[x*3]) << 16) | (uint32(line[x*3+1]) << 8) | uint32(line[x*3+2])
+						} else {
+							pixel = uint32(line[x*3]) | (uint32(line[x*3+1]) << 8) | (uint32(line[x*3+2]) << 16)
+						}
+					}
+				case 32:
+					if x*4+4 <= len(line) {
+						pixel = order.Uint32(line[x*4 : x*4+4])
+					}
 				}
 
 				r, g, b := w.GetRGBColor(currentColormap, pixel)
@@ -1228,6 +1330,61 @@ func (w *wasmX11Frontend) PutImage(drawable xID, gcID xID, format uint8, width, 
 		Type: "putImage",
 		Args: []any{uint32(drawable), gc, dstX, dstY, width, height, leftPad, format, len(imgData)},
 	})
+}
+
+func isPixmapBitOnClassifier(data []byte) func(idx int) bool {
+	hasNonBlack := false
+	for i := 0; i+3 < len(data); i += 4 {
+		if data[i] > 0 || data[i+1] > 0 || data[i+2] > 0 {
+			hasNonBlack = true
+			break
+		}
+	}
+	if hasNonBlack {
+		return func(idx int) bool {
+			return data[idx] > 0 || data[idx+1] > 0 || data[idx+2] > 0
+		}
+	}
+	return func(idx int) bool {
+		return data[idx+3] > 0
+	}
+}
+
+func (w *wasmX11Frontend) buildStippleCanvas(stipplePixmap *pixmapInfo, fgR, fgG, fgB, bgR, bgG, bgB uint8, opaque bool) js.Value {
+	width := stipplePixmap.canvas.Get("width").Int()
+	height := stipplePixmap.canvas.Get("height").Int()
+	stippleCanvas := w.document.Call("createElement", "canvas")
+	stippleCanvas.Set("width", width)
+	stippleCanvas.Set("height", height)
+	if width <= 0 || height <= 0 {
+		return stippleCanvas
+	}
+	stippleCtx := stippleCanvas.Call("getContext", "2d")
+
+	srcJSData := stipplePixmap.context.Call("getImageData", 0, 0, width, height).Get("data")
+	srcBytes := make([]byte, srcJSData.Length())
+	js.CopyBytesToGo(srcBytes, srcJSData)
+
+	bitOn := isPixmapBitOnClassifier(srcBytes)
+	dstBytes := make([]byte, width*height*4)
+	for i := 0; i < width*height; i++ {
+		idx := i * 4
+		if bitOn(idx) {
+			dstBytes[idx+0] = fgR
+			dstBytes[idx+1] = fgG
+			dstBytes[idx+2] = fgB
+			dstBytes[idx+3] = 255
+		} else if opaque {
+			dstBytes[idx+0] = bgR
+			dstBytes[idx+1] = bgG
+			dstBytes[idx+2] = bgB
+			dstBytes[idx+3] = 255
+		}
+	}
+
+	imgData := js.Global().Get("ImageData").New(jsutil.Uint8ClampedArrayFromBytes(dstBytes), width, height)
+	stippleCtx.Call("putImageData", imgData, 0, 0)
+	return stippleCanvas
 }
 
 func (w *wasmX11Frontend) applyGCState(ctx js.Value, colormap xID, gc wire.GC, clientID uint32) {
@@ -1270,36 +1427,16 @@ func (w *wasmX11Frontend) applyGCState(ctx js.Value, colormap xID, gc wire.GC, c
 		}
 	case wire.FillStyleStippled:
 		if stipplePixmap, ok := w.pixmaps[xID(gc.Stipple)]; ok {
-			stippleCanvas := w.document.Call("createElement", "canvas")
-			stippleCanvas.Set("width", stipplePixmap.canvas.Get("width"))
-			stippleCanvas.Set("height", stipplePixmap.canvas.Get("height"))
-			stippleCtx := stippleCanvas.Call("getContext", "2d")
-
-			stippleCtx.Set("fillStyle", color)
-			stippleCtx.Call("fillRect", 0, 0, stippleCanvas.Get("width"), stippleCanvas.Get("height"))
-			stippleCtx.Set("globalCompositeOperation", "destination-in")
-			stippleCtx.Call("drawImage", stipplePixmap.canvas, 0, 0)
-
+			fgR, fgG, fgB := w.GetRGBColor(colormap, gc.Foreground)
+			stippleCanvas := w.buildStippleCanvas(stipplePixmap, fgR, fgG, fgB, 0, 0, 0, false)
 			pattern := ctx.Call("createPattern", stippleCanvas, "repeat")
 			ctx.Set("fillStyle", pattern)
 		}
 	case wire.FillStyleOpaqueStippled:
 		if stipplePixmap, ok := w.pixmaps[xID(gc.Stipple)]; ok {
-			stippleCanvas := w.document.Call("createElement", "canvas")
-			stippleCanvas.Set("width", stipplePixmap.canvas.Get("width"))
-			stippleCanvas.Set("height", stipplePixmap.canvas.Get("height"))
-			stippleCtx := stippleCanvas.Call("getContext", "2d")
-
-			r, g, b := w.GetRGBColor(colormap, gc.Background)
-			bgColor := fmt.Sprintf("#%02x%02x%02x", r, g, b)
-			stippleCtx.Set("fillStyle", bgColor)
-			stippleCtx.Call("fillRect", 0, 0, stippleCanvas.Get("width"), stippleCanvas.Get("height"))
-
-			stippleCtx.Set("fillStyle", color)
-			stippleCtx.Call("fillRect", 0, 0, stippleCanvas.Get("width"), stippleCanvas.Get("height"))
-			stippleCtx.Set("globalCompositeOperation", "destination-in")
-			stippleCtx.Call("drawImage", stipplePixmap.canvas, 0, 0)
-
+			fgR, fgG, fgB := w.GetRGBColor(colormap, gc.Foreground)
+			bgR, bgG, bgB := w.GetRGBColor(colormap, gc.Background)
+			stippleCanvas := w.buildStippleCanvas(stipplePixmap, fgR, fgG, fgB, bgR, bgG, bgB, true)
 			pattern := ctx.Call("createPattern", stippleCanvas, "repeat")
 			ctx.Set("fillStyle", pattern)
 		}
@@ -1313,14 +1450,14 @@ func (w *wasmX11Frontend) applyGCState(ctx js.Value, colormap xID, gc wire.GC, c
 			debugf("applyGCState: font %d not found for client %d", gc.Font, clientID)
 		}
 	}
-	if gc.ClippingRectangles != nil && len(gc.ClippingRectangles) > 0 {
+	if len(gc.ClippingRectangles) > 0 {
 		ctx.Call("beginPath")
 		for _, rect := range gc.ClippingRectangles {
-			ctx.Call("rect", rect.X, rect.Y, rect.Width, rect.Height)
+			ctx.Call("rect", int(rect.X)+int(gc.ClipXOrigin), int(rect.Y)+int(gc.ClipYOrigin), int(rect.Width), int(rect.Height))
 		}
 		ctx.Call("clip")
 	}
-	if gc.DashPattern != nil && len(gc.DashPattern) > 0 {
+	if len(gc.DashPattern) > 0 {
 		jsDashes := make([]interface{}, len(gc.DashPattern))
 		for i, v := range gc.DashPattern {
 			jsDashes[i] = v
@@ -1528,9 +1665,11 @@ func (w *wasmX11Frontend) PolyLine(drawable xID, gcID xID, points []uint32) {
 
 	var opBounds image.Rectangle
 	if len(points) >= 2 {
-		opBounds = image.Rect(int(points[0]), int(points[1]), int(points[0])+1, int(points[1])+1)
-		for i := 2; i < len(points); i += 2 {
-			opBounds = opBounds.Union(image.Rect(int(points[i]), int(points[i+1]), int(points[i])+1, int(points[i+1])+1))
+		x0, y0 := int(int16(points[0])), int(int16(points[1]))
+		opBounds = image.Rect(x0, y0, x0+1, y0+1)
+		for i := 2; i+1 < len(points); i += 2 {
+			px, py := int(int16(points[i])), int(int16(points[i+1]))
+			opBounds = opBounds.Union(image.Rect(px, py, px+1, py+1))
 		}
 		opBounds = opBounds.Inset(-int(gc.LineWidth))
 	}
@@ -1540,9 +1679,9 @@ func (w *wasmX11Frontend) PolyLine(drawable xID, gcID xID, points []uint32) {
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
 		targetCtx.Call("beginPath")
 		if len(points) >= 2 {
-			targetCtx.Call("moveTo", points[0], points[1])
-			for i := 2; i < len(points); i += 2 {
-				targetCtx.Call("lineTo", points[i], points[i+1])
+			targetCtx.Call("moveTo", int(int16(points[0])), int(int16(points[1])))
+			for i := 2; i+1 < len(points); i += 2 {
+				targetCtx.Call("lineTo", int(int16(points[i])), int(int16(points[i+1])))
 			}
 		}
 		targetCtx.Call("stroke")
@@ -1563,8 +1702,10 @@ func (w *wasmX11Frontend) PolyFillRectangle(drawable xID, gcID xID, rects []uint
 	debugf("X11: polyFillRectangle drawable=%d gc=%v rects=%v GCFunction=%d", drawable, gc, rects, gc.Function)
 
 	var opBounds image.Rectangle
-	for i := 0; i < len(rects); i += 4 {
-		r := image.Rect(int(rects[i]), int(rects[i+1]), int(rects[i])+int(rects[i+2]), int(rects[i+1])+int(rects[i+3]))
+	for i := 0; i+3 < len(rects); i += 4 {
+		rx, ry := int(int16(rects[i])), int(int16(rects[i+1]))
+		rw, rh := int(uint16(rects[i+2])), int(uint16(rects[i+3]))
+		r := image.Rect(rx, ry, rx+rw, ry+rh)
 		if i == 0 {
 			opBounds = r
 		} else {
@@ -1575,8 +1716,8 @@ func (w *wasmX11Frontend) PolyFillRectangle(drawable xID, gcID xID, rects []uint
 	color := w.getForegroundColor(0, gc)
 
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
-		for i := 0; i < len(rects); i += 4 {
-			targetCtx.Call("fillRect", rects[i], rects[i+1], rects[i+2], rects[i+3])
+		for i := 0; i+3 < len(rects); i += 4 {
+			targetCtx.Call("fillRect", int(int16(rects[i])), int(int16(rects[i+1])), int(uint16(rects[i+2])), int(uint16(rects[i+3])))
 		}
 	}, opBounds)
 
@@ -1596,9 +1737,11 @@ func (w *wasmX11Frontend) FillPoly(drawable xID, gcID xID, points []uint32) {
 
 	var opBounds image.Rectangle
 	if len(points) >= 2 {
-		opBounds = image.Rect(int(points[0]), int(points[1]), int(points[0])+1, int(points[1])+1)
-		for i := 2; i < len(points); i += 2 {
-			opBounds = opBounds.Union(image.Rect(int(points[i]), int(points[i+1]), int(points[i])+1, int(points[i+1])+1))
+		x0, y0 := int(int16(points[0])), int(int16(points[1]))
+		opBounds = image.Rect(x0, y0, x0+1, y0+1)
+		for i := 2; i+1 < len(points); i += 2 {
+			px, py := int(int16(points[i])), int(int16(points[i+1]))
+			opBounds = opBounds.Union(image.Rect(px, py, px+1, py+1))
 		}
 	}
 
@@ -1611,9 +1754,9 @@ func (w *wasmX11Frontend) FillPoly(drawable xID, gcID xID, points []uint32) {
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
 		targetCtx.Call("beginPath")
 		if len(points) >= 2 {
-			targetCtx.Call("moveTo", points[0], points[1])
-			for i := 2; i < len(points); i += 2 {
-				targetCtx.Call("lineTo", points[i], points[i+1])
+			targetCtx.Call("moveTo", int(int16(points[0])), int(int16(points[1])))
+			for i := 2; i+1 < len(points); i += 2 {
+				targetCtx.Call("lineTo", int(int16(points[i])), int(int16(points[i+1])))
 			}
 		}
 		targetCtx.Call("closePath")
@@ -1635,8 +1778,10 @@ func (w *wasmX11Frontend) PolySegment(drawable xID, gcID xID, segments []uint32)
 	debugf("X11: polySegment drawable=%d gc=%v segments=%v", drawable, gc, segments)
 
 	var opBounds image.Rectangle
-	for i := 0; i < len(segments); i += 4 {
-		r := image.Rect(int(segments[i]), int(segments[i+1]), int(segments[i+2])+1, int(segments[i+3])+1).Canon()
+	for i := 0; i+3 < len(segments); i += 4 {
+		x1, y1 := int(int16(segments[i])), int(int16(segments[i+1]))
+		x2, y2 := int(int16(segments[i+2])), int(int16(segments[i+3]))
+		r := image.Rect(x1, y1, x2+1, y2+1).Canon()
 		if i == 0 {
 			opBounds = r
 		} else {
@@ -1648,10 +1793,10 @@ func (w *wasmX11Frontend) PolySegment(drawable xID, gcID xID, segments []uint32)
 	color := w.getForegroundColor(0, gc)
 
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
-		for i := 0; i < len(segments); i += 4 {
+		for i := 0; i+3 < len(segments); i += 4 {
 			targetCtx.Call("beginPath")
-			targetCtx.Call("moveTo", segments[i], segments[i+1])
-			targetCtx.Call("lineTo", segments[i+2], segments[i+3])
+			targetCtx.Call("moveTo", int(int16(segments[i])), int(int16(segments[i+1])))
+			targetCtx.Call("lineTo", int(int16(segments[i+2])), int(int16(segments[i+3])))
 			targetCtx.Call("stroke")
 		}
 	}, opBounds)
@@ -1671,8 +1816,9 @@ func (w *wasmX11Frontend) PolyPoint(drawable xID, gcID xID, points []uint32) {
 	debugf("X11: polyPoint drawable=%d gc=%v points=%v", drawable, gc, points)
 
 	var opBounds image.Rectangle
-	for i := 0; i < len(points); i += 2 {
-		r := image.Rect(int(points[i]), int(points[i+1]), int(points[i])+1, int(points[i+1])+1)
+	for i := 0; i+1 < len(points); i += 2 {
+		px, py := int(int16(points[i])), int(int16(points[i+1]))
+		r := image.Rect(px, py, px+1, py+1)
 		if i == 0 {
 			opBounds = r
 		} else {
@@ -1683,8 +1829,8 @@ func (w *wasmX11Frontend) PolyPoint(drawable xID, gcID xID, points []uint32) {
 	color := w.getForegroundColor(0, gc)
 
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
-		for i := 0; i < len(points); i += 2 {
-			targetCtx.Call("fillRect", points[i], points[i+1], 1, 1)
+		for i := 0; i+1 < len(points); i += 2 {
+			targetCtx.Call("fillRect", int(int16(points[i])), int(int16(points[i+1])), 1, 1)
 		}
 	}, opBounds)
 
@@ -1703,8 +1849,10 @@ func (w *wasmX11Frontend) PolyRectangle(drawable xID, gcID xID, rects []uint32) 
 	debugf("X11: polyRectangle drawable=%d gc=%v rects=%v", drawable, gc, rects)
 
 	var opBounds image.Rectangle
-	for i := 0; i < len(rects); i += 4 {
-		r := image.Rect(int(rects[i]), int(rects[i+1]), int(rects[i])+int(rects[i+2]), int(rects[i+1])+int(rects[i+3]))
+	for i := 0; i+3 < len(rects); i += 4 {
+		rx, ry := int(int16(rects[i])), int(int16(rects[i+1]))
+		rw, rh := int(uint16(rects[i+2])), int(uint16(rects[i+3]))
+		r := image.Rect(rx, ry, rx+rw, ry+rh)
 		if i == 0 {
 			opBounds = r
 		} else {
@@ -1716,8 +1864,8 @@ func (w *wasmX11Frontend) PolyRectangle(drawable xID, gcID xID, rects []uint32) 
 	color := w.getForegroundColor(0, gc)
 
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
-		for i := 0; i < len(rects); i += 4 {
-			targetCtx.Call("strokeRect", rects[i], rects[i+1], rects[i+2], rects[i+3])
+		for i := 0; i+3 < len(rects); i += 4 {
+			targetCtx.Call("strokeRect", int(int16(rects[i])), int(int16(rects[i+1])), int(uint16(rects[i+2])), int(uint16(rects[i+3])))
 		}
 	}, opBounds)
 
@@ -1736,8 +1884,10 @@ func (w *wasmX11Frontend) PolyArc(drawable xID, gcID xID, arcs []uint32) {
 	debugf("X11: polyArc drawable=%d gc=%v arcs=%v", drawable, gc, arcs)
 
 	var opBounds image.Rectangle
-	for i := 0; i < len(arcs); i += 6 {
-		r := image.Rect(int(arcs[i]), int(arcs[i+1]), int(arcs[i])+int(arcs[i+2]), int(arcs[i+1])+int(arcs[i+3]))
+	for i := 0; i+5 < len(arcs); i += 6 {
+		ax, ay := int(int16(arcs[i])), int(int16(arcs[i+1]))
+		aw, ah := int(uint16(arcs[i+2])), int(uint16(arcs[i+3]))
+		r := image.Rect(ax, ay, ax+aw, ay+ah)
 		if i == 0 {
 			opBounds = r
 		} else {
@@ -1749,17 +1899,16 @@ func (w *wasmX11Frontend) PolyArc(drawable xID, gcID xID, arcs []uint32) {
 	color := w.getForegroundColor(0, gc)
 
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
-		for i := 0; i < len(arcs); i += 6 {
+		for i := 0; i+5 < len(arcs); i += 6 {
 			targetCtx.Call("beginPath")
-			// X11 angles are in 1/64th degrees, clockwise. Canvas angles are in radians, clockwise.
-			// Start angle: arcs[i+4] / 64 * (Math.PI / 180)
-			// End angle: (arcs[i+4] + arcs[i+5]) / 64 * (Math.PI / 180)
-			startAngle := float64(arcs[i+4]) / 64 * (math.Pi / 180)
-			endAngle := float64(arcs[i+4]+arcs[i+5]) / 64 * (math.Pi / 180)
-			rx := uint32(arcs[i+2] / 2)
-			ry := uint32(arcs[i+3] / 2)
-			x := uint32(arcs[i] + rx)
-			y := uint32(arcs[i+1] + ry)
+			a1 := float64(int16(arcs[i+4]))
+			a2 := float64(int16(arcs[i+5]))
+			startAngle := a1 / 64 * (math.Pi / 180)
+			endAngle := (a1 + a2) / 64 * (math.Pi / 180)
+			rx := int(uint16(arcs[i+2])) / 2
+			ry := int(uint16(arcs[i+3])) / 2
+			x := int(int16(arcs[i])) + rx
+			y := int(int16(arcs[i+1])) + ry
 			targetCtx.Call("ellipse", x, y, rx, ry, 0, startAngle, endAngle)
 			targetCtx.Call("stroke")
 		}
@@ -1780,8 +1929,10 @@ func (w *wasmX11Frontend) PolyFillArc(drawable xID, gcID xID, arcs []uint32) {
 	debugf("X11: polyFillArc drawable=%d gc=%v arcs=%v", drawable, gc, arcs)
 
 	var opBounds image.Rectangle
-	for i := 0; i < len(arcs); i += 6 {
-		r := image.Rect(int(arcs[i]), int(arcs[i+1]), int(arcs[i])+int(arcs[i+2]), int(arcs[i+1])+int(arcs[i+3]))
+	for i := 0; i+5 < len(arcs); i += 6 {
+		ax, ay := int(int16(arcs[i])), int(int16(arcs[i+1]))
+		aw, ah := int(uint16(arcs[i+2])), int(uint16(arcs[i+3]))
+		r := image.Rect(ax, ay, ax+aw, ay+ah)
 		if i == 0 {
 			opBounds = r
 		} else {
@@ -1796,14 +1947,16 @@ func (w *wasmX11Frontend) PolyFillArc(drawable xID, gcID xID, arcs []uint32) {
 	}
 
 	w.applyGC(drawable, gcID, func(targetCtx js.Value) {
-		for i := 0; i < len(arcs); i += 6 {
+		for i := 0; i+5 < len(arcs); i += 6 {
 			targetCtx.Call("beginPath")
-			startAngle := float64(arcs[i+4]) / 64 * (math.Pi / 180)
-			endAngle := float64(arcs[i+4]+arcs[i+5]) / 64 * (math.Pi / 180)
-			rx := uint32(arcs[i+2] / 2)
-			ry := uint32(arcs[i+3] / 2)
-			x := uint32(arcs[i] + rx)
-			y := uint32(arcs[i+1] + ry)
+			a1 := float64(int16(arcs[i+4]))
+			a2 := float64(int16(arcs[i+5]))
+			startAngle := a1 / 64 * (math.Pi / 180)
+			endAngle := (a1 + a2) / 64 * (math.Pi / 180)
+			rx := int(uint16(arcs[i+2])) / 2
+			ry := int(uint16(arcs[i+3])) / 2
+			x := int(int16(arcs[i])) + rx
+			y := int(int16(arcs[i+1])) + ry
 			targetCtx.Call("ellipse", x, y, rx, ry, 0, startAngle, endAngle)
 			if gc.ArcMode == 1 { // Pie
 				targetCtx.Call("lineTo", x, y)
@@ -1821,20 +1974,23 @@ func (w *wasmX11Frontend) PolyFillArc(drawable xID, gcID xID, arcs []uint32) {
 }
 
 func (w *wasmX11Frontend) ClearArea(drawable xID, x, y, width, height int32) {
-	if width == 0 {
-		width = int32(w.server.windows[drawable].width) - x
-	}
-	if height == 0 {
-		height = int32(w.server.windows[drawable].height) - y
+	srvWin, srvOk := w.server.windows[drawable]
+	if srvOk {
+		if width == 0 {
+			width = int32(srvWin.width) - x
+		}
+		if height == 0 {
+			height = int32(srvWin.height) - y
+		}
 	}
 	debugf("X11: clearArea drawable=%d x=%d y=%d width=%d height=%d", drawable, x, y, width, height)
 	if winInfo, ok := w.windows[drawable]; ok {
 		if !winInfo.canvas.IsNull() {
 			// Clear the area with the window's background color
 			var r, g, b uint8 = 0xff, 0xff, 0xff
-			if w.server.windows[drawable].attributes.BackgroundPixelSet {
+			if srvOk && srvWin.attributes.BackgroundPixelSet {
 				// Get RGB color from server's colormap or visual
-				r, g, b = w.GetRGBColor(winInfo.colormap, w.server.windows[drawable].attributes.BackgroundPixel)
+				r, g, b = w.GetRGBColor(winInfo.colormap, srvWin.attributes.BackgroundPixel)
 			}
 			bgColor := fmt.Sprintf("rgb(%d, %d, %d)", r, g, b)
 			debugf("X11: ClearArea filling with fillStyle: %s", bgColor)
@@ -1868,24 +2024,30 @@ func (w *wasmX11Frontend) CopyArea(srcDrawable, dstDrawable xID, gcID xID, srcX,
 		return
 	}
 
-	dstWinInfo, dstIsWindow := w.windows[dstDrawable]
-	dstPixmapInfo, dstIsPixmap := w.pixmaps[dstDrawable]
-	var dstCtx js.Value
-
-	if dstIsWindow {
-		dstCtx = dstWinInfo.offscreenCtx
-	} else if dstIsPixmap {
-		dstCtx = dstPixmapInfo.context
-	} else {
+	_, dstIsWindow := w.windows[dstDrawable]
+	_, dstIsPixmap := w.pixmaps[dstDrawable]
+	if !dstIsWindow && !dstIsPixmap {
 		debugf("X11: CopyArea destination drawable %d not found", dstDrawable)
 		return
 	}
 
-	if !srcCanvas.IsNull() && !dstCtx.IsNull() {
-		dstCtx.Call("drawImage", srcCanvas, srcX, srcY, width, height, dstX, dstY, width, height)
-		if dstIsWindow {
-			w.updateVisibleArea(dstDrawable, int(dstX), int(dstY), int(width), int(height))
+	if !srcCanvas.IsNull() && width > 0 && height > 0 {
+		var tempCanvas js.Value
+		if srcDrawable == dstDrawable {
+			tempCanvas = w.document.Call("createElement", "canvas")
+			tempCanvas.Set("width", width)
+			tempCanvas.Set("height", height)
+			tempCtx := tempCanvas.Call("getContext", "2d")
+			tempCtx.Call("drawImage", srcCanvas, srcX, srcY, width, height, 0, 0, width, height)
 		}
+		opBounds := image.Rect(int(dstX), int(dstY), int(dstX)+int(width), int(dstY)+int(height))
+		w.applyGC(dstDrawable, gcID, func(targetCtx js.Value) {
+			if !tempCanvas.IsUndefined() {
+				targetCtx.Call("drawImage", tempCanvas, 0, 0, width, height, dstX, dstY, width, height)
+			} else {
+				targetCtx.Call("drawImage", srcCanvas, srcX, srcY, width, height, dstX, dstY, width, height)
+			}
+		}, opBounds)
 	}
 	w.recordOperation(CanvasOperation{
 		Type: "copyArea",
@@ -1899,14 +2061,14 @@ func (w *wasmX11Frontend) CopyPlane(srcDrawable, dstDrawable xID, gcID xID, srcX
 		return
 	}
 	debugf("X11: copyPlane src=%d dst=%d gc=%v srcX=%d srcY=%d dstX=%d dstY=%d width=%d height=%d bitPlane=%d", srcDrawable, dstDrawable, gc, srcX, srcY, dstX, dstY, width, height, bitPlane)
-	var srcCanvas js.Value
+	var srcCtx js.Value
 	srcWinInfo, srcIsWindow := w.windows[srcDrawable]
 	srcPixmapInfo, srcIsPixmap := w.pixmaps[srcDrawable]
 
 	if srcIsWindow {
-		srcCanvas = srcWinInfo.offscreenCanvas
+		srcCtx = srcWinInfo.offscreenCtx
 	} else if srcIsPixmap {
-		srcCanvas = srcPixmapInfo.canvas
+		srcCtx = srcPixmapInfo.context
 	} else {
 		debugf("X11: CopyPlane source drawable %d not found", srcDrawable)
 		return
@@ -1928,49 +2090,47 @@ func (w *wasmX11Frontend) CopyPlane(srcDrawable, dstDrawable xID, gcID xID, srcX
 		return
 	}
 
-	if !srcCanvas.IsNull() && !dstCtx.IsUndefined() {
-		// 1. Create a temporary canvas to prepare the source image.
+	if !srcCtx.IsUndefined() && !srcCtx.IsNull() && !dstCtx.IsUndefined() && !dstCtx.IsNull() && width > 0 && height > 0 {
 		tempCanvas := w.document.Call("createElement", "canvas")
 		tempCanvas.Set("width", width)
 		tempCanvas.Set("height", height)
 		tempCtx := tempCanvas.Call("getContext", "2d")
 
-		// 2. Get the image data from the source drawable.
-		srcImageData := srcCanvas.Call("getContext", "2d").Call("getImageData", srcX, srcY, width, height)
+		srcImageData := srcCtx.Call("getImageData", srcX, srcY, width, height)
 		srcData := srcImageData.Get("data")
-		jsImgData := js.Global().Get("Uint8ClampedArray").New(int(width * height * 4))
+		srcBytes := make([]byte, srcData.Length())
+		js.CopyBytesToGo(srcBytes, srcData)
 
-		r, g, b := w.GetRGBColor(currentColormap, gc.Foreground)
-		fgR, fgG, fgB := r, g, b
+		dstBytes := make([]byte, len(srcBytes))
+		fgR, fgG, fgB := w.GetRGBColor(currentColormap, gc.Foreground)
+		bgR, bgG, bgB := w.GetRGBColor(currentColormap, gc.Background)
 
-		r, g, b = w.GetRGBColor(currentColormap, gc.Background)
-		bgR, bgG, bgB := r, g, b
-
-		// 3. Iterate through the source image data and check the bitPlane.
-		for i := 0; i < srcData.Length(); i += 4 {
-			// The source is treated as a bitmap. We get the pixel value from the source,
-			// and if the bit corresponding to bitPlane is set, we use the foreground color.
-			// Otherwise, we use the background color.
-			pixelValue := uint32(srcData.Index(i).Int()) | (uint32(srcData.Index(i+1).Int()) << 8) | (uint32(srcData.Index(i+2).Int()) << 16)
-
-			// 4. Populate the temporary canvas with foreground or background color.
-			if (pixelValue & uint32(bitPlane)) != 0 {
-				jsImgData.SetIndex(i+0, int(fgR))
-				jsImgData.SetIndex(i+1, int(fgG))
-				jsImgData.SetIndex(i+2, int(fgB))
-				jsImgData.SetIndex(i+3, 255) // Alpha for foreground
+		bitOn := isPixmapBitOnClassifier(srcBytes)
+		for i := 0; i+3 < len(srcBytes); i += 4 {
+			var set bool
+			if srcIsPixmap && uint32(bitPlane) == 1 {
+				set = bitOn(i)
 			} else {
-				jsImgData.SetIndex(i+0, int(bgR))
-				jsImgData.SetIndex(i+1, int(bgG))
-				jsImgData.SetIndex(i+2, int(bgB))
-				jsImgData.SetIndex(i+3, 255) // Alpha for background
+				pixelValue := (uint32(srcBytes[i]) << 16) | (uint32(srcBytes[i+1]) << 8) | uint32(srcBytes[i+2])
+				set = (pixelValue & uint32(bitPlane)) != 0
+			}
+			if set {
+				dstBytes[i+0] = fgR
+				dstBytes[i+1] = fgG
+				dstBytes[i+2] = fgB
+				dstBytes[i+3] = 255
+			} else {
+				dstBytes[i+0] = bgR
+				dstBytes[i+1] = bgG
+				dstBytes[i+2] = bgB
+				dstBytes[i+3] = 255
 			}
 		}
 
+		jsImgData := jsutil.Uint8ClampedArrayFromBytes(dstBytes)
 		newImageData := js.Global().Get("ImageData").New(jsImgData, width, height)
 		tempCtx.Call("putImageData", newImageData, 0, 0)
 
-		// 5. Apply the GC to the destination context and draw the image.
 		opBounds := image.Rect(int(dstX), int(dstY), int(dstX)+int(width), int(dstY)+int(height))
 		w.applyGC(dstDrawable, gcID, func(targetCtx js.Value) {
 			targetCtx.Call("drawImage", tempCanvas, dstX, dstY)
@@ -1983,24 +2143,94 @@ func (w *wasmX11Frontend) CopyPlane(srcDrawable, dstDrawable xID, gcID xID, srcX
 }
 
 func (w *wasmX11Frontend) GetImage(drawable xID, x, y, width, height int32, format uint32) ([]byte, error) {
-	if winInfo, ok := w.windows[drawable]; ok {
-		if !winInfo.canvas.IsNull() {
-			imageData := winInfo.offscreenCtx.Call("getImageData", x, y, width, height)
-			data := imageData.Get("data") // Uint8ClampedArray
-			byteSlice := make([]byte, data.Length())
-			js.CopyBytesToGo(byteSlice, data)
-			return byteSlice, nil
+	var ctx js.Value
+	depth := byte(24)
+	if winInfo, ok := w.windows[drawable]; ok && !winInfo.canvas.IsNull() {
+		ctx = winInfo.offscreenCtx
+		if srvWin, ok := w.server.windows[drawable]; ok && srvWin.depth != 0 {
+			depth = srvWin.depth
 		}
-	} else if pmInfo, ok := w.pixmaps[drawable]; ok {
-		if !pmInfo.canvas.IsNull() {
-			imageData := pmInfo.context.Call("getImageData", x, y, width, height)
-			data := imageData.Get("data") // Uint8ClampedArray
-			byteSlice := make([]byte, data.Length())
-			js.CopyBytesToGo(byteSlice, data)
-			return byteSlice, nil
+	} else if pmInfo, ok := w.pixmaps[drawable]; ok && !pmInfo.canvas.IsNull() {
+		ctx = pmInfo.context
+		if srvPm, ok := w.server.pixmaps[drawable]; ok && srvPm.depth != 0 {
+			depth = srvPm.depth
 		}
+	} else {
+		return nil, fmt.Errorf("window or pixmap or canvas not found for drawable %d", drawable)
 	}
-	return nil, fmt.Errorf("window or pixmap or canvas not found for drawable %d", drawable)
+
+	imageData := ctx.Call("getImageData", x, y, width, height)
+	data := imageData.Get("data") // Uint8ClampedArray
+	rgba := make([]byte, data.Length())
+	js.CopyBytesToGo(rgba, data)
+
+	order := w.server.byteOrder
+	if order == nil {
+		order = binary.LittleEndian
+	}
+
+	numPixels := int(width) * int(height)
+	if format == 1 { // XYPixmap
+		scanlineStride := (int(width) + 7) / 8
+		out := make([]byte, int(depth)*int(height)*scanlineStride)
+		bitOn := isPixmapBitOnClassifier(rgba)
+		for py := 0; py < int(height); py++ {
+			for px := 0; px < int(width); px++ {
+				idx := (py*int(width) + px) * 4
+				var pixel uint32
+				if depth == 1 {
+					if bitOn(idx) {
+						pixel = 1
+					}
+				} else {
+					pixel = (uint32(rgba[idx]) << 16) | (uint32(rgba[idx+1]) << 8) | uint32(rgba[idx+2])
+				}
+				byteOffset := py*scanlineStride + px/8
+				bitIdx := uint(px % 8)
+				for d := 0; d < int(depth); d++ {
+					bitShift := uint(int(depth) - 1 - d)
+					if (pixel>>bitShift)&1 != 0 {
+						planeOffset := d * int(height) * scanlineStride
+						out[planeOffset+byteOffset] |= 1 << bitIdx
+					}
+				}
+			}
+		}
+		return out, nil
+	}
+
+	// Default: ZPixmap (format == 2)
+	if depth == 1 {
+		scanlineStride := (int(width) + 7) / 8
+		out := make([]byte, int(height)*scanlineStride)
+		bitOn := isPixmapBitOnClassifier(rgba)
+		for py := 0; py < int(height); py++ {
+			for px := 0; px < int(width); px++ {
+				idx := (py*int(width) + px) * 4
+				if bitOn(idx) {
+					out[py*scanlineStride+px/8] |= 1 << uint(px%8)
+				}
+			}
+		}
+		return out, nil
+	}
+
+	out := make([]byte, numPixels*4)
+	for i := 0; i < numPixels && i*4+3 < len(rgba); i++ {
+		pixel := (uint32(rgba[i*4]) << 16) | (uint32(rgba[i*4+1]) << 8) | uint32(rgba[i*4+2])
+		order.PutUint32(out[i*4:i*4+4], pixel)
+	}
+	return out, nil
+}
+
+func (w *wasmX11Frontend) getDrawableContextAndColormap(drawable xID) (js.Value, xID, bool) {
+	if winInfo, ok := w.windows[drawable]; ok {
+		return winInfo.offscreenCtx, winInfo.colormap, !winInfo.offscreenCtx.IsUndefined() && !winInfo.offscreenCtx.IsNull()
+	}
+	if pmInfo, ok := w.pixmaps[drawable]; ok {
+		return pmInfo.context, xID(w.server.defaultColormap), !pmInfo.context.IsUndefined() && !pmInfo.context.IsNull()
+	}
+	return js.Undefined(), 0, false
 }
 
 func (w *wasmX11Frontend) ImageText8(drawable xID, gcID xID, x, y int32, text []byte) {
@@ -2012,22 +2242,12 @@ func (w *wasmX11Frontend) ImageText8(drawable xID, gcID xID, x, y int32, text []
 	decodedTextForLog = strings.ReplaceAll(decodedTextForLog, "\x00", "") // Trim null terminators
 	debugf("X11: imageText8 drawable=%d gc=%v x=%d y=%d text=%s", drawable, gc, x, y, decodedTextForLog)
 
-	var ctx js.Value
-	var colormap xID
-	winInfo, ok := w.windows[drawable]
-	if ok {
-		ctx = winInfo.offscreenCtx
-		colormap = winInfo.colormap
-	} else {
+	ctx, colormap, ok := w.getDrawableContextAndColormap(drawable)
+	if !ok {
 		return
 	}
 
-	if ctx.IsUndefined() {
-		return
-	}
-
-	decodedText := js.Global().Get("TextDecoder").New().Call("decode", jsutil.Uint8ArrayFromBytes(text)).String()
-	decodedText = strings.ReplaceAll(decodedText, "\x00", "") // Trim null terminators
+	decodedText := decodedTextForLog
 
 	ctx.Call("save")
 	w.applyGCState(ctx, colormap, gc, (uint32(gcID)>>resourceIDShift)&clientIDMask)
@@ -2090,22 +2310,12 @@ func (w *wasmX11Frontend) ImageText16(drawable xID, gcID xID, x, y int32, text [
 	decodedTextForLog = strings.ReplaceAll(decodedTextForLog, "\x00", "") // Trim null terminators
 	debugf("X11: imageText16 drawable=%d gc=%v x=%d y=%d text=%s", drawable, gc, x, y, decodedTextForLog)
 
-	var ctx js.Value
-	var colormap xID
-	winInfo, ok := w.windows[drawable]
-	if ok {
-		ctx = winInfo.offscreenCtx
-		colormap = winInfo.colormap
-	} else {
+	ctx, colormap, ok := w.getDrawableContextAndColormap(drawable)
+	if !ok {
 		return
 	}
 
-	if ctx.IsUndefined() {
-		return
-	}
-
-	decodedText := js.Global().Get("TextDecoder").New().Call("decode", jsutil.Uint8ArrayFromBytes(textBytes)).String()
-	decodedText = strings.ReplaceAll(decodedText, "\x00", "") // Trim null terminators
+	decodedText := decodedTextForLog
 
 	ctx.Call("save")
 	w.applyGCState(ctx, colormap, gc, (uint32(gcID)>>resourceIDShift)&clientIDMask)
@@ -2159,17 +2369,8 @@ func (w *wasmX11Frontend) PolyText8(drawable xID, gcID xID, x, y int32, items []
 	}
 	debugf("X11: polyText8 drawable=%d gc=%v x=%d y=%d items=%v", drawable, gc, x, y, items)
 
-	var ctx js.Value
-	var colormap xID
-	winInfo, ok := w.windows[drawable]
-	if ok {
-		ctx = winInfo.offscreenCtx
-		colormap = winInfo.colormap
-	} else {
-		return
-	}
-
-	if ctx.IsUndefined() {
+	ctx, colormap, ok := w.getDrawableContextAndColormap(drawable)
+	if !ok {
 		return
 	}
 
@@ -2240,17 +2441,8 @@ func (w *wasmX11Frontend) PolyText16(drawable xID, gcID xID, x, y int32, items [
 	}
 	debugf("X11: polyText16 drawable=%d gc=%v x=%d y=%d items=%v", drawable, gc, x, y, items)
 
-	var ctx js.Value
-	var colormap xID
-	winInfo, ok := w.windows[drawable]
-	if ok {
-		ctx = winInfo.offscreenCtx
-		colormap = winInfo.colormap
-	} else {
-		return
-	}
-
-	if ctx.IsUndefined() {
+	ctx, colormap, ok := w.getDrawableContextAndColormap(drawable)
+	if !ok {
 		return
 	}
 
@@ -2790,7 +2982,6 @@ func (w *wasmX11Frontend) CopyPixmap(srcID, dstID, gcID xID, srcX, srcY, width, 
 
 func (w *wasmX11Frontend) WarpPointer(x, y int16) {
 	debugf("X11: warpPointer x=%d y=%d", x, y)
-	w.server.UpdatePointerPosition(x, y)
 	w.recordOperation(CanvasOperation{
 		Type: "warpPointer",
 		Args: []any{x, y},
@@ -2837,12 +3028,15 @@ func (w *wasmX11Frontend) CreateCursor(cursorID xID, source, mask xID, foreColor
 	sourceJSData := sourcePixmap.context.Call("getImageData", 0, 0, width, height).Get("data")
 	sourceBytes := make([]byte, sourceJSData.Length())
 	js.CopyBytesToGo(sourceBytes, sourceJSData)
+	isSourceBitOn := isPixmapBitOnClassifier(sourceBytes)
 
 	var maskBytes []byte
+	var isMaskBitOn func(int) bool
 	if uint32(mask) != 0 {
 		maskJSData := maskPixmap.context.Call("getImageData", 0, 0, width, height).Get("data")
 		maskBytes = make([]byte, maskJSData.Length())
 		js.CopyBytesToGo(maskBytes, maskJSData)
+		isMaskBitOn = isPixmapBitOnClassifier(maskBytes)
 	}
 
 	cursorBytes := make([]byte, width*height*4)
@@ -2859,11 +3053,11 @@ func (w *wasmX11Frontend) CreateCursor(cursorID xID, source, mask xID, foreColor
 
 		maskBitOn := true
 		if uint32(mask) != 0 {
-			maskBitOn = maskBytes[idx+3] > 0
+			maskBitOn = isMaskBitOn(idx)
 		}
 
 		if maskBitOn {
-			sourceBitOn := sourceBytes[idx+3] > 0
+			sourceBitOn := isSourceBitOn(idx)
 			if sourceBitOn {
 				// Foreground
 				cursorBytes[idx+0] = fgR
@@ -3050,7 +3244,7 @@ func (w *wasmX11Frontend) GetFocusWindow(clientID uint32) xID {
 func (w *wasmX11Frontend) GrabKeyboard(grabWindow xID, ownerEvents bool, time uint32, pointerMode, keyboardMode byte) byte {
 	debugf("X11: GrabKeyboard window=%d", grabWindow)
 	if win, ok := w.windows[grabWindow]; ok {
-		win.canvas.Call("focus")
+		win.div.Call("focus")
 	}
 	w.recordOperation(CanvasOperation{
 		Type: "grabKeyboard",
@@ -3085,21 +3279,6 @@ func (w *wasmX11Frontend) initDefaultCursors() {
 	w.cursorStyles[12] = &cursorInfo{style: "ne-resize"}
 	w.cursorStyles[134] = &cursorInfo{style: "sw-resize"}
 	w.cursorStyles[136] = &cursorInfo{style: "se-resize"}
-}
-
-func (w *wasmX11Frontend) SetCursor(windowID xID, cursorID uint32) {
-	debugf("X11: setCursor window=%d cursor=%d", windowID, cursorID)
-	if winInfo, ok := w.windows[windowID]; ok {
-		if info, ok := w.cursorStyles[cursorID]; ok {
-			winInfo.canvas.Get("style").Set("cursor", info.style)
-		} else {
-			winInfo.canvas.Get("style").Set("cursor", "default")
-		}
-	}
-	w.recordOperation(CanvasOperation{
-		Type: "setCursor",
-		Args: []any{uint32(windowID), cursorID},
-	})
 }
 
 func (w *wasmX11Frontend) ReadClipboard() (string, error) {
@@ -3197,6 +3376,10 @@ func (w *wasmX11Frontend) SendConfigureAndExposeEvent(windowID xID, x, y int16, 
 
 	var borderWidth uint16
 	if win, ok := w.server.windows[windowID]; ok {
+		win.x = x
+		win.y = y
+		win.width = width
+		win.height = height
 		borderWidth = win.borderWidth
 	}
 	w.server.sendConfigureNotifyEvent(windowID, x, y, width, height, borderWidth, 0)
@@ -3238,8 +3421,8 @@ func (w *wasmX11Frontend) mouseEventHandler(xid xID, eventType string) js.Func {
 		offsetY := int32(event.Get("offsetY").Int())
 
 		// The state should be the mask *before* the event.
-		// The  property is the state *after* the  event,
-		// and *before* the  event. So for mouseup, it's correct.
+		// The buttons property is the state *after* the mousedown event,
+		// and *before* the mouseup event. So for mouseup, it's correct.
 		// For mousedown, we need to remove the current button from the mask.
 		state := 0
 		if event.Get("shiftKey").Bool() {
@@ -3252,7 +3435,7 @@ func (w *wasmX11Frontend) mouseEventHandler(xid xID, eventType string) js.Func {
 			state |= 8 // Mod1Mask
 		}
 
-		// Map JS  bitmask to X11 button state masks
+		// Map JS buttons bitmask to X11 button state masks
 		jsButtons := event.Get("buttons").Int()
 		buttonsMask := 0
 		if (jsButtons & 1) != 0 {
@@ -3314,9 +3497,6 @@ func (w *wasmX11Frontend) mouseEventHandler(xid xID, eventType string) js.Func {
 			}
 			// Simulate a press and release for wheel events.
 			detailDown := (state << 16) | button
-			w.server.SendMouseEvent(xid, "mousedown", offsetX, offsetY, int32(detailDown))
-
-			// For the release event, the state should include the button that was pressed.
 			stateUp := state
 			switch button {
 			case 4:
@@ -3325,20 +3505,25 @@ func (w *wasmX11Frontend) mouseEventHandler(xid xID, eventType string) js.Func {
 				stateUp |= 0x1000 // Button5Mask
 			}
 			detailUp := (stateUp << 16) | button
-			w.server.SendMouseEvent(xid, "mouseup", offsetX, offsetY, int32(detailUp))
+			go func() {
+				w.server.SendMouseEvent(xid, "mousedown", offsetX, offsetY, int32(detailDown))
+				w.server.SendMouseEvent(xid, "mouseup", offsetX, offsetY, int32(detailUp))
+			}()
 
 			debugf("Mouse wheel event: window=%d, x=%d, y=%d, button=%d, state=%d", xid, offsetX, offsetY, button, state)
 		} else {
 			// Pack button and state into a single int32
 			// Use top 16 bits for state, bottom 16 for button
 			detail := (state << 16) | button
-			w.server.SendMouseEvent(xid, eventType, offsetX, offsetY, int32(detail))
+			go func() {
+				w.server.SendMouseEvent(xid, eventType, offsetX, offsetY, int32(detail))
+				if eventType == "mousemove" {
+					w.server.UpdatePointerPosition(int16(offsetX), int16(offsetY))
+				}
+			}()
 			debugf("Mouse event: window=%d, type=%s, x=%d, y=%d, button=%d, state=%d (packed_detail=%d)", xid, eventType, offsetX, offsetY, button, state, detail)
 		}
 
-		if eventType == "mousemove" {
-			w.server.UpdatePointerPosition(int16(offsetX), int16(offsetY))
-		}
 		return nil
 	})
 }
@@ -3354,7 +3539,7 @@ func keyMask(event js.Value) uint16 {
 	if event.Get("altKey").Bool() {
 		state |= 8 // Mod1Mask
 	}
-	// Map JS  bitmask to X11 button state masks
+	// Map JS buttons bitmask to X11 button state masks
 	jsButtons := event.Get("buttons").Int()
 	if (jsButtons & 1) != 0 {
 		state |= 0x0100
@@ -3383,7 +3568,9 @@ func (w *wasmX11Frontend) pointerCrossingEventHandler(xid xID, isEnter bool) js.
 		mode := byte(0)   // Normal
 		detail := byte(0) // Not used for crossing events
 
-		w.server.SendPointerCrossingEvent(isEnter, xid, rootX, rootY, eventX, eventY, state, mode, detail)
+		go func() {
+			w.server.SendPointerCrossingEvent(isEnter, xid, rootX, rootY, eventX, eventY, state, mode, detail)
+		}()
 		debugf("Pointer crossing event: window=%d, isEnter=%t, rootX=%d, rootY=%d, eventX=%d, eventY=%d, state=%d", xid, isEnter, rootX, rootY, eventX, eventY, state)
 		return nil
 	})
@@ -3401,9 +3588,12 @@ func (w *wasmX11Frontend) keyboardEventHandler(xid xID, eventType string) js.Fun
 		ctrlKey := event.Get("ctrlKey").Bool()
 		shiftKey := event.Get("shiftKey").Bool()
 		metaKey := event.Get("metaKey").Bool()
+		focusedWinID := w.focusedWindowID
 
-		w.server.SendKeyboardEvent(w.focusedWindowID, eventType, code, altKey, ctrlKey, shiftKey, metaKey)
-		debugf("Keyboard event: window=%d, type=%s, code=%s, alt=%t, ctrl=%t, shift=%t, meta=%t", w.focusedWindowID, eventType, code, altKey, ctrlKey, shiftKey, metaKey)
+		go func() {
+			w.server.SendKeyboardEvent(focusedWinID, eventType, code, altKey, ctrlKey, shiftKey, metaKey)
+		}()
+		debugf("Keyboard event: window=%d, type=%s, code=%s, alt=%t, ctrl=%t, shift=%t, meta=%t", focusedWinID, eventType, code, altKey, ctrlKey, shiftKey, metaKey)
 		return nil
 	})
 }
@@ -3489,52 +3679,6 @@ func (w *wasmX11Frontend) QueryFont(fid xID) (minBounds, maxBounds wire.XCharInf
 	maxCharOrByte2 = 255 // ASCII range
 	defaultChar = 0      // Will be set to ' ' (32) if not all chars exist
 	drawDirection = 0    // LeftToRight
-	minByte1 = 0
-	maxByte1 = 0
-	allCharsExist = true // Optimistic for the 0-255 range
-
-	charInfos = make([]wire.XCharInfo, 256)
-	for i := 0; i < 256; i++ {
-		char := string([]byte{byte(i)})
-		metrics := ctx.Call("measureText", char)
-		width := uint16(math.Round(metrics.Get("width").Float()))
-		ascent := int16(math.Round(metrics.Get("actualBoundingBoxAscent").Float()))
-		descent := int16(math.Round(metrics.Get("actualBoundingBoxDescent").Float()))
-		lsb := int16(math.Round(metrics.Get("actualBoundingBoxLeft").Float()))
-		rsb := int16(math.Round(metrics.Get("actualBoundingBoxRight").Float()))
-
-		charInfos[i] = wire.XCharInfo{
-			LeftSideBearing:  -lsb, // X11 LSB is distance from origin to left edge, usually negative if to the left
-			RightSideBearing: rsb,
-			CharacterWidth:   width,
-			Ascent:           ascent,
-			Descent:          descent,
-		}
-
-		if i == 0 {
-			minBounds = charInfos[i]
-			maxBounds = charInfos[i]
-		} else {
-			if charInfos[i].LeftSideBearing < minBounds.LeftSideBearing {
-				minBounds.LeftSideBearing = charInfos[i].LeftSideBearing
-			}
-			if charInfos[i].RightSideBearing > maxBounds.RightSideBearing {
-				maxBounds.RightSideBearing = charInfos[i].RightSideBearing
-			}
-			if charInfos[i].CharacterWidth < minBounds.CharacterWidth {
-				minBounds.CharacterWidth = charInfos[i].CharacterWidth
-			}
-			if charInfos[i].CharacterWidth > maxBounds.CharacterWidth {
-				maxBounds.CharacterWidth = charInfos[i].CharacterWidth
-			}
-			if charInfos[i].Ascent > maxBounds.Ascent {
-				maxBounds.Ascent = charInfos[i].Ascent
-			}
-			if charInfos[i].Descent > maxBounds.Descent {
-				maxBounds.Descent = charInfos[i].Descent
-			}
-		}
-	}
 	minByte1 = 0
 	maxByte1 = 0
 	allCharsExist = true // Assume true, set to false if any char has 0 width
@@ -3760,53 +3904,12 @@ func (w *wasmX11Frontend) watchWindowEvents(xid xID, values wire.WindowAttribute
 		return
 	}
 
-	// XInput keyboard events
-	if values.EventMask&(wire.DeviceKeyPressMask|wire.DeviceKeyReleaseMask) != 0 {
-		if _, ok := winInfo.xInputEvents["keydown"]; !ok {
-			fn := w.keyboardEventHandler(xid, "keydown")
-			winInfo.xInputEvents["keydown"] = fn
-			winInfo.canvas.Call("addEventListener", "keydown", fn)
-		}
-		if _, ok := winInfo.xInputEvents["keyup"]; !ok {
-			fn := w.keyboardEventHandler(xid, "keyup")
-			winInfo.xInputEvents["keyup"] = fn
-			winInfo.canvas.Call("addEventListener", "keyup", fn)
-		}
-	} else {
-		if fn, ok := winInfo.xInputEvents["keydown"]; ok {
-			winInfo.canvas.Call("removeEventListener", "keydown", fn)
-			delete(winInfo.xInputEvents, "keydown")
-		}
-		if fn, ok := winInfo.xInputEvents["keyup"]; ok {
-			winInfo.canvas.Call("removeEventListener", "keyup", fn)
-			delete(winInfo.xInputEvents, "keyup")
-		}
-	}
-
-	// XInput mouse events
-	if values.EventMask&wire.DeviceButtonPressMask != 0 {
-		if _, ok := winInfo.xInputEvents["mousedown"]; !ok {
-			fn := w.mouseEventHandler(xid, "mousedown")
-			winInfo.xInputEvents["mousedown"] = fn
-			winInfo.canvas.Call("addEventListener", "mousedown", fn)
-		}
-	} else {
-		if fn, ok := winInfo.xInputEvents["mousedown"]; ok {
-			winInfo.canvas.Call("removeEventListener", "mousedown", fn)
-			delete(winInfo.xInputEvents, "mousedown")
-		}
-	}
-	if values.EventMask&wire.DeviceButtonReleaseMask != 0 {
-		if _, ok := winInfo.xInputEvents["mouseup"]; !ok {
-			fn := w.mouseEventHandler(xid, "mouseup")
-			winInfo.xInputEvents["mouseup"] = fn
-			winInfo.canvas.Call("addEventListener", "mouseup", fn)
-		}
-	} else {
-		if fn, ok := winInfo.xInputEvents["mouseup"]; ok {
-			winInfo.canvas.Call("removeEventListener", "mouseup", fn)
-			delete(winInfo.xInputEvents, "mouseup")
-		}
+	// CreateWindow already attaches keydown/keyup on winInfo.div and mousedown/mouseup on winInfo.canvas,
+	// and the server dispatches both Core and XInput events from a single SendKeyboardEvent/SendMouseEvent call.
+	for eventName, fn := range winInfo.xInputEvents {
+		winInfo.canvas.Call("removeEventListener", eventName, fn)
+		fn.Release()
+		delete(winInfo.xInputEvents, eventName)
 	}
 }
 
@@ -3840,14 +3943,6 @@ func (w *wasmX11Frontend) ChangeWindowAttributes(xid xID, valueMask uint32, valu
 	})
 }
 
-func uint32SliceToAnySlice(s []uint32) []any {
-	anySlice := make([]any, len(s))
-	for i, v := range s {
-		anySlice[i] = v
-	}
-	return anySlice
-}
-
 func (w *wasmX11Frontend) DestroyAllWindowsForClient(client uint32) {
 	for xid, winInfo := range w.windows {
 		if (uint32(xid)>>resourceIDShift)&clientIDMask == client {
@@ -3858,6 +3953,26 @@ func (w *wasmX11Frontend) DestroyAllWindowsForClient(client uint32) {
 	for xid := range w.windows {
 		if (uint32(xid)>>resourceIDShift)&clientIDMask == client {
 			w.destroyWindow(xid, false)
+		}
+	}
+	for xid := range w.pixmaps {
+		if (uint32(xid)>>resourceIDShift)&clientIDMask == client {
+			delete(w.pixmaps, xid)
+		}
+	}
+	for xid := range w.gcs {
+		if (uint32(xid)>>resourceIDShift)&clientIDMask == client {
+			delete(w.gcs, xid)
+		}
+	}
+	for xid := range w.cursorStyles {
+		if (xid>>resourceIDShift)&clientIDMask == client {
+			delete(w.cursorStyles, xid)
+		}
+	}
+	for xid := range w.fonts {
+		if (uint32(xid)>>resourceIDShift)&clientIDMask == client {
+			delete(w.fonts, xid)
 		}
 	}
 }

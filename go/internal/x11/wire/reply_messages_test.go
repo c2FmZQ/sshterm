@@ -517,7 +517,7 @@ func TestReplyMessages(t *testing.T) {
 			AllCharsExist:  true,
 			FontAscent:     10,
 			FontDescent:    2,
-		NumCharInfos:   1,
+			NumCharInfos:   1,
 			CharInfos: []XCharInfo{
 				{1, 2, 3, 4, 5, 6},
 			},
@@ -669,12 +669,12 @@ func TestReplyMessages(t *testing.T) {
 		expected := make([]byte, 32)
 		expected[0] = 1
 		binary.LittleEndian.PutUint16(expected[2:4], 28)
-		binary.LittleEndian.PutUint16(expected[8:10], 1)
-		binary.LittleEndian.PutUint16(expected[10:12], 2)
-		binary.LittleEndian.PutUint16(expected[12:14], 3)
-		binary.LittleEndian.PutUint16(expected[14:16], 4)
-		binary.LittleEndian.PutUint16(expected[16:18], 5)
-		binary.LittleEndian.PutUint16(expected[18:20], 6)
+		binary.LittleEndian.PutUint16(expected[8:10], 4)
+		binary.LittleEndian.PutUint16(expected[10:12], 5)
+		binary.LittleEndian.PutUint16(expected[12:14], 6)
+		binary.LittleEndian.PutUint16(expected[14:16], 1)
+		binary.LittleEndian.PutUint16(expected[16:18], 2)
+		binary.LittleEndian.PutUint16(expected[18:20], 3)
 		if !bytes.Equal(encoded, expected) {
 			t.Errorf("LookupColorReply encoding failed. Got %v, want %v", encoded, expected)
 		}

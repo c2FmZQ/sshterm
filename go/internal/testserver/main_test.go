@@ -202,7 +202,6 @@ func TestSSHTerm(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	var cancel context.CancelFunc
 
 	// Generate self-signed certificate
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -253,7 +252,7 @@ func TestSSHTerm(t *testing.T) {
 		return
 	}
 
-	logConsole := func(ev *runtime.EventConsoleAPICalled) {
+	logConsole := func(ev *runtime.EventConsoleAPICalled, cancel context.CancelFunc) {
 		var parts []string
 		for _, arg := range ev.Args {
 			if strings.Contains(arg.Value.String(), "ForwardX11 requested, but X11 is not enabled") {
@@ -270,12 +269,12 @@ func TestSSHTerm(t *testing.T) {
 	}
 
 	t.Run("WASM App Tests", func(t *testing.T) {
-		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Minute)
-		defer cancel()
-		ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
-		defer cancel()
+		ctx, cancelTimeout := context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancelTimeout()
+		ctx, cancelAlloc := chromedp.NewRemoteAllocator(ctx, *withChromeDP)
+		defer cancelAlloc()
 
-		ctx, cancel = chromedp.NewContext(ctx,
+		ctx, cancel := chromedp.NewContext(ctx,
 			//chromedp.WithDebugf(t.Logf),
 			chromedp.WithErrorf(t.Logf),
 			chromedp.WithLogf(t.Logf),
@@ -286,7 +285,7 @@ func TestSSHTerm(t *testing.T) {
 			switch ev := ev.(type) {
 			case *cdproto.Message:
 			case *runtime.EventConsoleAPICalled:
-				logConsole(ev)
+				logConsole(ev, cancel)
 			case *runtime.EventExceptionThrown:
 				t.Logf("Exception: * %s", ev.ExceptionDetails.Error())
 			case *webauthn.EventCredentialAdded, *webauthn.EventCredentialAsserted, *webauthn.EventCredentialDeleted, *webauthn.EventCredentialUpdated:
@@ -349,12 +348,12 @@ func TestSSHTerm(t *testing.T) {
 	})
 
 	t.Run("X11", func(t *testing.T) {
-		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Minute)
-		defer cancel()
-		ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
-		defer cancel()
+		ctx, cancelTimeout := context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancelTimeout()
+		ctx, cancelAlloc := chromedp.NewRemoteAllocator(ctx, *withChromeDP)
+		defer cancelAlloc()
 
-		ctx, cancel = chromedp.NewContext(ctx,
+		ctx, cancel := chromedp.NewContext(ctx,
 			chromedp.WithErrorf(t.Logf),
 			chromedp.WithLogf(t.Logf),
 		)
@@ -364,7 +363,7 @@ func TestSSHTerm(t *testing.T) {
 			switch ev := ev.(type) {
 			case *cdproto.Message:
 			case *runtime.EventConsoleAPICalled:
-				logConsole(ev)
+				logConsole(ev, cancel)
 			case *runtime.EventExceptionThrown:
 				t.Logf("Exception: * %s", ev.ExceptionDetails.Error())
 			default:
@@ -384,7 +383,11 @@ func TestSSHTerm(t *testing.T) {
 		}
 
 		t.Log("Waiting for X11 Simulation to finish")
-		<-sshServerWithCert.x11SimDone
+		select {
+		case <-sshServerWithCert.x11SimDone:
+		case <-ctx.Done():
+			t.Fatalf("Timed out or canceled waiting for X11 simulation: %v", ctx.Err())
+		}
 
 		if err := chromedp.Run(ctx,
 			chromedp.CaptureScreenshot(&buf),
@@ -411,12 +414,12 @@ func TestSSHTerm(t *testing.T) {
 	})
 
 	t.Run("WASM X11 Tests", func(t *testing.T) {
-		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Minute)
-		defer cancel()
-		ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
-		defer cancel()
+		ctx, cancelTimeout := context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancelTimeout()
+		ctx, cancelAlloc := chromedp.NewRemoteAllocator(ctx, *withChromeDP)
+		defer cancelAlloc()
 
-		ctx, cancel = chromedp.NewContext(ctx,
+		ctx, cancel := chromedp.NewContext(ctx,
 			chromedp.WithErrorf(t.Logf),
 			chromedp.WithLogf(t.Logf),
 		)
@@ -433,7 +436,7 @@ func TestSSHTerm(t *testing.T) {
 			switch ev := ev.(type) {
 			case *cdproto.Message:
 			case *runtime.EventConsoleAPICalled:
-				logConsole(ev)
+				logConsole(ev, cancel)
 				if len(ev.Args) > 0 {
 					if v := ev.Args[0].Value.String(); v == `"Exit status 0"` {
 						sendPass(true)
@@ -464,9 +467,13 @@ func TestSSHTerm(t *testing.T) {
 			t.Logf("X11 screenshot saved to %s", screenshotPath)
 		}
 		t.Log("X11 WASM tests completed")
-		cancel()
-		if !<-pass {
-			t.Error("Test failed")
+		select {
+		case ok := <-pass:
+			if !ok {
+				t.Error("Test failed")
+			}
+		case <-ctx.Done():
+			t.Errorf("Timed out waiting for test exit status: %v", ctx.Err())
 		}
 	})
 }
@@ -477,29 +484,6 @@ type CanvasOperation struct {
 	Args        []any  `json:"args"`
 	FillStyle   string `json:"fillStyle"`
 	StrokeStyle string `json:"strokeStyle"`
-}
-
-func parseColorString(colorStr string) uint32 {
-	if strings.HasPrefix(colorStr, "#") {
-		// Parse hex color
-		color, err := strconv.ParseUint(colorStr[1:], 16, 32)
-		if err != nil {
-			return 0 // Should not happen in tests
-		}
-		return uint32(color)
-	} else if strings.HasPrefix(colorStr, "rgb") {
-		// Parse rgb(r, g, b) color
-		rgb := strings.TrimPrefix(colorStr, "rgb(")
-		rgb = strings.TrimSuffix(rgb, ")")
-		parts := strings.Split(rgb, ", ")
-		if len(parts) == 3 {
-			r, _ := strconv.Atoi(parts[0])
-			g, _ := strconv.Atoi(parts[1])
-			b, _ := strconv.Atoi(parts[2])
-			return uint32(r<<16 | g<<8 | b)
-		}
-	}
-	return 0 // Default or error color
 }
 
 func compareOperations(t *testing.T, x11Ops []X11Operation, canvasOps []CanvasOperation) {

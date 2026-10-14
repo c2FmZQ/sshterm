@@ -60,7 +60,7 @@ func ReadServerMessagesWithTracker(conn io.Reader, order binary.ByteOrder, track
 				return
 			}
 
-			msgType := header[0]
+			msgType := header[0] & 0x7f
 			sequenceNumber := order.Uint16(header[2:4])
 
 			debugf("X11 received server message: type=%d, sequence=%d", msgType, sequenceNumber)
@@ -215,6 +215,9 @@ func ParseReply(opcodes Opcodes, msg []byte, order binary.ByteOrder) (ServerMess
 	case XInputOpcode:
 		return parseXInputReply(opcodes.Minor, order, msg)
 	case BigRequestsOpcode:
+		if len(msg) < 32 {
+			return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: BigRequestsOpcode, Minor: 0})
+		}
 		return &BigRequestsEnableReply{
 			Sequence:         order.Uint16(msg[2:4]),
 			MaxRequestLength: order.Uint32(msg[8:12]),
@@ -527,17 +530,27 @@ func ParseGetPropertyReply(order binary.ByteOrder, b []byte) (*GetPropertyReply,
 	if len(b) < 32 {
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 	}
-	valLen := order.Uint32(b[4:8]) * 4
-	if len(b) < 32+int(valLen) {
+	words := order.Uint32(b[4:8])
+	valLen := uint64(words) * 4
+	if uint64(len(b)) < 32+valLen {
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
+	}
+	format := b[1]
+	valueLenInFormatUnits := order.Uint32(b[16:20])
+	actualLen := valLen
+	if format == 8 || format == 16 || format == 32 {
+		exact := uint64(valueLenInFormatUnits) * uint64(format/8)
+		if exact <= valLen {
+			actualLen = exact
+		}
 	}
 	r := &GetPropertyReply{
 		Sequence:              order.Uint16(b[2:4]),
-		Format:                b[1],
+		Format:                format,
 		PropertyType:          order.Uint32(b[8:12]),
 		BytesAfter:            order.Uint32(b[12:16]),
-		ValueLenInFormatUnits: order.Uint32(b[16:20]),
-		Value:                 b[32 : 32+valLen],
+		ValueLenInFormatUnits: valueLenInFormatUnits,
+		Value:                 b[32 : 32+int(actualLen)],
 	}
 	return r, nil
 }
@@ -669,7 +682,7 @@ func ParseGetMotionEventsReply(order binary.ByteOrder, b []byte) (*GetMotionEven
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 	}
 	nEvents := order.Uint32(b[8:12])
-	if len(b) < 32+int(nEvents)*8 {
+	if uint64(len(b)) < 32+uint64(nEvents)*8 {
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 	}
 	events := make([]TimeCoord, nEvents)
@@ -980,7 +993,7 @@ func ParseQueryFontReply(order binary.ByteOrder, b []byte) (*QueryFontReply, err
 	}
 	numFontProps := order.Uint16(b[46:48])
 	numCharInfos := order.Uint32(b[56:60])
-	if len(b) < 60+8*int(numFontProps)+12*int(numCharInfos) {
+	if uint64(len(b)) < 60+8*uint64(numFontProps)+12*uint64(numCharInfos) {
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 	}
 	var charInfos []XCharInfo
@@ -1112,11 +1125,12 @@ type GetImageReply struct {
 
 // EncodeMessage encodes the GetImageReply into a byte slice.
 func (r *GetImageReply) EncodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32+len(r.ImageData))
+	words := (len(r.ImageData) + 3) / 4
+	reply := make([]byte, 32+words*4)
 	reply[0] = 1 // Reply type
 	reply[1] = r.Depth
 	order.PutUint16(reply[2:4], r.Sequence)
-	order.PutUint32(reply[4:8], uint32(len(r.ImageData)/4)) // Reply length
+	order.PutUint32(reply[4:8], uint32(words)) // Reply length
 	order.PutUint32(reply[8:12], r.VisualID)
 	// reply[12:32] is padding
 	copy(reply[32:], r.ImageData)
@@ -1128,15 +1142,16 @@ func ParseGetImageReply(order binary.ByteOrder, b []byte) (*GetImageReply, error
 	if len(b) < 32 {
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 	}
-	length := order.Uint32(b[4:8]) * 4
-	if len(b) < 32+int(length) {
+	words := order.Uint32(b[4:8])
+	length := uint64(words) * 4
+	if uint64(len(b)) < 32+length {
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 	}
 	r := &GetImageReply{
 		Sequence:  order.Uint16(b[2:4]),
 		Depth:     b[1],
 		VisualID:  order.Uint32(b[8:12]),
-		ImageData: b[32 : 32+length],
+		ImageData: b[32 : 32+int(length)],
 	}
 	return r, nil
 }
@@ -1342,12 +1357,12 @@ func (r *LookupColorReply) EncodeMessage(order binary.ByteOrder) []byte {
 	// byte 1 is unused
 	order.PutUint16(reply[2:4], r.Sequence)
 	order.PutUint32(reply[4:8], 0) // Reply length (0 * 4 bytes = 0 bytes, plus 32 bytes header = 32 bytes total)
-	order.PutUint16(reply[8:10], r.Red)
-	order.PutUint16(reply[10:12], r.Green)
-	order.PutUint16(reply[12:14], r.Blue)
-	order.PutUint16(reply[14:16], r.ExactRed)
-	order.PutUint16(reply[16:18], r.ExactGreen)
-	order.PutUint16(reply[18:20], r.ExactBlue)
+	order.PutUint16(reply[8:10], r.ExactRed)
+	order.PutUint16(reply[10:12], r.ExactGreen)
+	order.PutUint16(reply[12:14], r.ExactBlue)
+	order.PutUint16(reply[14:16], r.Red)
+	order.PutUint16(reply[16:18], r.Green)
+	order.PutUint16(reply[18:20], r.Blue)
 	// reply[20:32] is padding
 	return reply
 }
@@ -1359,12 +1374,12 @@ func ParseLookupColorReply(order binary.ByteOrder, b []byte) (*LookupColorReply,
 	}
 	r := &LookupColorReply{
 		Sequence:   order.Uint16(b[2:4]),
-		Red:        order.Uint16(b[8:10]),
-		Green:      order.Uint16(b[10:12]),
-		Blue:       order.Uint16(b[12:14]),
-		ExactRed:   order.Uint16(b[14:16]),
-		ExactGreen: order.Uint16(b[16:18]),
-		ExactBlue:  order.Uint16(b[18:20]),
+		ExactRed:   order.Uint16(b[8:10]),
+		ExactGreen: order.Uint16(b[10:12]),
+		ExactBlue:  order.Uint16(b[12:14]),
+		Red:        order.Uint16(b[14:16]),
+		Green:      order.Uint16(b[16:18]),
+		Blue:       order.Uint16(b[18:20]),
 	}
 	return r, nil
 }
@@ -1469,7 +1484,7 @@ type SetupResponse struct {
 func (r *SetupResponse) EncodeMessage(order binary.ByteOrder) []byte {
 	if r.Success == 0 {
 		reasonLen := len(r.Reason)
-		paddedLen := (reasonLen + 3) &^ 3
+		paddedLen := ((reasonLen + 3) / 4) * 4
 		response := make([]byte, 8+paddedLen)
 		response[0] = 0 // Failure
 		response[1] = byte(reasonLen)
@@ -1479,7 +1494,29 @@ func (r *SetupResponse) EncodeMessage(order binary.ByteOrder) []byte {
 		copy(response[8:], []byte(r.Reason))
 		return response
 	}
-	setupData := r.Data.marshal(order)
+	data := r.Data
+	if data == nil {
+		data = &Setup{
+			ReleaseNumber:            r.ReleaseNumber,
+			ResourceIDBase:           r.ResourceIDBase,
+			ResourceIDMask:           r.ResourceIDMask,
+			MotionBufferSize:         r.MotionBufferSize,
+			VendorLength:             r.VendorLength,
+			MaxRequestLength:         r.MaxRequestLength,
+			NumScreens:               r.NumScreens,
+			NumPixmapFormats:         r.NumPixmapFormats,
+			ImageByteOrder:           r.ImageByteOrder,
+			BitmapFormatBitOrder:     r.BitmapFormatBitOrder,
+			BitmapFormatScanlineUnit: r.BitmapFormatScanlineUnit,
+			BitmapFormatScanlinePad:  r.BitmapFormatScanlinePad,
+			MinKeycode:               r.MinKeycode,
+			MaxKeycode:               r.MaxKeycode,
+			VendorString:             r.VendorString,
+			PixmapFormats:            r.PixmapFormats,
+			Screens:                  r.Screens,
+		}
+	}
+	setupData := data.marshal(order)
 	response := make([]byte, 8+len(setupData))
 	response[0] = r.Success
 	// byte 1 is unused
@@ -1520,23 +1557,23 @@ type Format struct {
 
 // Screen describes a screen.
 type Screen struct {
-	Root                uint32       // Root window ID
-	DefaultColormap     uint32       // Default colormap ID
-	WhitePixel          uint32       // White pixel value
-	BlackPixel          uint32       // Black pixel value
-	CurrentInputMasks   uint32       // Current input masks
-	WidthInPixels       uint16       // Width in pixels
-	HeightInPixels      uint16       // Height in pixels
-	WidthInMillimeters  uint16       // Width in millimeters
-	HeightInMillimeters uint16       // Height in millimeters
-	MinInstalledMaps    uint16       // Minimum installed colormaps
-	MaxInstalledMaps    uint16       // Maximum installed colormaps
-	RootVisual          uint32       // Root visual ID
-	BackingStores       uint8        // Backing stores
-	SaveUnders          bool         // Save unders flag
-	RootDepth           uint8        // Root depth
-	NumDepths           uint8        // Number of depths
-	Depths              []Depth      // Depths
+	Root                uint32  // Root window ID
+	DefaultColormap     uint32  // Default colormap ID
+	WhitePixel          uint32  // White pixel value
+	BlackPixel          uint32  // Black pixel value
+	CurrentInputMasks   uint32  // Current input masks
+	WidthInPixels       uint16  // Width in pixels
+	HeightInPixels      uint16  // Height in pixels
+	WidthInMillimeters  uint16  // Width in millimeters
+	HeightInMillimeters uint16  // Height in millimeters
+	MinInstalledMaps    uint16  // Minimum installed colormaps
+	MaxInstalledMaps    uint16  // Maximum installed colormaps
+	RootVisual          uint32  // Root visual ID
+	BackingStores       uint8   // Backing stores
+	SaveUnders          bool    // Save unders flag
+	RootDepth           uint8   // Root depth
+	NumDepths           uint8   // Number of depths
+	Depths              []Depth // Depths
 }
 
 // Depth describes a depth and its visuals.
@@ -1822,11 +1859,12 @@ type GetPointerMappingReply struct {
 
 // EncodeMessage encodes the GetPointerMappingReply into a byte slice.
 func (r *GetPointerMappingReply) EncodeMessage(order binary.ByteOrder) []byte {
-	reply := make([]byte, 32+len(r.PMap))
+	words := (len(r.PMap) + 3) / 4
+	reply := make([]byte, 32+words*4)
 	reply[0] = 1 // Reply type
 	reply[1] = r.Length
 	order.PutUint16(reply[2:4], r.Sequence)
-	order.PutUint32(reply[4:8], uint32((len(r.PMap)+3)/4))
+	order.PutUint32(reply[4:8], uint32(words))
 	copy(reply[32:], r.PMap)
 	return reply
 }
@@ -1881,7 +1919,7 @@ func ParseGetKeyboardMappingReply(order binary.ByteOrder, b []byte) (*GetKeyboar
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 	}
 	length := order.Uint32(b[4:8])
-	if len(b) < 32+int(length)*4 {
+	if uint64(len(b)) < 32+uint64(length)*4 {
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 	}
 	keySyms := make([]uint32, length)
@@ -2083,11 +2121,12 @@ func (r *GetModifierMappingReply) EncodeMessage(order binary.ByteOrder) []byte {
 	for i, kc := range r.KeyCodes {
 		keyCodes[i] = byte(kc)
 	}
-	reply := make([]byte, 32+len(keyCodes))
+	words := (len(keyCodes) + 3) / 4
+	reply := make([]byte, 32+words*4)
 	reply[0] = 1 // Reply type
 	reply[1] = r.KeyCodesPerModifier
 	order.PutUint16(reply[2:4], r.Sequence)
-	order.PutUint32(reply[4:8], uint32((len(keyCodes)+3)/4))
+	order.PutUint32(reply[4:8], uint32(words))
 	copy(reply[32:], keyCodes)
 	return reply
 }

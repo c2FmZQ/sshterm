@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/c2FmZQ/sshterm/internal/x11/wire"
@@ -26,9 +27,20 @@ type X11Operation struct {
 	Args  []any
 }
 
-var x11Operations []X11Operation
+var (
+	x11OpsMu      sync.Mutex
+	x11Operations []X11Operation
+)
+
+func recordX11Op(op X11Operation) {
+	x11OpsMu.Lock()
+	defer x11OpsMu.Unlock()
+	x11Operations = append(x11Operations, op)
+}
 
 func clearX11Operations() {
+	x11OpsMu.Lock()
+	defer x11OpsMu.Unlock()
 	x11Operations = nil
 }
 
@@ -72,7 +84,7 @@ func (s *sshServer) readReply(reply <-chan wire.ServerMessage) wire.ServerMessag
 }
 
 func (s *sshServer) simulateX11Application(serverConn *ssh.ServerConn, authProtocol string, authCookie []byte) {
-	defer close(s.x11SimDone)
+	defer s.x11SimOnce.Do(func() { close(s.x11SimDone) })
 	s.t.Log("Simulating X11 application (client-side)")
 
 	windowWidth, windowHeight := 600, 400
@@ -332,10 +344,16 @@ func (s *sshServer) simulateX11Application(serverConn *ssh.ServerConn, authProto
 
 	s.simulateXEyes(x11Channel)
 	s.simulateColorOperations(x11Channel, replyChan)
+	go func() {
+		for range replyChan {
+		}
+	}()
 	s.simulateGrabOperations(x11Channel)
 	s.simulateGCOperations(x11Channel)
 
 	s.t.Log("All drawing commands sent successfully")
+	time.Sleep(500 * time.Millisecond)
+	s.x11SimOnce.Do(func() { close(s.x11SimDone) })
 	time.Sleep(2 * time.Second)
 	x11Channel.Close()
 }
@@ -500,12 +518,21 @@ func (s *sshServer) simulateColorOperations(channel ssh.Channel, replyChan <-cha
 }
 
 func GetX11Operations() []X11Operation {
+	x11OpsMu.Lock()
+	defer x11OpsMu.Unlock()
+	out := make([]X11Operation, len(x11Operations))
 	for i := range x11Operations {
+		args := make([]any, len(x11Operations[i].Args))
 		for j := range x11Operations[i].Args {
-			x11Operations[i].Args[j] = fmt.Sprint(x11Operations[i].Args[j])
+			args[j] = fmt.Sprint(x11Operations[i].Args[j])
+		}
+		out[i] = X11Operation{
+			Type:  x11Operations[i].Type,
+			Color: x11Operations[i].Color,
+			Args:  args,
 		}
 	}
-	return x11Operations
+	return out
 }
 
 func (s *sshServer) changeProperty(channel ssh.Channel, wid, property, typeAtom uint32, mode, format byte, data []byte) error {
@@ -521,7 +548,7 @@ func (s *sshServer) changeProperty(channel ssh.Channel, wid, property, typeAtom 
 		Type: opType,
 		Args: args,
 	}
-	x11Operations = append(x11Operations, newOp)
+	recordX11Op(newOp)
 
 	req := &wire.ChangePropertyRequest{
 		Window:   wire.Window(wid),
@@ -537,10 +564,10 @@ func (s *sshServer) changeProperty(channel ssh.Channel, wid, property, typeAtom 
 func (s *sshServer) putImage(channel ssh.Channel, drawable, gc, x, y, width, height, leftPad, format uint32, imageData []byte) error {
 	newOp := X11Operation{
 		Type:  "putImage",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{drawable, gcToMap(gc), x, y, width, height, leftPad, format, len(imageData)},
 	}
-	x11Operations = append(x11Operations, newOp)
+	recordX11Op(newOp)
 
 	req := &wire.PutImageRequest{
 		Format:   byte(format),
@@ -562,10 +589,10 @@ func (s *sshServer) putImage(channel ssh.Channel, drawable, gc, x, y, width, hei
 func (s *sshServer) polyFillArc(channel ssh.Channel, drawable, gc uint32, arcs []int16) error {
 	newOp := X11Operation{
 		Type:  "polyFillArc",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{drawable, gcToMap(gc), uint32Slice(arcs)},
 	}
-	x11Operations = append(x11Operations, newOp)
+	recordX11Op(newOp)
 
 	wireArcs := make([]uint32, 0, len(arcs))
 	for _, v := range arcs {
@@ -582,19 +609,25 @@ func (s *sshServer) polyFillArc(channel ssh.Channel, drawable, gc uint32, arcs [
 	return err
 }
 
+func getGCColor(gcID uint32) uint32 {
+	x11OpsMu.Lock()
+	defer x11OpsMu.Unlock()
+	return gcColors[gcID]
+}
+
 func gcToMap(gcID uint32) map[string]interface{} {
 	return map[string]interface{}{
-		"Foreground": gcColors[gcID],
+		"Foreground": getGCColor(gcID),
 	}
 }
 
 func (s *sshServer) polyArc(channel ssh.Channel, drawable, gc uint32, arcs []int16) error {
 	newOp := X11Operation{
 		Type:  "polyArc",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{drawable, gcToMap(gc), uint32Slice(arcs)},
 	}
-	x11Operations = append(x11Operations, newOp)
+	recordX11Op(newOp)
 
 	wireArcs := make([]uint32, 0, len(arcs))
 	for _, v := range arcs {
@@ -614,10 +647,10 @@ func (s *sshServer) polyArc(channel ssh.Channel, drawable, gc uint32, arcs []int
 func (s *sshServer) polyRectangle(channel ssh.Channel, drawable, gc uint32, rects []int16) error {
 	newOp := X11Operation{
 		Type:  "polyRectangle",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{drawable, gcToMap(gc), uint32Slice(rects)},
 	}
-	x11Operations = append(x11Operations, newOp)
+	recordX11Op(newOp)
 
 	wireRects := make([]uint32, 0, len(rects))
 	for _, v := range rects {
@@ -637,10 +670,10 @@ func (s *sshServer) polyRectangle(channel ssh.Channel, drawable, gc uint32, rect
 func (s *sshServer) polyPoint(channel ssh.Channel, drawable, gc uint32, coordinateMode byte, points []int16) error {
 	newOp := X11Operation{
 		Type:  "polyPoint",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{drawable, gcToMap(gc), uint32Slice(points)},
 	}
-	x11Operations = append(x11Operations, newOp)
+	recordX11Op(newOp)
 
 	wirePoints := make([]uint32, 0, len(points))
 	for _, v := range points {
@@ -660,10 +693,10 @@ func (s *sshServer) polyPoint(channel ssh.Channel, drawable, gc uint32, coordina
 func (s *sshServer) polySegment(channel ssh.Channel, drawable, gc uint32, segments []int16) error {
 	newOp := X11Operation{
 		Type:  "polySegment",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{drawable, gcToMap(gc), uint32Slice(segments)},
 	}
-	x11Operations = append(x11Operations, newOp)
+	recordX11Op(newOp)
 
 	wireSegments := make([]uint32, 0, len(segments))
 	for _, v := range segments {
@@ -683,10 +716,10 @@ func (s *sshServer) polySegment(channel ssh.Channel, drawable, gc uint32, segmen
 func (s *sshServer) fillPoly(channel ssh.Channel, drawable, gc uint32, shape byte, points []int16) error {
 	newOp := X11Operation{
 		Type:  "fillPoly",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{drawable, gcToMap(gc), uint32Slice(points)},
 	}
-	x11Operations = append(x11Operations, newOp)
+	recordX11Op(newOp)
 
 	wirePoints := make([]uint32, 0, len(points))
 	for _, v := range points {
@@ -715,10 +748,10 @@ func uint32Slice(in []int16) []any {
 func (s *sshServer) polyFillRectangle(channel ssh.Channel, drawable, gc uint32, rects []int16) error {
 	newOp := X11Operation{
 		Type:  "polyFillRectangle",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{drawable, gcToMap(gc), uint32Slice(rects)},
 	}
-	x11Operations = append(x11Operations, newOp)
+	recordX11Op(newOp)
 
 	wireRects := make([]uint32, 0, len(rects))
 	for _, v := range rects {
@@ -749,9 +782,9 @@ func (s *sshServer) createGCWithBackground(channel ssh.Channel, gcID, drawable, 
 }
 
 func (s *sshServer) polyLine(channel ssh.Channel, drawable, gc uint32, coordinateMode byte, points []int16) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type:  "polyLine",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{drawable, gcToMap(gc), uint32Slice(points)},
 	})
 
@@ -771,7 +804,7 @@ func (s *sshServer) polyLine(channel ssh.Channel, drawable, gc uint32, coordinat
 }
 
 func (s *sshServer) mapWindow(channel ssh.Channel, wid uint32) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "mapWindow",
 		Args: []any{wid},
 	})
@@ -783,9 +816,9 @@ func (s *sshServer) mapWindow(channel ssh.Channel, wid uint32) error {
 }
 
 func (s *sshServer) imageText8(channel ssh.Channel, drawable, gc uint32, x, y int16, text []byte) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type:  "imageText8",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{uint32(drawable), gcToMap(gc), uint32(x), uint32(y), string(text)},
 	})
 
@@ -802,9 +835,9 @@ func (s *sshServer) imageText8(channel ssh.Channel, drawable, gc uint32, x, y in
 }
 
 func (s *sshServer) imageText16(channel ssh.Channel, drawable, gc uint32, x, y int16, text []uint16) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type:  "imageText16",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{uint32(drawable), gcToMap(gc), uint32(x), uint32(y), uint16SliceToString(text)},
 	})
 
@@ -830,9 +863,9 @@ func (s *sshServer) polyText8(channel ssh.Channel, drawable, gc uint32, x, y int
 	for i, item := range items {
 		recordedItems[i] = map[string]any{"delta": item.Delta, "text": string(item.Str)}
 	}
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type:  "polyText8",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{uint32(drawable), gcToMap(gc), uint32(x), uint32(y), recordedItems},
 	})
 
@@ -863,9 +896,9 @@ func (s *sshServer) polyText16(channel ssh.Channel, drawable, gc uint32, x, y in
 	for i, item := range items {
 		recordedItems[i] = map[string]any{"delta": item.Delta, "text": uint16SliceToString(item.Str)}
 	}
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type:  "polyText16",
-		Color: gcColors[gc],
+		Color: getGCColor(gc),
 		Args:  []any{uint32(drawable), gcToMap(gc), uint32(x), uint32(y), recordedItems},
 	})
 
@@ -887,7 +920,7 @@ func (s *sshServer) polyText16(channel ssh.Channel, drawable, gc uint32, x, y in
 }
 
 func (s *sshServer) openFont(channel ssh.Channel, fid uint32, name string) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "openFont",
 		Args: []any{fid, name},
 	})
@@ -900,7 +933,7 @@ func (s *sshServer) openFont(channel ssh.Channel, fid uint32, name string) error
 }
 
 func (s *sshServer) closeFont(channel ssh.Channel, fid uint32) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "closeFont",
 		Args: []any{fid},
 	})
@@ -912,7 +945,7 @@ func (s *sshServer) closeFont(channel ssh.Channel, fid uint32) error {
 }
 
 func (s *sshServer) queryFont(channel ssh.Channel, fid uint32, replyChan <-chan wire.ServerMessage) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "queryFont",
 		Args: []any{fid},
 	})
@@ -973,7 +1006,7 @@ func (s *sshServer) queryFont(channel ssh.Channel, fid uint32, replyChan <-chan 
 }
 
 func (s *sshServer) listFonts(channel ssh.Channel, maxNames uint16, pattern string, replyChan <-chan wire.ServerMessage) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "listFonts",
 		Args: []any{maxNames, pattern},
 	})
@@ -1012,7 +1045,7 @@ func (s *sshServer) createWindow(channel ssh.Channel, wid, parent, x, y, width, 
 }
 
 func (s *sshServer) createWindowWithColormap(channel ssh.Channel, wid, parent, x, y, width, height, colormap uint32) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "createWindow",
 		Args: []any{wid, parent, x, y, width, height, uint32(24)},
 	})
@@ -1195,7 +1228,9 @@ func (s *sshServer) freeColors(channel ssh.Channel, cmap, planeMask uint32, pixe
 
 func (s *sshServer) createGCWithAttributes(channel ssh.Channel, gcID, drawable uint32, values map[uint32]uint32) error {
 	if foregroundColor, ok := values[wire.GCForeground]; ok {
+		x11OpsMu.Lock()
 		gcColors[gcID] = foregroundColor
+		x11OpsMu.Unlock()
 	}
 
 	// Calculate mask and map values to wire.GC
@@ -1254,7 +1289,7 @@ func (s *sshServer) createGCWithAttributes(channel ssh.Channel, gcID, drawable u
 		}
 	}
 
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "createGC",
 		Args: []any{gcID, valueMask, gcValuesToMap(values)},
 	})
@@ -1271,7 +1306,7 @@ func (s *sshServer) createGCWithAttributes(channel ssh.Channel, gcID, drawable u
 }
 
 func (s *sshServer) setDashes(channel ssh.Channel, gcID uint32, dashOffset uint16, dashes []byte) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "setDashes",
 		Args: []any{gcID, dashOffset, base64.StdEncoding.EncodeToString(dashes)},
 	})
@@ -1287,7 +1322,7 @@ func (s *sshServer) setDashes(channel ssh.Channel, gcID uint32, dashOffset uint1
 }
 
 func (s *sshServer) createPixmap(channel ssh.Channel, pid, drawable, width, height, depth uint32) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "createPixmap",
 		Args: []any{pid, drawable, width, height, depth},
 	})
@@ -1507,7 +1542,7 @@ func (s *sshServer) simulateGCOperations(channel ssh.Channel) {
 }
 
 func (s *sshServer) grabPointer(channel ssh.Channel, grabWindow uint32, ownerEvents bool, eventMask uint16, pointerMode, keyboardMode byte, confineTo, cursor uint32, time uint32) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "grabPointer",
 		Args: []any{grabWindow, ownerEvents, eventMask, pointerMode, keyboardMode, confineTo, cursor, time},
 	})
@@ -1528,7 +1563,7 @@ func (s *sshServer) grabPointer(channel ssh.Channel, grabWindow uint32, ownerEve
 }
 
 func (s *sshServer) ungrabPointer(channel ssh.Channel, time uint32) error {
-	x11Operations = append(x11Operations, X11Operation{
+	recordX11Op(X11Operation{
 		Type: "ungrabPointer",
 		Args: []any{time},
 	})
@@ -1540,4 +1575,3 @@ func (s *sshServer) ungrabPointer(channel ssh.Channel, time uint32) error {
 	_, err := s.sendRequest(channel, req)
 	return err
 }
-

@@ -382,21 +382,21 @@ func TestXIRawMotionDelivery(t *testing.T) {
 			t.Errorf("Expected maskLen 1, got %d", maskLen)
 		}
 
-		// Mask at byte 28 (4 bytes for maskLen 1)
-		eventMask := binary.LittleEndian.Uint32(msg[28:32])
+		// Mask at byte 32 (4 bytes for maskLen 1, after 32-byte XIRawEvent header)
+		eventMask := binary.LittleEndian.Uint32(msg[32:36])
 		// Expect bits 0 (X) and 1 (Y) set -> 3
 		if eventMask != 3 {
 			t.Errorf("Expected mask 3 (X|Y), got %d", eventMask)
 		}
 
-		// Values start at 28 + 4 = 32
+		// Values start at 32 + 4 = 36
 		// Two axes set, so 2 * 8 bytes for values, then 2 * 8 bytes for raw values.
 		// Value for X (axis 0)
-		valXInt := int32(binary.LittleEndian.Uint32(msg[32:36]))
-		// valXFrac := binary.LittleEndian.Uint32(msg[36:40])
+		valXInt := int32(binary.LittleEndian.Uint32(msg[36:40]))
+		// valXFrac := binary.LittleEndian.Uint32(msg[40:44])
 		// Value for Y (axis 1)
-		valYInt := int32(binary.LittleEndian.Uint32(msg[40:44]))
-		// valYFrac := binary.LittleEndian.Uint32(msg[44:48])
+		valYInt := int32(binary.LittleEndian.Uint32(msg[44:48]))
+		// valYFrac := binary.LittleEndian.Uint32(msg[48:52])
 
 		// Delta was 100 (from 0,0 to 100,100)
 		if valXInt != 100 {
@@ -462,11 +462,11 @@ func TestXIRawMotionDelivery(t *testing.T) {
 		// Verify valuators
 		maskLen := binary.LittleEndian.Uint16(msg[22:24])
 		assert.Equal(t, uint16(1), maskLen, "Expected maskLen 1")
-		eventMask := binary.LittleEndian.Uint32(msg[28:32])
+		eventMask := binary.LittleEndian.Uint32(msg[32:36])
 		assert.Equal(t, uint32(3), eventMask, "Expected mask for X and Y axes")
 
-		valXInt := int32(binary.LittleEndian.Uint32(msg[32:36]))
-		valYInt := int32(binary.LittleEndian.Uint32(msg[40:44]))
+		valXInt := int32(binary.LittleEndian.Uint32(msg[36:40]))
+		valYInt := int32(binary.LittleEndian.Uint32(msg[44:48]))
 		assert.Equal(t, int32(0), valXInt, "Expected zero delta for X")
 		assert.Equal(t, int32(0), valYInt, "Expected zero delta for Y")
 	})

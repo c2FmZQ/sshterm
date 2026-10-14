@@ -26,7 +26,7 @@ func MapX11FontToCSS(x11FontName string) (size, family, weight, slant, cssFont s
 		slant = "normal"
 	case "5x7", "5x8", "6x9", "6x10", "6x12", "6x13", "7x13", "7x14", "8x13", "8x16", "9x15", "9x18", "10x20", "12x24":
 		// Extract height from name (e.g. "9x15" -> 15px)
-		parts := strings.Split(x11FontName, "x")
+		parts := strings.Split(strings.ToLower(x11FontName), "x")
 		if len(parts) == 2 {
 			if h, err := strconv.Atoi(parts[1]); err == nil {
 				size = fmt.Sprintf("%dpx", h)

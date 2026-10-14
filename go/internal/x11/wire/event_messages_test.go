@@ -121,6 +121,24 @@ func TestEventMessages(t *testing.T) {
 			},
 		},
 		{
+			"FocusInEvent",
+			&FocusInEvent{
+				Detail:   1,
+				Sequence: 2,
+				Window:   3,
+				Mode:     4,
+			},
+		},
+		{
+			"FocusOutEvent",
+			&FocusOutEvent{
+				Detail:   1,
+				Sequence: 2,
+				Window:   3,
+				Mode:     4,
+			},
+		},
+		{
 			"ExposeEvent",
 			&ExposeEvent{
 				Sequence: 1,
@@ -360,9 +378,9 @@ func TestEventMessages(t *testing.T) {
 		{
 			"UnmapNotifyEvent",
 			&UnmapNotifyEvent{
-				Sequence:    1,
-				Event:       2,
-				Window:      3,
+				Sequence:      1,
+				Event:         2,
+				Window:        3,
 				FromConfigure: true,
 			},
 		},

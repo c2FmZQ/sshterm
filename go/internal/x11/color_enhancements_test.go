@@ -21,36 +21,41 @@ func findPseudoColorVisual(s *x11Server) (wire.VisualID, bool) {
 }
 
 func TestAllocColorCells(t *testing.T) {
-	s, _, _, _ := setupTestServerWithClient(t)
+	s, client, _, _ := setupTestServerWithClient(t)
 	pseudoColorVisualID, ok := findPseudoColorVisual(s)
 	if !ok {
 		t.Skip("no PseudoColor visual found")
 	}
 
+	winID := wire.Window(clientXID(client, 2))
+	cmapID := wire.Colormap(clientXID(client, 1))
+
 	// Create a window with a PseudoColor visual
 	req := &wire.CreateWindowRequest{
-		Drawable: 2,
+		Drawable: winID,
 		Parent:   0,
+		Width:    10,
+		Height:   10,
 		Visual:   pseudoColorVisualID,
 	}
-	s.handleCreateWindow(s.clients[1], req, 1)
+	s.handleCreateWindow(client, req, 1)
 
-	// Create a colormap with a PseudoColor visual
+	// Create a colormap with a PseudoColor visual (AllocNone = 0)
 	req2 := &wire.CreateColormapRequest{
-		Mid:    1,
-		Window: 2,
+		Mid:    cmapID,
+		Window: winID,
 		Visual: pseudoColorVisualID,
-		Alloc:  1,
+		Alloc:  0,
 	}
-	s.handleCreateColormap(s.clients[1], req2, 2)
+	s.handleCreateColormap(client, req2, 2)
 
 	// Allocate color cells
 	req3 := &wire.AllocColorCellsRequest{
-		Cmap:   1,
+		Cmap:   cmapID,
 		Colors: 10,
 		Planes: 2,
 	}
-	reply := s.handleAllocColorCells(s.clients[1], req3, 3)
+	reply := s.handleAllocColorCells(client, req3, 3)
 	require.NotNil(t, reply)
 	require.IsType(t, &wire.AllocColorCellsReply{}, reply)
 	replyCasted := reply.(*wire.AllocColorCellsReply)
@@ -59,66 +64,71 @@ func TestAllocColorCells(t *testing.T) {
 
 	// Allocate more color cells than available
 	req4 := &wire.AllocColorCellsRequest{
-		Cmap:   1,
+		Cmap:   cmapID,
 		Colors: 300,
 		Planes: 0,
 	}
-	reply2 := s.handleAllocColorCells(s.clients[1], req4, 4)
+	reply2 := s.handleAllocColorCells(client, req4, 4)
 	require.NotNil(t, reply2)
 	require.IsType(t, &wire.GenericError{}, reply2)
 	assert.Equal(t, byte(wire.AllocErrorCode), reply2.(*wire.GenericError).Code())
 }
 
 func TestAllocColorPlanes(t *testing.T) {
-	s, _, _, _ := setupTestServerWithClient(t)
+	s, client, _, _ := setupTestServerWithClient(t)
 	pseudoColorVisualID, ok := findPseudoColorVisual(s)
 	if !ok {
 		t.Skip("no PseudoColor visual found")
 	}
 
+	winID := wire.Window(clientXID(client, 2))
+	cmapID := wire.Colormap(clientXID(client, 1))
+
 	// Create a window with a PseudoColor visual
 	req := &wire.CreateWindowRequest{
-		Drawable: 2,
+		Drawable: winID,
 		Parent:   0,
+		Width:    10,
+		Height:   10,
 		Visual:   pseudoColorVisualID,
 	}
-	s.handleCreateWindow(s.clients[1], req, 1)
+	s.handleCreateWindow(client, req, 1)
 
-	// Create a colormap with a PseudoColor visual
+	// Create a colormap with a PseudoColor visual (AllocNone = 0)
 	req2 := &wire.CreateColormapRequest{
-		Mid:    1,
-		Window: 2,
+		Mid:    cmapID,
+		Window: winID,
 		Visual: pseudoColorVisualID,
-		Alloc:  1,
+		Alloc:  0,
 	}
-	s.handleCreateColormap(s.clients[1], req2, 2)
+	s.handleCreateColormap(client, req2, 2)
 
 	// Allocate color planes
 	req3 := &wire.AllocColorPlanesRequest{
-		Cmap:   1,
+		Cmap:   cmapID,
 		Colors: 10,
 		Reds:   1,
 		Greens: 1,
 		Blues:  1,
 	}
-	reply := s.handleAllocColorPlanes(s.clients[1], req3, 3)
+	reply := s.handleAllocColorPlanes(client, req3, 3)
 	require.NotNil(t, reply)
 	require.IsType(t, &wire.AllocColorPlanesReply{}, reply)
 	replyCasted := reply.(*wire.AllocColorPlanesReply)
 	assert.Equal(t, 10, len(replyCasted.Pixels))
 	assert.Equal(t, uint32(1), replyCasted.RedMask)
-	assert.Equal(t, uint32(1), replyCasted.GreenMask)
-	assert.Equal(t, uint32(1), replyCasted.BlueMask)
+	assert.Equal(t, uint32(2), replyCasted.GreenMask)
+	assert.Equal(t, uint32(4), replyCasted.BlueMask)
 
 	// Allocate more color planes than available
 	req4 := &wire.AllocColorPlanesRequest{
-		Cmap:   1,
+		Cmap:   cmapID,
 		Colors: 300,
 		Reds:   1,
 		Greens: 1,
 		Blues:  1,
 	}
-	reply2 := s.handleAllocColorPlanes(s.clients[1], req4, 4)
+	reply2 := s.handleAllocColorPlanes(client, req4, 4)
 	require.NotNil(t, reply2)
 	require.IsType(t, &wire.GenericError{}, reply2)
 	assert.Equal(t, byte(wire.AllocErrorCode), reply2.(*wire.GenericError).Code())

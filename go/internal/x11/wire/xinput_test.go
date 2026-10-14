@@ -10,12 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-
-
-
-
-
-
 func TestParseChangeKeyboardDeviceRequest(t *testing.T) {
 	t.Run("valid request", func(t *testing.T) {
 		order := binary.LittleEndian
@@ -160,8 +154,8 @@ func TestParseChangeDeviceControlRequest(t *testing.T) {
 
 	t.Run("invalid control id", func(t *testing.T) {
 		buf := new(bytes.Buffer)
-		buf.WriteByte(10) // device ID
-		buf.WriteByte(0)  // padding
+		buf.WriteByte(10)                                  // device ID
+		buf.WriteByte(0)                                   // padding
 		binary.Write(buf, binary.LittleEndian, uint16(99)) // invalid control ID
 		_, err := ParseChangeDeviceControlRequest(binary.LittleEndian, buf.Bytes(), 1)
 		assert.Error(t, err)
@@ -426,14 +420,35 @@ func TestParseDeviceBellRequest(t *testing.T) {
 }
 
 func TestParseXIChangeHierarchyRequest(t *testing.T) {
-	t.Run("valid request with detach slave", func(t *testing.T) {
+	t.Run("valid request with all change types", func(t *testing.T) {
 		order := binary.LittleEndian
 		request := &XIChangeHierarchyRequest{
-			NumChanges: 1,
+			NumChanges: 4,
 			Changes: []XIChangeHierarchyChange{
+				&XIAddMaster{
+					Type:     1,
+					Length:   4,
+					Name:     "master",
+					SendCore: true,
+					Enable:   true,
+				},
+				&XIRemoveMaster{
+					Type:           2,
+					Length:         3,
+					DeviceID:       2,
+					ReturnMode:     1,
+					ReturnPointer:  3,
+					ReturnKeyboard: 4,
+				},
+				&XIAttachSlave{
+					Type:     3,
+					Length:   2,
+					DeviceID: 5,
+					MasterID: 2,
+				},
 				&XIDetachSlave{
 					Type:     4,
-					Length:   8,
+					Length:   2,
 					DeviceID: 5,
 				},
 			},
@@ -810,12 +825,12 @@ func TestParseGrabDeviceKeyRequest(t *testing.T) {
 		buf := new(bytes.Buffer)
 		binary.Write(buf, binary.LittleEndian, uint32(123)) // grab_window
 		binary.Write(buf, binary.LittleEndian, uint16(2))   // num_classes = 2
-		buf.WriteByte(1) // owner_events
-		buf.WriteByte(1) // this_device_mode
-		buf.WriteByte(0) // other_device_mode
-		buf.WriteByte(5) // device_id
-		binary.Write(buf, binary.LittleEndian, uint16(0)) // modifiers
-		buf.WriteByte(10)   // key
+		buf.WriteByte(1)                                    // owner_events
+		buf.WriteByte(1)                                    // this_device_mode
+		buf.WriteByte(0)                                    // other_device_mode
+		buf.WriteByte(5)                                    // device_id
+		binary.Write(buf, binary.LittleEndian, uint16(0))   // modifiers
+		buf.WriteByte(10)                                   // key
 		binary.Write(buf, binary.LittleEndian, uint32(10))  // only one class
 
 		_, err := ParseGrabDeviceKeyRequest(binary.LittleEndian, buf.Bytes(), 1)

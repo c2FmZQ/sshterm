@@ -37,9 +37,7 @@ services:
       - ../..:/src
     working_dir: /src/tests/x11-standalone
     command: >
-      bash -c "[ -f go.mod ] || go mod init x11-standalone;
-               go mod tidy &&
-               go run main.go --with-chromedp=ws://chrome:9222 --target-url=https://tester:8443/tests.html?x11"
+      ./test-server --with-chromedp=ws://chrome:9222 --target-url=https://tester:8443/tests.html?x11
     depends_on:
       chrome:
         condition: service_healthy
@@ -47,6 +45,7 @@ services:
         condition: service_started
     environment:
       - CGO_ENABLED=0
+      - HOME=/tmp
 
   x11-apps:
     build:

@@ -14,7 +14,6 @@ import (
 
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
-	"github.com/chromedp/chromedp/kb"
 )
 
 var (
@@ -38,16 +37,21 @@ func main() {
 		Timeout: 5 * time.Second,
 	}
 	log.Printf("Waiting for %s to be ready...", *targetURL)
+	ready := false
 	for i := 0; i < 30; i++ {
 		resp, err := client.Get(*targetURL)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				log.Printf("Target is ready!")
+				ready = true
 				break
 			}
 		}
 		time.Sleep(1 * time.Second)
+	}
+	if !ready {
+		log.Fatalf("Timed out waiting for %s to become ready", *targetURL)
 	}
 
 	allocCtx, allocCancel := chromedp.NewRemoteAllocator(context.Background(), *withChromedp)
@@ -76,6 +80,10 @@ func main() {
 		}
 	})
 
+	if err := chromedp.Run(sessionCtx); err != nil {
+		log.Fatalf("Failed to initialize chromedp session: %v", err)
+	}
+
 	testCtx, testCancel := context.WithTimeout(sessionCtx, *testTimeout)
 	defer testCancel()
 
@@ -87,39 +95,40 @@ func main() {
 		chromedp.WaitVisible(".xterm-rows", chromedp.ByQuery),
 		// Disable clipboard to avoid NotAllowedError in headless env
 		chromedp.Evaluate(`Object.defineProperty(navigator, 'clipboard', { value: null });`, nil),
-		
+
 		// Initial wait for terminal to settle
 		chromedp.Sleep(5*time.Second),
 
 		// Wait for initial prompt
 		waitForTerminalText("sshterm>"),
-		
+
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			log.Println("Sending 'ep add' command...")
 			return nil
 		}),
 		chromedp.Click(".xterm-rows", chromedp.ByQuery),
 		insertText("ep add x11-apps wss://tester:8443/websocket"),
-		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
-		
+		pressEnter(),
+		chromedp.Sleep(500*time.Millisecond),
+
 		// Wait for next prompt
 		waitForTerminalText("sshterm>"),
-		
+
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			log.Println("Sending 'ssh -X' command...")
 			return nil
 		}),
 		insertText("ssh -X testuser@x11-apps"),
-		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
-		
+		pressEnter(),
+
 		waitForTerminalText("password:"),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			log.Println("Found password prompt. Sending 'sshterm'...")
 			return nil
 		}),
 		insertText("sshterm"),
-		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
-		
+		pressEnter(),
+
 		waitForTerminalText("testuser@x11-apps:~$"),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			log.Println("Connected! Launching multiple X11 applications with distinct positioning...")
@@ -128,12 +137,12 @@ func main() {
 
 		// Launch xterm at top-left
 		insertText("xterm -geometry 80x24+0+0 &"),
-		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
+		pressEnter(),
 		chromedp.Sleep(1*time.Second),
 
 		// Launch test_ui.py with output redirected to a log file
 		insertText("python3 /home/testuser/test_ui.py > /tmp/tkinter_ui.log 2>&1 &"),
-		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
+		pressEnter(),
 
 		logAction("Waiting for multiple X11 windows (canvases)..."),
 		waitForCanvases(8),
@@ -348,7 +357,7 @@ func main() {
 			return nil
 		}),
 		insertText("cat /tmp/tkinter_state.json"),
-		chromedp.SendKeys(".xterm-helper-textarea", kb.Enter),
+		pressEnter(),
 		waitForTerminalText(`"success": true`),
 		waitForTerminalText(`"text": "WASM X11 test text"`),
 		waitForTerminalText(`"checked": true`),
@@ -387,7 +396,7 @@ func main() {
 
 	if err != nil {
 		log.Printf("Test failed: %v", err)
-		
+
 		// Create a separate timeout context for failure diagnostic actions (recovery)
 		// so they can't hang the test process forever if the browser is unresponsive.
 		diagCtx, diagCancel := context.WithTimeout(sessionCtx, 15*time.Second)
@@ -433,8 +442,9 @@ func main() {
 		var logText string
 		_ = chromedp.Run(diagCtx,
 			chromedp.Click(".xterm-rows", chromedp.ByQuery),
-			chromedp.Evaluate(`document.execCommand('insertText', false, "cat /tmp/tkinter_ui.log\n")`, nil),
-			chromedp.Sleep(1 * time.Second),
+			insertText("cat /tmp/tkinter_ui.log"),
+			pressEnter(),
+			chromedp.Sleep(1*time.Second),
 			chromedp.Evaluate(`
 				(function() {
 					try {
@@ -454,7 +464,7 @@ func main() {
 			`, &logText),
 		)
 		log.Printf("Terminal text after cat /tmp/tkinter_ui.log:\n%s", logText)
-		
+
 		log.Fatal("Stopping due to failure")
 	}
 
@@ -472,7 +482,11 @@ func logAction(s string) chromedp.Action {
 }
 
 func insertText(s string) chromedp.Action {
-	return chromedp.Evaluate(fmt.Sprintf(`document.execCommand('insertText', false, %q)`, s), nil)
+	return chromedp.Evaluate(fmt.Sprintf(`window.sshApp.term.input(%q)`, s), nil)
+}
+
+func pressEnter() chromedp.Action {
+	return chromedp.Evaluate(`window.sshApp.term.input("\r")`, nil)
 }
 
 func waitForCanvases(n int) chromedp.Action {

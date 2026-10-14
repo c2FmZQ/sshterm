@@ -63,18 +63,28 @@ type Config struct {
 }
 
 type termLogger struct {
-	t *terminal.Terminal
+	t       *terminal.Terminal
+	inShell *atomic.Bool
 }
 
 func (l *termLogger) Errorf(format string, args ...interface{}) {
+	if l.inShell != nil && l.inShell.Load() {
+		return
+	}
 	l.t.Errorf(format, args...)
 }
 
 func (l *termLogger) Infof(format string, args ...interface{}) {
+	if l.inShell != nil && l.inShell.Load() {
+		return
+	}
 	l.t.Infof(format, args...)
 }
 
 func (l *termLogger) Printf(format string, args ...interface{}) {
+	if l.inShell != nil && l.inShell.Load() {
+		return
+	}
 	l.t.Printf(format, args...)
 }
 

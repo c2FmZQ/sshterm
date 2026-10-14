@@ -31,9 +31,26 @@ func (s *x11Server) handleXInputRequest(client *x11Client, req wire.Request, seq
 			return wire.NewError(wire.ValueErrorCode, seq, uint32(p.DeviceID), wire.Opcodes{Major: wire.XInputOpcode, Minor: wire.XOpenDevice})
 		}
 
-		// Create a new deviceInfo instance for the client, so event masks are not shared.
+		// Create a new deviceInfo instance for the client, so event masks and valuators are not shared.
 		newClasses := make([]wire.InputClassInfo, len(selectedDevice.Classes))
-		copy(newClasses, selectedDevice.Classes)
+		for i, cls := range selectedDevice.Classes {
+			switch c := cls.(type) {
+			case *wire.ValuatorClassInfo:
+				axesCopy := make([]wire.ValuatorAxisInfo, len(c.Axes))
+				copy(axesCopy, c.Axes)
+				vcCopy := *c
+				vcCopy.Axes = axesCopy
+				newClasses[i] = &vcCopy
+			case *wire.KeyClassInfo:
+				kcCopy := *c
+				newClasses[i] = &kcCopy
+			case *wire.ButtonClassInfo:
+				bcCopy := *c
+				newClasses[i] = &bcCopy
+			default:
+				newClasses[i] = cls
+			}
+		}
 		newDeviceInfo := &wire.DeviceInfo{
 			Header:     selectedDevice.Header,
 			Classes:    newClasses,
@@ -214,6 +231,9 @@ func (s *x11Server) handleXInputRequest(client *x11Client, req wire.Request, seq
 
 		// Assuming a 1-to-1 mapping between events and classes
 		for i := 0; i < int(numEvents); i++ {
+			if (i+1)*32 > len(events) || i >= len(classes) {
+				break
+			}
 			eventData := events[i*32 : (i+1)*32]
 			class := classes[i] // classes array already holds uint32
 
@@ -224,10 +244,15 @@ func (s *x11Server) handleXInputRequest(client *x11Client, req wire.Request, seq
 				if dev, ok := c.openDevices[deviceID]; ok {
 					if mask, ok := dev.EventMasks[uint32(dest)]; ok { // Cast dest to uint32
 						if (mask & eventMask) != 0 {
-							// The client has selected for this event.
-							// Send the raw event, but update the sequence number.
-							c.byteOrder.PutUint16(eventData[2:4], c.sequence-1)
-							rawEvent := &wire.X11RawEvent{Data: eventData}
+							evCopy := make([]byte, 32)
+							copy(evCopy, eventData)
+							evCopy[0] |= 0x80
+							order := c.byteOrder
+							if order == nil {
+								order = s.byteOrder
+							}
+							order.PutUint16(evCopy[2:4], c.sequence)
+							rawEvent := &wire.X11RawEvent{Data: evCopy}
 							c.send(rawEvent)
 						}
 					}
@@ -290,6 +315,7 @@ func (s *x11Server) handleXInputRequest(client *x11Client, req wire.Request, seq
 			modifiers: p.Modifiers,
 			owner:     p.OwnerEvents,
 			eventMask: p.Classes,
+			isKeyGrab: true,
 		}
 		s.passiveDeviceGrabs[grabWindow] = append(s.passiveDeviceGrabs[grabWindow], grab)
 		return nil
@@ -299,7 +325,8 @@ func (s *x11Server) handleXInputRequest(client *x11Client, req wire.Request, seq
 		if grabs, ok := s.passiveDeviceGrabs[grabWindow]; ok {
 			newGrabs := make([]*passiveDeviceGrab, 0, len(grabs))
 			for _, grab := range grabs {
-				if !(grab.key == wire.KeyCode(p.Key) && (p.Modifiers == wire.AnyModifier || grab.modifiers == p.Modifiers)) {
+				isKey := grab.isKeyGrab || (!grab.isButtonGrab && grab.button == 0)
+				if !(isKey && grab.deviceID == p.DeviceID && (p.Key == 0 || grab.key == wire.KeyCode(p.Key)) && (p.Modifiers == wire.AnyModifier || grab.modifiers == p.Modifiers)) {
 					newGrabs = append(newGrabs, grab)
 				}
 			}
@@ -310,12 +337,13 @@ func (s *x11Server) handleXInputRequest(client *x11Client, req wire.Request, seq
 	case *wire.GrabDeviceButtonRequest:
 		grabWindow := xID(p.GrabWindow)
 		grab := &passiveDeviceGrab{
-			clientID:  client.id,
-			deviceID:  p.DeviceID,
-			button:    p.Button,
-			modifiers: p.Modifiers,
-			owner:     p.OwnerEvents,
-			eventMask: p.Classes,
+			clientID:     client.id,
+			deviceID:     p.DeviceID,
+			button:       p.Button,
+			modifiers:    p.Modifiers,
+			owner:        p.OwnerEvents,
+			eventMask:    p.Classes,
+			isButtonGrab: true,
 		}
 		s.passiveDeviceGrabs[grabWindow] = append(s.passiveDeviceGrabs[grabWindow], grab)
 		return nil
@@ -325,7 +353,8 @@ func (s *x11Server) handleXInputRequest(client *x11Client, req wire.Request, seq
 		if grabs, ok := s.passiveDeviceGrabs[grabWindow]; ok {
 			newGrabs := make([]*passiveDeviceGrab, 0, len(grabs))
 			for _, grab := range grabs {
-				if !(grab.button == p.Button && (p.Modifiers == wire.AnyModifier || grab.modifiers == p.Modifiers)) {
+				isBtn := grab.isButtonGrab || (!grab.isKeyGrab && grab.key == 0)
+				if !(isBtn && grab.deviceID == p.DeviceID && (p.Button == 0 || grab.button == p.Button) && (p.Modifiers == wire.AnyModifier || grab.modifiers == p.Modifiers)) {
 					newGrabs = append(newGrabs, grab)
 				}
 			}

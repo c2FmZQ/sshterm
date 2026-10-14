@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/c2FmZQ/sshterm/internal/x11/wire"
 )
@@ -18,6 +19,7 @@ type messageEncoder interface {
 type x11Client struct {
 	id                 uint32
 	conn               io.ReadWriteCloser
+	writeMu            sync.Mutex
 	sequence           uint16
 	byteOrder          binary.ByteOrder
 	bigRequestsEnabled bool
@@ -28,8 +30,14 @@ type x11Client struct {
 
 // send sends a message to the client.
 func (c *x11Client) send(m messageEncoder) error {
-	encodedMsg := m.EncodeMessage(c.byteOrder)
+	byteOrder := c.byteOrder
+	if byteOrder == nil {
+		byteOrder = binary.LittleEndian
+	}
+	encodedMsg := m.EncodeMessage(byteOrder)
 	debugf("X11DEBUG: client.send(%#v) encoded: %x", m, encodedMsg)
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	if _, err := c.conn.Write(encodedMsg); err != nil {
 		return fmt.Errorf("failed to write message to client: %w", err)
 	}

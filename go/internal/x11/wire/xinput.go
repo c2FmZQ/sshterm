@@ -5,6 +5,7 @@ package wire
 import (
 	"bytes"
 	"encoding/binary"
+	"math"
 )
 
 // XInput minor opcodes from XIproto.h
@@ -82,7 +83,6 @@ const (
 	XIGetProperty                  = 59
 	XIGetSelectedEvents            = 60
 	XIBarrierReleasePointer        = 61
-
 )
 
 func ParseXInputRequest(order binary.ByteOrder, data byte, body []byte, seq uint16) (Request, error) {
@@ -395,10 +395,85 @@ func (r *XIChangeHierarchyRequest) OpCode() ReqCode {
 	return XInputOpcode
 }
 
-func (c *XIDetachSlave) EncodeMessage(order binary.ByteOrder) []byte {
+func (c *XIAddMaster) EncodeMessage(order binary.ByteOrder) []byte {
+	nameBytes := []byte(c.Name)
+	pad := PadLen(len(nameBytes))
+	length := uint16(2 + (len(nameBytes)+pad)/4)
+	if c.Length != 0 {
+		length = c.Length
+	}
+	typ := c.Type
+	if typ == 0 {
+		typ = c.Op()
+	}
 	buf := new(bytes.Buffer)
-	binary.Write(buf, order, c.Type)
-	binary.Write(buf, order, c.Length)
+	binary.Write(buf, order, typ)
+	binary.Write(buf, order, length)
+	binary.Write(buf, order, uint16(len(nameBytes)))
+	if c.SendCore {
+		buf.WriteByte(1)
+	} else {
+		buf.WriteByte(0)
+	}
+	if c.Enable {
+		buf.WriteByte(1)
+	} else {
+		buf.WriteByte(0)
+	}
+	buf.Write(nameBytes)
+	buf.Write(make([]byte, pad))
+	return buf.Bytes()
+}
+
+func (c *XIRemoveMaster) EncodeMessage(order binary.ByteOrder) []byte {
+	length := uint16(3)
+	if c.Length != 0 {
+		length = c.Length
+	}
+	typ := c.Type
+	if typ == 0 {
+		typ = c.Op()
+	}
+	buf := new(bytes.Buffer)
+	binary.Write(buf, order, typ)
+	binary.Write(buf, order, length)
+	binary.Write(buf, order, c.DeviceID)
+	buf.WriteByte(c.ReturnMode)
+	buf.WriteByte(0) // padding
+	binary.Write(buf, order, c.ReturnPointer)
+	binary.Write(buf, order, c.ReturnKeyboard)
+	return buf.Bytes()
+}
+
+func (c *XIAttachSlave) EncodeMessage(order binary.ByteOrder) []byte {
+	length := uint16(2)
+	if c.Length != 0 {
+		length = c.Length
+	}
+	typ := c.Type
+	if typ == 0 {
+		typ = c.Op()
+	}
+	buf := new(bytes.Buffer)
+	binary.Write(buf, order, typ)
+	binary.Write(buf, order, length)
+	binary.Write(buf, order, c.DeviceID)
+	binary.Write(buf, order, c.MasterID)
+	return buf.Bytes()
+}
+
+func (c *XIDetachSlave) EncodeMessage(order binary.ByteOrder) []byte {
+	length := uint16(2)
+	if c.Length != 0 {
+		length = c.Length
+	}
+	typ := c.Type
+	if typ == 0 {
+		typ = c.Op()
+	}
+	buf := new(bytes.Buffer)
+	binary.Write(buf, order, typ)
+	binary.Write(buf, order, length)
 	binary.Write(buf, order, c.DeviceID)
 	binary.Write(buf, order, uint16(0)) // padding
 	return buf.Bytes()
@@ -410,6 +485,12 @@ func (r *XIChangeHierarchyRequest) EncodeMessage(order binary.ByteOrder) []byte 
 	changesBytes := new(bytes.Buffer)
 	for _, change := range r.Changes {
 		switch c := change.(type) {
+		case *XIAddMaster:
+			changesBytes.Write(c.EncodeMessage(order))
+		case *XIRemoveMaster:
+			changesBytes.Write(c.EncodeMessage(order))
+		case *XIAttachSlave:
+			changesBytes.Write(c.EncodeMessage(order))
 		case *XIDetachSlave:
 			changesBytes.Write(c.EncodeMessage(order))
 		}
@@ -439,16 +520,40 @@ func ParseXIChangeHierarchyRequest(order binary.ByteOrder, body []byte, seq uint
 		}
 		changeType := order.Uint16(body[offset : offset+2])
 		length := order.Uint16(body[offset+2 : offset+4])
-		if len(body) < offset+int(length) {
+		byteLen := int(length) * 4
+		if byteLen < 4 || len(body) < offset+byteLen {
 			return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIChangeHierarchy})
 		}
-		changeBody := body[offset : offset+int(length)]
+		changeBody := body[offset : offset+byteLen]
 		var change XIChangeHierarchyChange
 		switch changeType {
 		case 1: // XIAddMaster
-			return nil, NewError(ImplementationErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIChangeHierarchy})
+			if len(changeBody) < 8 {
+				return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIChangeHierarchy})
+			}
+			nameLen := int(order.Uint16(changeBody[4:6]))
+			if len(changeBody) != 8+nameLen+PadLen(nameLen) {
+				return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIChangeHierarchy})
+			}
+			change = &XIAddMaster{
+				Type:     changeType,
+				Length:   length,
+				Name:     string(changeBody[8 : 8+nameLen]),
+				SendCore: changeBody[6] != 0,
+				Enable:   changeBody[7] != 0,
+			}
 		case 2: // XIRemoveMaster
-			return nil, NewError(ImplementationErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIChangeHierarchy})
+			if len(changeBody) != 12 {
+				return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIChangeHierarchy})
+			}
+			change = &XIRemoveMaster{
+				Type:           changeType,
+				Length:         length,
+				DeviceID:       order.Uint16(changeBody[4:6]),
+				ReturnMode:     changeBody[6],
+				ReturnPointer:  order.Uint16(changeBody[8:10]),
+				ReturnKeyboard: order.Uint16(changeBody[10:12]),
+			}
 		case 3: // XIAttachSlave
 			if len(changeBody) != 8 {
 				return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIChangeHierarchy})
@@ -472,7 +577,7 @@ func ParseXIChangeHierarchyRequest(order binary.ByteOrder, body []byte, seq uint
 			return nil, NewError(ValueErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIChangeHierarchy})
 		}
 		changes = append(changes, change)
-		offset += int(length)
+		offset += byteLen
 	}
 	return &XIChangeHierarchyRequest{
 		NumChanges: numChanges,
@@ -969,8 +1074,8 @@ func (r *XIPassiveGrabDeviceReply) EncodeMessage(order binary.ByteOrder) []byte 
 
 	offset := 32
 	for _, mod := range r.Modifiers {
-		buf[offset] = mod.Status
-		order.PutUint32(buf[offset+4:offset+8], mod.Modifiers)
+		order.PutUint32(buf[offset:offset+4], mod.Modifiers)
+		buf[offset+4] = mod.Status
 		offset += 8
 	}
 	return buf
@@ -1102,18 +1207,19 @@ func ParseXIChangePropertyRequest(order binary.ByteOrder, body []byte, seq uint1
 	}
 	format := body[3]
 	numItems := order.Uint32(body[12:16])
-	var dataLen int
+	var dataLen uint64
 	switch format {
 	case 8:
-		dataLen = int(numItems)
+		dataLen = uint64(numItems)
 	case 16:
-		dataLen = int(numItems) * 2
+		dataLen = uint64(numItems) * 2
 	case 32:
-		dataLen = int(numItems) * 4
+		dataLen = uint64(numItems) * 4
 	default:
 		return nil, NewError(ValueErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIChangeProperty})
 	}
-	if len(body) != 16+pad(dataLen) {
+	paddedLen := (dataLen + 3) & ^uint64(3)
+	if uint64(len(body)) != 16+paddedLen {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIChangeProperty})
 	}
 	return &XIChangePropertyRequest{
@@ -1123,7 +1229,7 @@ func ParseXIChangePropertyRequest(order binary.ByteOrder, body []byte, seq uint1
 		Property: order.Uint32(body[4:8]),
 		Type:     order.Uint32(body[8:12]),
 		NumItems: numItems,
-		Data:     body[16 : 16+dataLen],
+		Data:     body[16 : 16+int(dataLen)],
 	}, nil
 }
 
@@ -1248,8 +1354,9 @@ type XIBarrierReleasePointerRequest struct {
 }
 
 type XIBarrier struct {
-	Barrier uint32
-	EventID uint32
+	DeviceID uint16
+	Barrier  uint32
+	EventID  uint32
 }
 
 func (r *XIBarrierReleasePointerRequest) OpCode() ReqCode {
@@ -1258,7 +1365,7 @@ func (r *XIBarrierReleasePointerRequest) OpCode() ReqCode {
 
 func (r *XIBarrierReleasePointerRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := new(bytes.Buffer)
-	length := uint16(2 + len(r.Barriers)*2)
+	length := uint16(2 + len(r.Barriers)*3)
 
 	binary.Write(buf, order, r.OpCode())
 	buf.WriteByte(XIBarrierReleasePointer)
@@ -1266,6 +1373,8 @@ func (r *XIBarrierReleasePointerRequest) EncodeMessage(order binary.ByteOrder) [
 
 	binary.Write(buf, order, r.NumBarriers)
 	for _, barrier := range r.Barriers {
+		binary.Write(buf, order, barrier.DeviceID)
+		binary.Write(buf, order, uint16(0)) // padding
 		binary.Write(buf, order, barrier.Barrier)
 		binary.Write(buf, order, barrier.EventID)
 	}
@@ -1277,15 +1386,16 @@ func ParseXIBarrierReleasePointerRequest(order binary.ByteOrder, body []byte, se
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIBarrierReleasePointer})
 	}
 	numBarriers := order.Uint32(body[0:4])
-	if len(body) != 4+int(numBarriers)*8 {
+	if uint64(len(body)) != 4+uint64(numBarriers)*12 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XIBarrierReleasePointer})
 	}
 	barriers := make([]XIBarrier, numBarriers)
 	for i := 0; i < int(numBarriers); i++ {
-		offset := 4 + i*8
+		offset := 4 + i*12
 		barriers[i] = XIBarrier{
-			Barrier: order.Uint32(body[offset : offset+4]),
-			EventID: order.Uint32(body[offset+4 : offset+8]),
+			DeviceID: order.Uint16(body[offset : offset+2]),
+			Barrier:  order.Uint32(body[offset+4 : offset+8]),
+			EventID:  order.Uint32(body[offset+8 : offset+12]),
 		}
 	}
 	return &XIBarrierReleasePointerRequest{
@@ -1442,7 +1552,7 @@ func (r *QueryDeviceStateReply) EncodeMessage(order binary.ByteOrder) []byte {
 	}
 	length := (len(classBytes) + 3) / 4
 
-	reply := make([]byte, 32+len(classBytes))
+	reply := make([]byte, 32+length*4)
 	reply[0] = 1 // Reply
 	order.PutUint16(reply[2:4], r.Sequence)
 	order.PutUint32(reply[4:8], uint32(length))
@@ -1452,23 +1562,41 @@ func (r *QueryDeviceStateReply) EncodeMessage(order binary.ByteOrder) []byte {
 }
 
 func parseInputClassInfo(order binary.ByteOrder, b []byte) (InputClassInfo, int) {
+	if len(b) < 2 {
+		return nil, 0
+	}
 	classID := b[0]
 	length := int(b[1])
+	if length <= 0 || len(b) < length {
+		return nil, 0
+	}
 	switch classID {
 	case KeyClass:
+		if len(b) < 6 {
+			return nil, 0
+		}
 		return &KeyClassInfo{
 			NumKeys:    order.Uint16(b[2:4]),
 			MinKeycode: b[4],
 			MaxKeycode: b[5],
 		}, length
 	case ButtonClass:
+		if len(b) < 40 {
+			return nil, 0
+		}
 		info := &ButtonClassInfo{
 			NumButtons: order.Uint16(b[2:4]),
 		}
 		copy(info.State[:], b[8:40])
 		return info, length
 	case ValuatorClass:
+		if len(b) < 8 {
+			return nil, 0
+		}
 		numAxes := b[2]
+		if len(b) < 8+int(numAxes)*12 {
+			return nil, 0
+		}
 		axes := make([]ValuatorAxisInfo, numAxes)
 		for i := 0; i < int(numAxes); i++ {
 			axes[i] = ValuatorAxisInfo{
@@ -1499,7 +1627,7 @@ func ParseQueryDeviceStateReply(order binary.ByteOrder, b []byte) (*QueryDeviceS
 			return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 		}
 		class, length := parseInputClassInfo(order, b[offset:])
-		if len(b) < offset+length {
+		if class == nil || length <= 0 || len(b) < offset+length {
 			return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 		}
 		classes[i] = class
@@ -1521,11 +1649,12 @@ type GetDeviceButtonMappingReply struct {
 
 func (r *GetDeviceButtonMappingReply) EncodeMessage(order binary.ByteOrder) []byte {
 	length := len(r.Map)
-	reply := make([]byte, 32+length)
+	words := (length + 3) / 4
+	reply := make([]byte, 32+words*4)
 	reply[0] = 1 // Reply
 	reply[1] = byte(length)
 	order.PutUint16(reply[2:4], r.Sequence)
-	order.PutUint32(reply[4:8], uint32((length+3)/4))
+	order.PutUint32(reply[4:8], uint32(words))
 	copy(reply[32:], r.Map)
 	return reply
 }
@@ -1554,11 +1683,12 @@ type GetDeviceModifierMappingReply struct {
 
 func (r *GetDeviceModifierMappingReply) EncodeMessage(order binary.ByteOrder) []byte {
 	length := len(r.Keycodes)
-	reply := make([]byte, 32+length)
+	words := (length + 3) / 4
+	reply := make([]byte, 32+words*4)
 	reply[0] = 1 // Reply
 	reply[1] = r.NumKeycodesPerMod
 	order.PutUint16(reply[2:4], r.Sequence)
-	order.PutUint32(reply[4:8], uint32((length+3)/4))
+	order.PutUint32(reply[4:8], uint32(words))
 	copy(reply[32:], r.Keycodes)
 	return reply
 }
@@ -1598,7 +1728,7 @@ func (r *GetFeedbackControlReply) EncodeMessage(order binary.ByteOrder) []byte {
 	}
 	length := (len(feedbackBytes) + 3) / 4
 
-	reply := make([]byte, 32+len(feedbackBytes))
+	reply := make([]byte, 32+length*4)
 	reply[0] = 1 // Reply
 	order.PutUint16(reply[2:4], r.Sequence)
 	order.PutUint32(reply[4:8], uint32(length))
@@ -1615,10 +1745,19 @@ func ParseGetFeedbackControlReply(order binary.ByteOrder, b []byte) (*GetFeedbac
 	feedbacks := make([]FeedbackState, numEvents)
 	offset := 32
 	for i := 0; i < int(numEvents); i++ {
+		if len(b) < offset+4 {
+			return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
+		}
 		classID := b[offset]
 		length := int(order.Uint16(b[offset+2 : offset+4]))
+		if length <= 0 || len(b) < offset+length {
+			return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
+		}
 		switch classID {
 		case KbdFeedbackClass:
+			if len(b) < offset+51 || length < 51 {
+				return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
+			}
 			state := &KbdFeedbackState{
 				ClassID:          classID,
 				ID:               b[offset+1],
@@ -1634,6 +1773,9 @@ func ParseGetFeedbackControlReply(order binary.ByteOrder, b []byte) (*GetFeedbac
 			copy(state.AutoRepeats[:], b[offset+19:offset+51])
 			feedbacks[i] = state
 		case PtrFeedbackClass:
+			if len(b) < offset+10 || length < 10 {
+				return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
+			}
 			feedbacks[i] = &PtrFeedbackState{
 				ClassID:    classID,
 				ID:         b[offset+1],
@@ -1642,6 +1784,8 @@ func ParseGetFeedbackControlReply(order binary.ByteOrder, b []byte) (*GetFeedbac
 				AccelDenom: order.Uint16(b[offset+6:]),
 				Threshold:  order.Uint16(b[offset+8:]),
 			}
+		default:
+			return nil, NewError(ValueErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 		}
 		offset += length
 	}
@@ -1672,10 +1816,14 @@ type KbdFeedbackState struct {
 }
 
 func (f *KbdFeedbackState) EncodeMessage(order binary.ByteOrder) []byte {
-	buf := make([]byte, 44)
+	buf := make([]byte, 52)
 	buf[0] = f.ClassID
 	buf[1] = f.ID
-	order.PutUint16(buf[2:4], f.Len)
+	length := f.Len
+	if length == 0 {
+		length = 52
+	}
+	order.PutUint16(buf[2:4], length)
 	order.PutUint16(buf[4:6], f.Pitch)
 	order.PutUint16(buf[6:8], f.Duration)
 	order.PutUint32(buf[8:12], f.LedMask)
@@ -1687,7 +1835,7 @@ func (f *KbdFeedbackState) EncodeMessage(order binary.ByteOrder) []byte {
 	}
 	buf[17] = f.Click
 	buf[18] = f.Percent
-	copy(buf[19:], f.AutoRepeats[:])
+	copy(buf[19:51], f.AutoRepeats[:])
 	return buf
 }
 
@@ -1704,7 +1852,11 @@ func (f *PtrFeedbackState) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := make([]byte, 12)
 	buf[0] = f.ClassID
 	buf[1] = f.ID
-	order.PutUint16(buf[2:4], f.Len)
+	length := f.Len
+	if length == 0 {
+		length = 12
+	}
+	order.PutUint16(buf[2:4], length)
 	order.PutUint16(buf[4:6], f.AccelNum)
 	order.PutUint16(buf[6:8], f.AccelDenom)
 	order.PutUint16(buf[8:10], f.Threshold)
@@ -1759,12 +1911,13 @@ func (r *OpenDeviceReply) EncodeMessage(order binary.ByteOrder) []byte {
 		classesBuf.Write(class.EncodeMessage(order))
 	}
 	classesBytes := classesBuf.Bytes()
+	words := (len(classesBytes) + 3) / 4
 
-	reply := make([]byte, 32+len(classesBytes))
+	reply := make([]byte, 32+words*4)
 	reply[0] = 1 // Reply
 	reply[1] = byte(len(r.Classes))
 	order.PutUint16(reply[2:4], r.Sequence)
-	order.PutUint32(reply[4:8], uint32((len(classesBytes)+3)/4)) // length
+	order.PutUint32(reply[4:8], uint32(words)) // length
 	copy(reply[32:], classesBytes)
 	return reply
 }
@@ -1781,7 +1934,7 @@ func ParseOpenDeviceReply(order binary.ByteOrder, b []byte) (*OpenDeviceReply, e
 			return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 		}
 		class, length := parseInputClassInfo(order, b[offset:])
-		if len(b) < offset+length {
+		if class == nil || length <= 0 || len(b) < offset+length {
 			return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 		}
 		classes[i] = class
@@ -2035,11 +2188,15 @@ type GetDeviceControlReply struct {
 }
 
 func (r *GetDeviceControlReply) EncodeMessage(order binary.ByteOrder) []byte {
-	controlBytes := r.Control.EncodeMessage(order)
-	reply := make([]byte, 32+len(controlBytes))
+	var controlBytes []byte
+	if r.Control != nil {
+		controlBytes = r.Control.EncodeMessage(order)
+	}
+	words := (len(controlBytes) + 3) / 4
+	reply := make([]byte, 32+words*4)
 	reply[0] = 1 // Reply
 	order.PutUint16(reply[2:4], r.Sequence)
-	order.PutUint32(reply[4:8], uint32((len(controlBytes)+3)/4)) // length
+	order.PutUint32(reply[4:8], uint32(words)) // length
 	copy(reply[32:], controlBytes)
 	return reply
 }
@@ -2055,6 +2212,9 @@ func ParseGetDeviceControlReply(order binary.ByteOrder, b []byte) (*GetDeviceCon
 	var control DeviceControlState
 	switch controlID {
 	case DeviceResolution:
+		if len(b) < 40 {
+			return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
+		}
 		if len(b) < 40+int(b[36])*12 {
 			return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 		}
@@ -2095,8 +2255,13 @@ func (r *ChangeDeviceControlRequest) OpCode() ReqCode {
 
 func (r *ChangeDeviceControlRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	buf := new(bytes.Buffer)
-	controlBytes := r.Control.EncodeMessage(order)
-	length := uint16(1 + (len(controlBytes)+PadLen(len(controlBytes)))/4)
+	var controlBytes []byte
+	if r.Control != nil {
+		controlBytes = r.Control.EncodeMessage(order)
+	}
+	bodyLen := 2 + len(controlBytes)
+	pad := PadLen(bodyLen)
+	length := uint16(1 + (bodyLen+pad)/4)
 
 	binary.Write(buf, order, r.OpCode())
 	buf.WriteByte(XChangeDeviceControl)
@@ -2105,7 +2270,7 @@ func (r *ChangeDeviceControlRequest) EncodeMessage(order binary.ByteOrder) []byt
 	buf.WriteByte(r.DeviceID)
 	buf.WriteByte(0) // padding
 	buf.Write(controlBytes)
-	buf.Write(make([]byte, PadLen(len(controlBytes))))
+	buf.Write(make([]byte, pad))
 
 	return buf.Bytes()
 }
@@ -2128,8 +2293,9 @@ func ParseChangeDeviceControlRequest(order binary.ByteOrder, body []byte, seq ui
 	if length != expectedControlLength {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XChangeDeviceControl})
 	}
-	expectedBodyLength := 2 + int(length)
-	if len(body) != expectedBodyLength {
+	unpaddedBodyLength := 2 + int(length)
+	paddedBodyLength := unpaddedBodyLength + PadLen(unpaddedBodyLength)
+	if len(body) != paddedBodyLength {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XChangeDeviceControl})
 	}
 	resolutions := make([]uint32, numValuators)
@@ -2541,6 +2707,7 @@ func (d DeviceInfo) EncodeMessage(order binary.ByteOrder) []byte {
 	buf.WriteByte(d.Header.NumClasses)
 	buf.WriteByte(byte(len(d.Header.Name)))
 	buf.WriteString(d.Header.Name)
+	buf.Write(make([]byte, PadLen(len(d.Header.Name))))
 	for _, class := range d.Classes {
 		buf.Write(class.EncodeMessage(order))
 	}
@@ -2686,7 +2853,7 @@ func ParseListInputDevicesReply(order binary.ByteOrder, b []byte) (*ListInputDev
 				return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 			}
 			class, length := parseInputClassInfo(order, b[offset:])
-			if len(b) < offset+length {
+			if class == nil || length <= 0 || len(b) < offset+length {
 				return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 			}
 			classes[j] = class
@@ -2709,7 +2876,7 @@ func ParseGetDeviceMotionEventsReply(order binary.ByteOrder, b []byte) (*GetDevi
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 	}
 	nEvents := order.Uint32(b[8:12])
-	if len(b) < 32+int(nEvents)*8 {
+	if uint64(len(b)) < 32+uint64(nEvents)*8 {
 		return nil, NewError(LengthErrorCode, 0, 0, Opcodes{Major: 0, Minor: 0})
 	}
 	events := make([]TimeCoord, nEvents)
@@ -2945,6 +3112,7 @@ func (r *GrabDeviceKeyRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	buf.WriteByte(r.DeviceID)
 	binary.Write(buf, order, r.Modifiers)
 	buf.WriteByte(r.Key)
+	buf.Write([]byte{0, 0, 0}) // padding
 	for _, class := range r.Classes {
 		binary.Write(buf, order, class)
 	}
@@ -2953,16 +3121,16 @@ func (r *GrabDeviceKeyRequest) EncodeMessage(order binary.ByteOrder) []byte {
 }
 
 func ParseGrabDeviceKeyRequest(order binary.ByteOrder, body []byte, seq uint16) (*GrabDeviceKeyRequest, error) {
-	if len(body) < 13 {
+	if len(body) < 16 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XGrabDeviceKey})
 	}
 	numClasses := order.Uint16(body[4:6])
-	if len(body) != 13+int(numClasses)*4 {
+	if len(body) != 16+int(numClasses)*4 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XGrabDeviceKey})
 	}
 	classes := make([]uint32, numClasses)
 	for i := 0; i < int(numClasses); i++ {
-		classes[i] = order.Uint32(body[13+i*4 : 17+i*4])
+		classes[i] = order.Uint32(body[16+i*4 : 20+i*4])
 	}
 	return &GrabDeviceKeyRequest{
 		GrabWindow:      Window(order.Uint32(body[0:4])),
@@ -3055,6 +3223,7 @@ func (r *GrabDeviceButtonRequest) EncodeMessage(order binary.ByteOrder) []byte {
 	buf.WriteByte(r.DeviceID)
 	binary.Write(buf, order, r.Modifiers)
 	buf.WriteByte(r.Button)
+	buf.Write([]byte{0, 0, 0}) // padding
 	for _, class := range r.Classes {
 		binary.Write(buf, order, class)
 	}
@@ -3063,17 +3232,17 @@ func (r *GrabDeviceButtonRequest) EncodeMessage(order binary.ByteOrder) []byte {
 }
 
 func ParseGrabDeviceButtonRequest(order binary.ByteOrder, body []byte, seq uint16) (*GrabDeviceButtonRequest, error) {
-	if len(body) < 13 {
+	if len(body) < 16 {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XGrabDeviceButton})
 	}
 	numClasses := order.Uint16(body[4:6])
-	expectedLen := 13 + int(numClasses)*4
+	expectedLen := 16 + int(numClasses)*4
 	if len(body) != expectedLen {
 		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: XInputOpcode, Minor: XGrabDeviceButton})
 	}
 	classes := make([]uint32, numClasses)
 	for i := 0; i < int(numClasses); i++ {
-		classes[i] = order.Uint32(body[13+i*4 : 17+i*4])
+		classes[i] = order.Uint32(body[16+i*4 : 20+i*4])
 	}
 	return &GrabDeviceButtonRequest{
 		GrabWindow:      Window(order.Uint32(body[0:4])),
@@ -3886,14 +4055,14 @@ type XIRawEvent struct {
 }
 
 func DoubleToFP3232(v float64) (int32, uint32) {
-	integral := int32(v)
+	integral := int32(math.Floor(v))
 	fractional := uint32((v - float64(integral)) * (1 << 32))
 	return integral, fractional
 }
 
 func (e *XIRawEvent) EncodeMessage(order binary.ByteOrder) []byte {
-	// Fixed part: 28 bytes (header 12 + body 16)
-	// GenericEvent Header (12) + time(4) + detail(4) + sourceid(2) + valuators_len(2) + flags(4)
+	// Fixed part: 32 bytes (header 12 + body 20)
+	// GenericEvent Header (12) + time(4) + detail(4) + sourceid(2) + valuators_len(2) + flags(4) + pad0(4)
 
 	valuatorsLen := len(e.ValuatorsMask)
 	maskBytes := valuatorsLen * 4
@@ -3910,7 +4079,7 @@ func (e *XIRawEvent) EncodeMessage(order binary.ByteOrder) []byte {
 
 	valuesBytes := numValuators * 8 // 2 * 4 bytes for FP3232
 
-	totalLen := 28 + maskBytes + valuesBytes*2 // Values and RawValues
+	totalLen := 32 + maskBytes + valuesBytes*2 // Values and RawValues
 	lengthField := (totalLen - 32) / 4
 
 	buf := new(bytes.Buffer)
@@ -3930,6 +4099,7 @@ func (e *XIRawEvent) EncodeMessage(order binary.ByteOrder) []byte {
 	binary.Write(buf, order, e.SourceID)
 	binary.Write(buf, order, uint16(valuatorsLen))
 	binary.Write(buf, order, uint32(0)) // flags (0 for now)
+	binary.Write(buf, order, uint32(0)) // pad0 (bytes 28..32)
 
 	// Mask
 	for _, m := range e.ValuatorsMask {
@@ -4147,8 +4317,8 @@ func ParseXIPassiveGrabDeviceReply(order binary.ByteOrder, b []byte) (*XIPassive
 	offset := 32
 	for i := 0; i < int(numModifiers); i++ {
 		modifiers[i] = XIGrabModifierInfo{
-			Status:    b[offset],
-			Modifiers: order.Uint32(b[offset+4 : offset+8]),
+			Modifiers: order.Uint32(b[offset : offset+4]),
+			Status:    b[offset+4],
 		}
 		offset += 8
 	}

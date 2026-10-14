@@ -178,6 +178,8 @@ const (
 	MotionNotify       byte = 6  // Pointer motion event.
 	EnterNotify        byte = 7  // Pointer enter window event.
 	LeaveNotify        byte = 8  // Pointer leave window event.
+	FocusIn            byte = 9  // Focus in event.
+	FocusOut           byte = 10 // Focus out event.
 	Expose             byte = 12 // Expose event.
 	ColormapNotifyCode byte = 32 // Colormap change event.
 	ConfigureNotify    byte = 22 // Window configuration change event.
@@ -328,20 +330,21 @@ const (
 
 // Modifier and Button Masks
 const (
-	ShiftMask   = 1 << 0  // Shift key mask.
-	LockMask    = 1 << 1  // Lock key mask.
-	ControlMask = 1 << 2  // Control key mask.
-	Mod1Mask    = 1 << 3  // Mod1 key mask.
-	Mod2Mask    = 1 << 4  // Mod2 key mask.
-	Mod3Mask    = 1 << 5  // Mod3 key mask.
-	Mod4Mask    = 1 << 6  // Mod4 key mask.
-	Mod5Mask    = 1 << 7  // Mod5 key mask.
-	Button1Mask = 1 << 8  // Button1 mask.
-	Button2Mask = 1 << 9  // Button2 mask.
-	Button3Mask = 1 << 10 // Button3 mask.
-	Button4Mask = 1 << 11 // Button4 mask.
-	Button5Mask = 1 << 12 // Button5 mask.
-	AnyModifier = 1 << 15 // Match any modifier.
+	ShiftMask            = 1 << 0  // Shift key mask.
+	LockMask             = 1 << 1  // Lock key mask.
+	ControlMask          = 1 << 2  // Control key mask.
+	Mod1Mask             = 1 << 3  // Mod1 key mask.
+	Mod2Mask             = 1 << 4  // Mod2 key mask.
+	Mod3Mask             = 1 << 5  // Mod3 key mask.
+	Mod4Mask             = 1 << 6  // Mod4 key mask.
+	Mod5Mask             = 1 << 7  // Mod5 key mask.
+	Button1Mask          = 1 << 8  // Button1 mask.
+	Button2Mask          = 1 << 9  // Button2 mask.
+	Button3Mask          = 1 << 10 // Button3 mask.
+	Button4Mask          = 1 << 11 // Button4 mask.
+	Button5Mask          = 1 << 12 // Button5 mask.
+	AnyModifier          = 1 << 15 // Match any modifier.
+	XIAnyModifier uint32 = 1 << 31 // XI2 match any modifier.
 )
 
 // Grab Modes

@@ -210,9 +210,6 @@ export class TabManager {
         return {};
       });
     cfg.term = term;
-    if (isX11Test()) {
-      cfg.forwardX11 = true;
-    }
 
     const app = await window.sshApp.start(cfg);
     this.screens[b.id].close = app.close;

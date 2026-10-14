@@ -538,12 +538,19 @@ func (e *GenericEventData) EventCode() uint8 { return 35 }
 
 // EncodeMessage encodes the GenericEventData into a byte slice.
 func (e *GenericEventData) EncodeMessage(order binary.ByteOrder) []byte {
-	totalLen := 32 + int(e.Length)*4
+	words := int(e.Length)
+	if len(e.EventData) > 20 {
+		minWords := (len(e.EventData) - 20 + 3) / 4
+		if minWords > words {
+			words = minWords
+		}
+	}
+	totalLen := 32 + words*4
 	event := make([]byte, totalLen)
 	event[0] = 35 // GenericEvent event code
 	event[1] = e.Extension
 	order.PutUint16(event[2:4], e.Sequence)
-	order.PutUint32(event[4:8], e.Length)
+	order.PutUint32(event[4:8], uint32(words))
 	order.PutUint16(event[8:10], e.EventType)
 	copy(event[12:], e.EventData)
 	return event
@@ -570,7 +577,7 @@ func (e *DeviceMotionNotifyEvent) EncodeMessage(order binary.ByteOrder) []byte {
 }
 
 // EventCode returns the event code.
-func (e *DeviceMotionNotifyEvent) EventCode() uint8 { return byte(XInputOpcode) }
+func (e *DeviceMotionNotifyEvent) EventCode() uint8 { return e.BaseEventCode + DeviceMotionNotify }
 
 // EncodeMessage encodes the ProximityInEvent into a byte slice.
 func (e *ProximityInEvent) EncodeMessage(order binary.ByteOrder) []byte {
@@ -593,7 +600,7 @@ func (e *ProximityInEvent) EncodeMessage(order binary.ByteOrder) []byte {
 }
 
 // EventCode returns the event code.
-func (e *ProximityInEvent) EventCode() uint8 { return byte(XInputOpcode) }
+func (e *ProximityInEvent) EventCode() uint8 { return e.BaseEventCode + ProximityIn }
 
 // EncodeMessage encodes the ProximityOutEvent into a byte slice.
 func (e *ProximityOutEvent) EncodeMessage(order binary.ByteOrder) []byte {
@@ -617,8 +624,11 @@ func (e *ProximityOutEvent) EncodeMessage(order binary.ByteOrder) []byte {
 
 // ParseKeyEvent parses a KeyPress or KeyRelease event.
 func ParseKeyEvent(buf []byte, order binary.ByteOrder) (*KeyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &KeyEvent{}
-	e.Opcode = buf[0]
+	e.Opcode = buf[0] & 0x7f
 	e.Detail = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
@@ -636,6 +646,9 @@ func ParseKeyEvent(buf []byte, order binary.ByteOrder) (*KeyEvent, error) {
 
 // ParseButtonPressEvent parses a ButtonPress event.
 func ParseButtonPressEvent(buf []byte, order binary.ByteOrder) (*ButtonPressEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ButtonPressEvent{}
 	e.Detail = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
@@ -654,8 +667,11 @@ func ParseButtonPressEvent(buf []byte, order binary.ByteOrder) (*ButtonPressEven
 
 // ParseDeviceButtonReleaseEvent parses an XInput DeviceButtonRelease event.
 func ParseDeviceButtonReleaseEvent(buf []byte, order binary.ByteOrder) (*DeviceButtonReleaseEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &DeviceButtonReleaseEvent{}
-	e.BaseEventCode = buf[0] - DeviceButtonRelease
+	e.BaseEventCode = (buf[0] & 0x7f) - DeviceButtonRelease
 	e.Button = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
@@ -674,6 +690,9 @@ func ParseDeviceButtonReleaseEvent(buf []byte, order binary.ByteOrder) (*DeviceB
 
 // ParseButtonReleaseEvent parses a ButtonRelease event.
 func ParseButtonReleaseEvent(buf []byte, order binary.ByteOrder) (*ButtonReleaseEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ButtonReleaseEvent{}
 	e.Detail = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
@@ -692,6 +711,9 @@ func ParseButtonReleaseEvent(buf []byte, order binary.ByteOrder) (*ButtonRelease
 
 // ParseMotionNotifyEvent parses a MotionNotify event.
 func ParseMotionNotifyEvent(buf []byte, order binary.ByteOrder) (*MotionNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &MotionNotifyEvent{}
 	e.Detail = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
@@ -710,6 +732,9 @@ func ParseMotionNotifyEvent(buf []byte, order binary.ByteOrder) (*MotionNotifyEv
 
 // ParseEnterNotifyEvent parses an EnterNotify event.
 func ParseEnterNotifyEvent(buf []byte, order binary.ByteOrder) (*EnterNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &EnterNotifyEvent{}
 	e.Detail = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
@@ -730,6 +755,9 @@ func ParseEnterNotifyEvent(buf []byte, order binary.ByteOrder) (*EnterNotifyEven
 
 // ParseLeaveNotifyEvent parses a LeaveNotify event.
 func ParseLeaveNotifyEvent(buf []byte, order binary.ByteOrder) (*LeaveNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &LeaveNotifyEvent{}
 	e.Detail = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
@@ -748,8 +776,39 @@ func ParseLeaveNotifyEvent(buf []byte, order binary.ByteOrder) (*LeaveNotifyEven
 	return e, nil
 }
 
+// ParseFocusInEvent parses a FocusIn event.
+func ParseFocusInEvent(buf []byte, order binary.ByteOrder) (*FocusInEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
+	e := &FocusInEvent{
+		Detail:   buf[1],
+		Sequence: order.Uint16(buf[2:4]),
+		Window:   order.Uint32(buf[4:8]),
+		Mode:     buf[8],
+	}
+	return e, nil
+}
+
+// ParseFocusOutEvent parses a FocusOut event.
+func ParseFocusOutEvent(buf []byte, order binary.ByteOrder) (*FocusOutEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
+	e := &FocusOutEvent{
+		Detail:   buf[1],
+		Sequence: order.Uint16(buf[2:4]),
+		Window:   order.Uint32(buf[4:8]),
+		Mode:     buf[8],
+	}
+	return e, nil
+}
+
 // ParseExposeEvent parses an Expose event.
 func ParseExposeEvent(buf []byte, order binary.ByteOrder) (*ExposeEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ExposeEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Window = order.Uint32(buf[4:8])
@@ -763,6 +822,9 @@ func ParseExposeEvent(buf []byte, order binary.ByteOrder) (*ExposeEvent, error) 
 
 // ParseConfigureNotifyEvent parses a ConfigureNotify event.
 func ParseConfigureNotifyEvent(buf []byte, order binary.ByteOrder) (*ConfigureNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ConfigureNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Event = order.Uint32(buf[4:8])
@@ -779,18 +841,24 @@ func ParseConfigureNotifyEvent(buf []byte, order binary.ByteOrder) (*ConfigureNo
 
 // ParseSelectionNotifyEvent parses a SelectionNotify event.
 func ParseSelectionNotifyEvent(buf []byte, order binary.ByteOrder) (*SelectionNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &SelectionNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
-	e.Requestor = order.Uint32(buf[4:8])
-	e.Selection = order.Uint32(buf[8:12])
-	e.Target = order.Uint32(buf[12:16])
-	e.Property = order.Uint32(buf[16:20])
-	e.Time = order.Uint32(buf[20:24])
+	e.Time = order.Uint32(buf[4:8])
+	e.Requestor = order.Uint32(buf[8:12])
+	e.Selection = order.Uint32(buf[12:16])
+	e.Target = order.Uint32(buf[16:20])
+	e.Property = order.Uint32(buf[20:24])
 	return e, nil
 }
 
 // ParseColormapNotifyEvent parses a ColormapNotify event.
 func ParseColormapNotifyEvent(buf []byte, order binary.ByteOrder) (*ColormapNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ColormapNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Window = order.Uint32(buf[4:8])
@@ -802,6 +870,9 @@ func ParseColormapNotifyEvent(buf []byte, order binary.ByteOrder) (*ColormapNoti
 
 // ParseClientMessageEvent parses a ClientMessage event.
 func ParseClientMessageEvent(buf []byte, order binary.ByteOrder) (*ClientMessageEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ClientMessageEvent{}
 	e.Format = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
@@ -813,8 +884,11 @@ func ParseClientMessageEvent(buf []byte, order binary.ByteOrder) (*ClientMessage
 
 // ParseDeviceKeyPressEvent parses an XInput DeviceKeyPress event.
 func ParseDeviceKeyPressEvent(buf []byte, order binary.ByteOrder) (*DeviceKeyPressEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &DeviceKeyPressEvent{}
-	e.BaseEventCode = buf[0] - DeviceKeyPress
+	e.BaseEventCode = (buf[0] & 0x7f) - DeviceKeyPress
 	e.KeyCode = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
@@ -833,8 +907,11 @@ func ParseDeviceKeyPressEvent(buf []byte, order binary.ByteOrder) (*DeviceKeyPre
 
 // ParseDeviceKeyReleaseEvent parses an XInput DeviceKeyRelease event.
 func ParseDeviceKeyReleaseEvent(buf []byte, order binary.ByteOrder) (*DeviceKeyReleaseEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &DeviceKeyReleaseEvent{}
-	e.BaseEventCode = buf[0] - DeviceKeyRelease
+	e.BaseEventCode = (buf[0] & 0x7f) - DeviceKeyRelease
 	e.KeyCode = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
@@ -853,8 +930,11 @@ func ParseDeviceKeyReleaseEvent(buf []byte, order binary.ByteOrder) (*DeviceKeyR
 
 // ParseDeviceButtonPressEvent parses an XInput DeviceButtonPress event.
 func ParseDeviceButtonPressEvent(buf []byte, order binary.ByteOrder) (*DeviceButtonPressEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &DeviceButtonPressEvent{}
-	e.BaseEventCode = buf[0] - DeviceButtonPress
+	e.BaseEventCode = (buf[0] & 0x7f) - DeviceButtonPress
 	e.Detail = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
@@ -873,6 +953,9 @@ func ParseDeviceButtonPressEvent(buf []byte, order binary.ByteOrder) (*DeviceBut
 
 // ParseGraphicsExposureEvent parses a GraphicsExposure event.
 func ParseGraphicsExposureEvent(buf []byte, order binary.ByteOrder) (*GraphicsExposureEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &GraphicsExposureEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Drawable = order.Uint32(buf[4:8])
@@ -888,6 +971,9 @@ func ParseGraphicsExposureEvent(buf []byte, order binary.ByteOrder) (*GraphicsEx
 
 // ParseNoExposureEvent parses a NoExposure event.
 func ParseNoExposureEvent(buf []byte, order binary.ByteOrder) (*NoExposureEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &NoExposureEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Drawable = order.Uint32(buf[4:8])
@@ -898,6 +984,9 @@ func ParseNoExposureEvent(buf []byte, order binary.ByteOrder) (*NoExposureEvent,
 
 // ParseVisibilityNotifyEvent parses a VisibilityNotify event.
 func ParseVisibilityNotifyEvent(buf []byte, order binary.ByteOrder) (*VisibilityNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &VisibilityNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Window = order.Uint32(buf[4:8])
@@ -907,6 +996,9 @@ func ParseVisibilityNotifyEvent(buf []byte, order binary.ByteOrder) (*Visibility
 
 // ParseCreateNotifyEvent parses a CreateNotify event.
 func ParseCreateNotifyEvent(buf []byte, order binary.ByteOrder) (*CreateNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &CreateNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Parent = order.Uint32(buf[4:8])
@@ -922,6 +1014,9 @@ func ParseCreateNotifyEvent(buf []byte, order binary.ByteOrder) (*CreateNotifyEv
 
 // ParseDestroyNotifyEvent parses a DestroyNotify event.
 func ParseDestroyNotifyEvent(buf []byte, order binary.ByteOrder) (*DestroyNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &DestroyNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Event = order.Uint32(buf[4:8])
@@ -931,6 +1026,9 @@ func ParseDestroyNotifyEvent(buf []byte, order binary.ByteOrder) (*DestroyNotify
 
 // ParseUnmapNotifyEvent parses an UnmapNotify event.
 func ParseUnmapNotifyEvent(buf []byte, order binary.ByteOrder) (*UnmapNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &UnmapNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Event = order.Uint32(buf[4:8])
@@ -941,6 +1039,9 @@ func ParseUnmapNotifyEvent(buf []byte, order binary.ByteOrder) (*UnmapNotifyEven
 
 // ParseMapNotifyEvent parses a MapNotify event.
 func ParseMapNotifyEvent(buf []byte, order binary.ByteOrder) (*MapNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &MapNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Event = order.Uint32(buf[4:8])
@@ -951,6 +1052,9 @@ func ParseMapNotifyEvent(buf []byte, order binary.ByteOrder) (*MapNotifyEvent, e
 
 // ParseMapRequestEvent parses a MapRequest event.
 func ParseMapRequestEvent(buf []byte, order binary.ByteOrder) (*MapRequestEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &MapRequestEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Parent = order.Uint32(buf[4:8])
@@ -960,6 +1064,9 @@ func ParseMapRequestEvent(buf []byte, order binary.ByteOrder) (*MapRequestEvent,
 
 // ParseReparentNotifyEvent parses a ReparentNotify event.
 func ParseReparentNotifyEvent(buf []byte, order binary.ByteOrder) (*ReparentNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ReparentNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Event = order.Uint32(buf[4:8])
@@ -973,6 +1080,9 @@ func ParseReparentNotifyEvent(buf []byte, order binary.ByteOrder) (*ReparentNoti
 
 // ParseConfigureRequestEvent parses a ConfigureRequest event.
 func ParseConfigureRequestEvent(buf []byte, order binary.ByteOrder) (*ConfigureRequestEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ConfigureRequestEvent{}
 	e.StackMode = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
@@ -990,6 +1100,9 @@ func ParseConfigureRequestEvent(buf []byte, order binary.ByteOrder) (*ConfigureR
 
 // ParseGravityNotifyEvent parses a GravityNotify event.
 func ParseGravityNotifyEvent(buf []byte, order binary.ByteOrder) (*GravityNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &GravityNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Event = order.Uint32(buf[4:8])
@@ -1001,6 +1114,9 @@ func ParseGravityNotifyEvent(buf []byte, order binary.ByteOrder) (*GravityNotify
 
 // ParseResizeRequestEvent parses a ResizeRequest event.
 func ParseResizeRequestEvent(buf []byte, order binary.ByteOrder) (*ResizeRequestEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ResizeRequestEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Window = order.Uint32(buf[4:8])
@@ -1011,6 +1127,9 @@ func ParseResizeRequestEvent(buf []byte, order binary.ByteOrder) (*ResizeRequest
 
 // ParseCirculateNotifyEvent parses a CirculateNotify event.
 func ParseCirculateNotifyEvent(buf []byte, order binary.ByteOrder) (*CirculateNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &CirculateNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Event = order.Uint32(buf[4:8])
@@ -1021,6 +1140,9 @@ func ParseCirculateNotifyEvent(buf []byte, order binary.ByteOrder) (*CirculateNo
 
 // ParseCirculateRequestEvent parses a CirculateRequest event.
 func ParseCirculateRequestEvent(buf []byte, order binary.ByteOrder) (*CirculateRequestEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &CirculateRequestEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Parent = order.Uint32(buf[4:8])
@@ -1031,6 +1153,9 @@ func ParseCirculateRequestEvent(buf []byte, order binary.ByteOrder) (*CirculateR
 
 // ParsePropertyNotifyEvent parses a PropertyNotify event.
 func ParsePropertyNotifyEvent(buf []byte, order binary.ByteOrder) (*PropertyNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &PropertyNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Window = order.Uint32(buf[4:8])
@@ -1042,6 +1167,9 @@ func ParsePropertyNotifyEvent(buf []byte, order binary.ByteOrder) (*PropertyNoti
 
 // ParseSelectionClearEvent parses a SelectionClear event.
 func ParseSelectionClearEvent(buf []byte, order binary.ByteOrder) (*SelectionClearEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &SelectionClearEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
@@ -1052,6 +1180,9 @@ func ParseSelectionClearEvent(buf []byte, order binary.ByteOrder) (*SelectionCle
 
 // ParseSelectionRequestEvent parses a SelectionRequest event.
 func ParseSelectionRequestEvent(buf []byte, order binary.ByteOrder) (*SelectionRequestEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &SelectionRequestEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
@@ -1065,6 +1196,9 @@ func ParseSelectionRequestEvent(buf []byte, order binary.ByteOrder) (*SelectionR
 
 // ParseMappingNotifyEvent parses a MappingNotify event.
 func ParseMappingNotifyEvent(buf []byte, order binary.ByteOrder) (*MappingNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &MappingNotifyEvent{}
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Request = buf[4]
@@ -1075,19 +1209,28 @@ func ParseMappingNotifyEvent(buf []byte, order binary.ByteOrder) (*MappingNotify
 
 // ParseGenericEvent parses a GenericEvent (XGE).
 func ParseGenericEvent(buf []byte, order binary.ByteOrder) (*GenericEventData, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &GenericEventData{}
 	e.Extension = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Length = order.Uint32(buf[4:8])
+	if uint64(len(buf)) < 32+uint64(e.Length)*4 {
+		return nil, fmt.Errorf("generic event message too short: %d", len(buf))
+	}
 	e.EventType = order.Uint16(buf[8:10])
-	e.EventData = buf[12:]
+	e.EventData = buf[12 : 32+int(uint64(e.Length)*4)]
 	return e, nil
 }
 
 // ParseDeviceMotionNotifyEvent parses an XInput DeviceMotionNotify event.
 func ParseDeviceMotionNotifyEvent(buf []byte, order binary.ByteOrder) (*DeviceMotionNotifyEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &DeviceMotionNotifyEvent{}
-	e.BaseEventCode = buf[0] - DeviceMotionNotify
+	e.BaseEventCode = (buf[0] & 0x7f) - DeviceMotionNotify
 	e.Detail = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
@@ -1106,8 +1249,11 @@ func ParseDeviceMotionNotifyEvent(buf []byte, order binary.ByteOrder) (*DeviceMo
 
 // ParseProximityInEvent parses an XInput ProximityIn event.
 func ParseProximityInEvent(buf []byte, order binary.ByteOrder) (*ProximityInEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ProximityInEvent{}
-	e.BaseEventCode = buf[0] - ProximityIn
+	e.BaseEventCode = (buf[0] & 0x7f) - ProximityIn
 	e.Detail = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
@@ -1126,8 +1272,11 @@ func ParseProximityInEvent(buf []byte, order binary.ByteOrder) (*ProximityInEven
 
 // ParseProximityOutEvent parses an XInput ProximityOut event.
 func ParseProximityOutEvent(buf []byte, order binary.ByteOrder) (*ProximityOutEvent, error) {
+	if len(buf) < 32 {
+		return nil, fmt.Errorf("event message too short: %d", len(buf))
+	}
 	e := &ProximityOutEvent{}
-	e.BaseEventCode = buf[0] - ProximityOut
+	e.BaseEventCode = (buf[0] & 0x7f) - ProximityOut
 	e.Detail = buf[1]
 	e.Sequence = order.Uint16(buf[2:4])
 	e.Time = order.Uint32(buf[4:8])
@@ -1156,7 +1305,7 @@ func ParseEvent(buf []byte, order binary.ByteOrder) (Event, error) {
 	if len(buf) < 32 {
 		return nil, fmt.Errorf("event message too short: %d", len(buf))
 	}
-	switch buf[0] {
+	switch buf[0] & 0x7f {
 	case KeyPress, KeyRelease:
 		return ParseKeyEvent(buf, order)
 	case ButtonPress:
@@ -1169,6 +1318,10 @@ func ParseEvent(buf []byte, order binary.ByteOrder) (Event, error) {
 		return ParseEnterNotifyEvent(buf, order)
 	case LeaveNotify:
 		return ParseLeaveNotifyEvent(buf, order)
+	case FocusIn:
+		return ParseFocusInEvent(buf, order)
+	case FocusOut:
+		return ParseFocusOutEvent(buf, order)
 	case Expose:
 		return ParseExposeEvent(buf, order)
 	case ConfigureNotify:
@@ -1571,11 +1724,11 @@ func (e *SelectionNotifyEvent) EncodeMessage(order binary.ByteOrder) []byte {
 	event[0] = 31 // SelectionNotify event code
 	// byte 1 is unused
 	order.PutUint16(event[2:4], e.Sequence)
-	order.PutUint32(event[4:8], e.Requestor)
-	order.PutUint32(event[8:12], e.Selection)
-	order.PutUint32(event[12:16], e.Target)
-	order.PutUint32(event[16:20], e.Property)
-	order.PutUint32(event[20:24], e.Time)
+	order.PutUint32(event[4:8], e.Time)
+	order.PutUint32(event[8:12], e.Requestor)
+	order.PutUint32(event[12:16], e.Selection)
+	order.PutUint32(event[16:20], e.Target)
+	order.PutUint32(event[20:24], e.Property)
 	// event[24:32] is unused
 	return event
 }
@@ -1636,7 +1789,12 @@ type X11RawEvent struct {
 }
 
 // EventCode returns the event code.
-func (e *X11RawEvent) EventCode() uint8 { return e.Data[0] }
+func (e *X11RawEvent) EventCode() uint8 {
+	if len(e.Data) == 0 {
+		return 0
+	}
+	return e.Data[0]
+}
 
 // EncodeMessage encodes the X11RawEvent into a byte slice.
 func (e *X11RawEvent) EncodeMessage(order binary.ByteOrder) []byte {
@@ -1648,21 +1806,21 @@ type DeviceKeyPressEvent struct {
 	BaseEventCode uint8  // Base event code
 	DeviceID      byte   // Device ID
 	Sequence      uint16 // Sequence number
-	Time       uint32 // Time of event
-	Root       uint32 // Root window ID
-	Event      uint32 // Event window ID
-	Child      uint32 // Child window ID
-	RootX      int16  // Root X coordinate
-	RootY      int16  // Root Y coordinate
-	EventX     int16  // Event X coordinate
-	EventY     int16  // Event Y coordinate
-	State      uint16 // Modifier state
-	SameScreen bool   // Same screen flag
-	KeyCode    byte   // Keycode
+	Time          uint32 // Time of event
+	Root          uint32 // Root window ID
+	Event         uint32 // Event window ID
+	Child         uint32 // Child window ID
+	RootX         int16  // Root X coordinate
+	RootY         int16  // Root Y coordinate
+	EventX        int16  // Event X coordinate
+	EventY        int16  // Event Y coordinate
+	State         uint16 // Modifier state
+	SameScreen    bool   // Same screen flag
+	KeyCode       byte   // Keycode
 }
 
 // EventCode returns the event code.
-func (e *DeviceKeyPressEvent) EventCode() uint8 { return byte(XInputOpcode) }
+func (e *DeviceKeyPressEvent) EventCode() uint8 { return e.BaseEventCode + DeviceKeyPress }
 
 // EncodeMessage encodes the DeviceKeyPressEvent into a byte slice.
 func (e *DeviceKeyPressEvent) EncodeMessage(order binary.ByteOrder) []byte {
@@ -1689,21 +1847,21 @@ type DeviceKeyReleaseEvent struct {
 	BaseEventCode uint8  // Base event code
 	DeviceID      byte   // Device ID
 	Sequence      uint16 // Sequence number
-	Time       uint32 // Time of event
-	Root       uint32 // Root window ID
-	Event      uint32 // Event window ID
-	Child      uint32 // Child window ID
-	RootX      int16  // Root X coordinate
-	RootY      int16  // Root Y coordinate
-	EventX     int16  // Event X coordinate
-	EventY     int16  // Event Y coordinate
-	State      uint16 // Modifier state
-	SameScreen bool   // Same screen flag
-	KeyCode    byte   // Keycode
+	Time          uint32 // Time of event
+	Root          uint32 // Root window ID
+	Event         uint32 // Event window ID
+	Child         uint32 // Child window ID
+	RootX         int16  // Root X coordinate
+	RootY         int16  // Root Y coordinate
+	EventX        int16  // Event X coordinate
+	EventY        int16  // Event Y coordinate
+	State         uint16 // Modifier state
+	SameScreen    bool   // Same screen flag
+	KeyCode       byte   // Keycode
 }
 
 // EventCode returns the event code.
-func (e *DeviceKeyReleaseEvent) EventCode() uint8 { return byte(XInputOpcode) }
+func (e *DeviceKeyReleaseEvent) EventCode() uint8 { return e.BaseEventCode + DeviceKeyRelease }
 
 // EncodeMessage encodes the DeviceKeyReleaseEvent into a byte slice.
 func (e *DeviceKeyReleaseEvent) EncodeMessage(order binary.ByteOrder) []byte {
@@ -1730,21 +1888,21 @@ type DeviceButtonPressEvent struct {
 	BaseEventCode uint8  // Base event code
 	DeviceID      byte   // Device ID
 	Sequence      uint16 // Sequence number
-	Time       uint32 // Time of event
-	Root       uint32 // Root window ID
-	Event      uint32 // Event window ID
-	Child      uint32 // Child window ID
-	RootX      int16  // Root X coordinate
-	RootY      int16  // Root Y coordinate
-	EventX     int16  // Event X coordinate
-	EventY     int16  // Event Y coordinate
-	State      uint16 // Modifier state
-	SameScreen bool   // Same screen flag
-	Detail     byte   // Button
+	Time          uint32 // Time of event
+	Root          uint32 // Root window ID
+	Event         uint32 // Event window ID
+	Child         uint32 // Child window ID
+	RootX         int16  // Root X coordinate
+	RootY         int16  // Root Y coordinate
+	EventX        int16  // Event X coordinate
+	EventY        int16  // Event Y coordinate
+	State         uint16 // Modifier state
+	SameScreen    bool   // Same screen flag
+	Detail        byte   // Button
 }
 
 // EventCode returns the event code.
-func (e *DeviceButtonPressEvent) EventCode() uint8 { return byte(XInputOpcode) }
+func (e *DeviceButtonPressEvent) EventCode() uint8 { return e.BaseEventCode + DeviceButtonPress }
 
 // SetSequence sets the sequence number for the DeviceButtonPressEvent.
 func (e *DeviceButtonPressEvent) SetSequence(seq uint16) {
@@ -1776,38 +1934,38 @@ type DeviceButtonReleaseEvent struct {
 	BaseEventCode uint8  // Base event code
 	Sequence      uint16 // Sequence number
 	DeviceID      byte   // Device ID
-	Time       uint32 // Time of event
-	Button     byte   // Button code
-	Root       uint32 // Root window ID
-	Event      uint32 // Event window ID
-	Child      uint32 // Child window ID
-	RootX      int16  // Root X coordinate
-	RootY      int16  // Root Y coordinate
-	EventX     int16  // Event X coordinate
-	EventY     int16  // Event Y coordinate
-	State      uint16 // Modifier state
-	SameScreen bool   // Same screen flag
+	Time          uint32 // Time of event
+	Button        byte   // Button code
+	Root          uint32 // Root window ID
+	Event         uint32 // Event window ID
+	Child         uint32 // Child window ID
+	RootX         int16  // Root X coordinate
+	RootY         int16  // Root Y coordinate
+	EventX        int16  // Event X coordinate
+	EventY        int16  // Event Y coordinate
+	State         uint16 // Modifier state
+	SameScreen    bool   // Same screen flag
 }
 
 // EventCode returns the event code.
-func (e *DeviceButtonReleaseEvent) EventCode() uint8 { return byte(XInputOpcode) }
+func (e *DeviceButtonReleaseEvent) EventCode() uint8 { return e.BaseEventCode + DeviceButtonRelease }
 
 // DeviceMotionNotifyEvent represents an XInput motion event.
 type DeviceMotionNotifyEvent struct {
 	BaseEventCode uint8  // Base event code
 	Sequence      uint16 // Sequence number
 	DeviceID      byte   // Device ID
-	Time       uint32 // Time of event
-	Detail     byte   // Detail
-	Root       uint32 // Root window ID
-	Event      uint32 // Event window ID
-	Child      uint32 // Child window ID
-	RootX      int16  // Root X coordinate
-	RootY      int16  // Root Y coordinate
-	EventX     int16  // Event X coordinate
-	EventY     int16  // Event Y coordinate
-	State      uint16 // Modifier state
-	SameScreen bool   // Same screen flag
+	Time          uint32 // Time of event
+	Detail        byte   // Detail
+	Root          uint32 // Root window ID
+	Event         uint32 // Event window ID
+	Child         uint32 // Child window ID
+	RootX         int16  // Root X coordinate
+	RootY         int16  // Root Y coordinate
+	EventX        int16  // Event X coordinate
+	EventY        int16  // Event Y coordinate
+	State         uint16 // Modifier state
+	SameScreen    bool   // Same screen flag
 }
 
 // ProximityInEvent represents an XInput proximity in event.
@@ -1815,17 +1973,17 @@ type ProximityInEvent struct {
 	BaseEventCode uint8  // Base event code
 	Sequence      uint16 // Sequence number
 	DeviceID      byte   // Device ID
-	Time       uint32 // Time of event
-	Detail     byte   // Detail
-	Root       uint32 // Root window ID
-	Event      uint32 // Event window ID
-	Child      uint32 // Child window ID
-	RootX      int16  // Root X coordinate
-	RootY      int16  // Root Y coordinate
-	EventX     int16  // Event X coordinate
-	EventY     int16  // Event Y coordinate
-	State      uint16 // Modifier state
-	SameScreen bool   // Same screen flag
+	Time          uint32 // Time of event
+	Detail        byte   // Detail
+	Root          uint32 // Root window ID
+	Event         uint32 // Event window ID
+	Child         uint32 // Child window ID
+	RootX         int16  // Root X coordinate
+	RootY         int16  // Root Y coordinate
+	EventX        int16  // Event X coordinate
+	EventY        int16  // Event Y coordinate
+	State         uint16 // Modifier state
+	SameScreen    bool   // Same screen flag
 }
 
 // ProximityOutEvent represents an XInput proximity out event.
@@ -1833,18 +1991,18 @@ type ProximityOutEvent struct {
 	BaseEventCode uint8  // Base event code
 	Sequence      uint16 // Sequence number
 	DeviceID      byte   // Device ID
-	Time       uint32 // Time of event
-	Detail     byte   // Detail
-	Root       uint32 // Root window ID
-	Event      uint32 // Event window ID
-	Child      uint32 // Child window ID
-	RootX      int16  // Root X coordinate
-	RootY      int16  // Root Y coordinate
-	EventX     int16  // Event X coordinate
-	EventY     int16  // Event Y coordinate
-	State      uint16 // Modifier state
-	SameScreen bool   // Same screen flag
+	Time          uint32 // Time of event
+	Detail        byte   // Detail
+	Root          uint32 // Root window ID
+	Event         uint32 // Event window ID
+	Child         uint32 // Child window ID
+	RootX         int16  // Root X coordinate
+	RootY         int16  // Root Y coordinate
+	EventX        int16  // Event X coordinate
+	EventY        int16  // Event Y coordinate
+	State         uint16 // Modifier state
+	SameScreen    bool   // Same screen flag
 }
 
 // EventCode returns the event code.
-func (e *ProximityOutEvent) EventCode() uint8 { return byte(XInputOpcode) }
+func (e *ProximityOutEvent) EventCode() uint8 { return e.BaseEventCode + ProximityOut }

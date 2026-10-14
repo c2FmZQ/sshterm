@@ -35,6 +35,7 @@ type sshServer struct {
 	pubKey    ssh.PublicKey
 
 	x11SimDone chan struct{}
+	x11SimOnce sync.Once
 
 	resourceIdBase  uint32
 	resourceIdMask  uint32

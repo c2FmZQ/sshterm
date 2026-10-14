@@ -44,9 +44,9 @@ func cleanupDOMElements(t *testing.T) {
 		t.Fatal("document not found")
 	}
 	// Remove all elements with IDs starting with "x11-window-" or "x11-canvas-"
-	selectors := []string{"#x11-window-", "#x11-canvas-"}
-	for _, selector := range selectors {
-		elements := doc.Call("querySelectorAll", fmt.Sprintf("[id^='%s']", selector))
+	prefixes := []string{"x11-window-", "x11-canvas-"}
+	for _, prefix := range prefixes {
+		elements := doc.Call("querySelectorAll", fmt.Sprintf("[id^='%s']", prefix))
 		for i := 0; i < elements.Length(); i++ {
 			elements.Index(i).Call("remove")
 		}
@@ -512,7 +512,11 @@ func TestGCLogicalOperations(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Logf("Starting test case: %s", tc.name)
-			t.Cleanup(func() { cleanupDOMElements(t) })
+			t.Cleanup(func() {
+				fe.DestroyWindow(winID)
+				delete(s.windows, winID)
+				cleanupDOMElements(t)
+			})
 			s.windows[winID] = &window{xid: winID, parent: xID(s.rootWindowID()), width: winWidth, height: winHeight, mapped: true, eventMasks: make(map[uint32]uint32)}
 			fe.CreateWindow(winID, xID(s.rootWindowID()), 10, 10, winWidth, winHeight, 24, 0, wire.WindowAttributes{})
 			fe.MapWindow(winID)
@@ -611,15 +615,6 @@ func TestOptimizedGXxor(t *testing.T) {
 		img := getCanvasData(t, s, winID, 0, 0, winWidth, winHeight)
 		return checkRectangle(img, image.Rect(0, 0, 1, 1), wantR, wantG, wantB)
 	})
-}
-
-func findVisualByClass(s *x11Server, class uint8) (uint32, bool) {
-	for _, v := range s.visuals {
-		if v.Class == class {
-			return v.VisualID, true
-		}
-	}
-	return 0, false
 }
 
 func TestVisualTypes(t *testing.T) {

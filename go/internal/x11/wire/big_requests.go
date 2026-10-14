@@ -19,6 +19,9 @@ func (r *EnableBigRequestsRequest) OpCode() ReqCode {
 
 // ParseEnableBigRequestsRequest parses an EnableBigRequests request.
 func ParseEnableBigRequestsRequest(order binary.ByteOrder, raw []byte, seq uint16) (*EnableBigRequestsRequest, error) {
+	if len(raw) != 4 {
+		return nil, NewError(LengthErrorCode, seq, 0, Opcodes{Major: BigRequestsOpcode, Minor: 0})
+	}
 	return &EnableBigRequestsRequest{}, nil
 }
 

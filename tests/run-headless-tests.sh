@@ -16,16 +16,20 @@ export CGO_ENABLED=0
 docker build -f tests/Dockerfile -t sshterm-testserver .
 rm -f testserver
 
-mkdir -p ./output
-
 export TEST_RUN="$1"
 export TEST_UID=$(id -u)
 export TEST_GID=$(id -g)
+set +e
 docker compose -f tests/docker-compose-browser-tests.yaml up \
+  --menu=false \
   --abort-on-container-exit \
   --exit-code-from=devtest
 RES=$?
+set -e
 docker compose -f tests/docker-compose-browser-tests.yaml rm -f
+
+# Restore production (non-debug) build artifacts
+./build.sh
 
 if [[ $RES == 0 ]]; then
   echo PASS
