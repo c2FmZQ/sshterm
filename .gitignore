@@ -9,3 +9,5 @@ bin/
 cache/
 config.yaml
 tlsproxy.env
+/sshterm-server
+go/sshterm-server/internal/docroot/
