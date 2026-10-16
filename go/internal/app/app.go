@@ -76,7 +76,8 @@ func New(cfg *Config) (*App, error) {
 			Keys:        make(map[string]*key),
 			Params:      make(map[string]any),
 		},
-		inShell: new(atomic.Bool),
+		inShell:  new(atomic.Bool),
+		atPrompt: new(atomic.Bool),
 	}
 	app.commands = []*cli.App{
 		{
@@ -134,6 +135,7 @@ type App struct {
 	streamHelper *jsutil.StreamHelper
 
 	inShell    *atomic.Bool
+	atPrompt   *atomic.Bool
 	presetDone bool
 }
 
@@ -197,7 +199,9 @@ func (a *App) initPresetConfig() error {
 	}
 	for i, host := range a.cfg.Hosts {
 		if err := a.addHost(host.Name, host.Key); err != nil {
-			return fmt.Errorf("hosts[%d]: %w", i, err)
+			// Report the bad entry, but keep processing the rest of
+			// the preset config.
+			a.term.Errorf("hosts[%d]: %v", i, err)
 		}
 	}
 	for i, k := range a.cfg.GenerateKeys {
@@ -306,8 +310,12 @@ func (a *App) Run() error {
 
 	if broadcastChannel := js.Global().Get("BroadcastChannel"); !broadcastChannel.IsUndefined() {
 		a.bc = broadcastChannel.New("update:" + a.cfg.DBName)
-		defer a.bc.Call("close")
-		a.bc.Set("onmessage", js.FuncOf(a.onBroadcastDBChange))
+		bcCb := js.FuncOf(a.onBroadcastDBChange)
+		defer func() {
+			a.bc.Call("close")
+			bcCb.Release()
+		}()
+		a.bc.Set("onmessage", bcCb)
 	}
 
 	if err := a.initDB(); err != nil {
@@ -321,12 +329,10 @@ func (a *App) Run() error {
 	} else if theme := a.cfg.Theme; theme != "" {
 		a.setTheme(theme)
 	}
-	jsutil.UnregisterServiceWorker()
 	defer func() {
 		if a.db != nil {
 			a.db.Close()
 		}
-		jsutil.UnregisterServiceWorker()
 	}()
 
 	if a.cfg.AutoConnect != nil {
@@ -363,10 +369,10 @@ func (a *App) Run() error {
 		"\x1bp":    {"db persist toggle\r", "ALT-P"},
 		"\x1bb":    {"db restore\r", "ALT-B"},
 		"\x1b\x02": {"db backup\r", "CTRL-ALT-B"},
-		"\x1b\x17": {"db wipe\rYES\r", "CTRL-ALT-W"},
+		"\x1b\x17": {"db wipe\r", "CTRL-ALT-W"},
 	}
 	done := t.OnData(func(k string) any {
-		if a.inShell.Load() {
+		if a.inShell.Load() || !a.atPrompt.Load() {
 			return nil
 		}
 		if k == "\x12" {
@@ -391,7 +397,9 @@ func (a *App) Run() error {
 	}
 
 	for {
+		a.atPrompt.Store(true)
 		line, err := t.ReadLine()
+		a.atPrompt.Store(false)
 		if err != nil {
 			return err
 		}
@@ -483,6 +491,7 @@ func (a *App) ctrlC(cancel context.CancelFunc) context.CancelFunc {
 
 func (a *App) broadcastDBChange() {
 	globalLastDBChange = time.Now().UTC()
+	a.lastDBRefresh = globalLastDBChange
 	if a.bc.IsUndefined() {
 		return
 	}

@@ -64,30 +64,34 @@ func New(ctx context.Context, url string, log io.Writer) (*WebSocket, error) {
 		ch:      make(chan js.Value, 4096),
 		closeCh: make(chan struct{}),
 	}
-	errCh := make(chan error)
-	jsWS.Call("addEventListener", "open", js.FuncOf(func(this js.Value, args []js.Value) any {
+	errCh := make(chan error, 1)
+	openFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		select {
 		case errCh <- nil:
 		default:
 		}
 		return nil
-	}))
-	jsWS.Call("addEventListener", "error", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	errorFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		select {
 		case errCh <- fmt.Errorf("websocket error"):
 		default:
 		}
 		ws.Close()
 		return nil
-	}))
-	jsWS.Call("addEventListener", "close", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	closeFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		if !ws.isClosed() {
 			ws.err = ErrClosedByServer
 		}
+		select {
+		case errCh <- ErrClosedByServer:
+		default:
+		}
 		ws.Close()
 		return nil
-	}))
-	jsWS.Call("addEventListener", "message", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	msgFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		data := args[0].Get("data")
 		if !data.InstanceOf(jsutil.ArrayBuffer) {
 			if !ws.isClosed() {
@@ -101,8 +105,31 @@ func New(ctx context.Context, url string, log io.Writer) (*WebSocket, error) {
 		case ws.ch <- data:
 		}
 		return nil
-	}))
-	return ws, <-errCh
+	})
+	ws.cleanup = func() {
+		jsWS.Call("removeEventListener", "open", openFn)
+		jsWS.Call("removeEventListener", "error", errorFn)
+		jsWS.Call("removeEventListener", "close", closeFn)
+		jsWS.Call("removeEventListener", "message", msgFn)
+		openFn.Release()
+		errorFn.Release()
+		closeFn.Release()
+		msgFn.Release()
+	}
+	jsWS.Call("addEventListener", "open", openFn)
+	jsWS.Call("addEventListener", "error", errorFn)
+	jsWS.Call("addEventListener", "close", closeFn)
+	jsWS.Call("addEventListener", "message", msgFn)
+	select {
+	case <-ctx.Done():
+		ws.Close()
+		return nil, ctx.Err()
+	case err := <-errCh:
+		if err != nil {
+			return nil, err
+		}
+		return ws, nil
+	}
 }
 
 var _ net.Conn = (*WebSocket)(nil)
@@ -115,6 +142,7 @@ type WebSocket struct {
 	r       []byte
 	closeCh chan struct{}
 	err     error
+	cleanup func()
 }
 
 func (ws *WebSocket) isClosed() bool {
@@ -134,6 +162,9 @@ func (ws *WebSocket) Close() error {
 		}
 		close(ws.closeCh)
 		ws.ws.Call("close")
+		if ws.cleanup != nil {
+			ws.cleanup()
+		}
 	}
 	return nil
 }

@@ -2,6 +2,30 @@
 
 ## next
 
+### :lock: Security fixes
+
+* Only trust a host certificate when the Certificate Authority is trusted for the certificate's hostname, not the endpoint alias name, and only offer principals in the host-key prompt for which the CA is trusted.
+* Reject certificates with `ValidBefore == 0` as expired, while continuing to accept `ssh.CertTimeInfinity` (`0xffffffffffffffff`).
+* Expand SFTP wildcard patterns after CLI flag parsing so remote file names starting with `-` cannot inject command flags, and strip directory components from uploaded local file names.
+* Require confirmation when `CTRL-ALT-W` triggers `db wipe`, and only process keyboard shortcuts at the top-level `sshterm>` prompt.
+* Clear keys from the in-memory SSH agent on `db wipe`, `db restore`, `keys delete`, `keys generate`, `keys discover`, and `keys import`, even when the agent is locked. `db wipe` and `db restore` also reset the agent lock.
+* Reject invalid host keys in `config.json`'s `hosts[].key`. The error is reported and the remaining preset config is still applied.
+* Bind the WebAuthn public key blob as AES-GCM additional authenticated data (AAD) in encrypted WebAuthn key files (existing v1 keys can still be loaded), verify the registration challenge in `WebAuthn.Create`, and enforce a minimum of 1,000 PBKDF2 iterations on encrypted WebAuthn keys and database backups.
+* Sanitize certificate critical option names, certificate comments in `keys show`, and error messages in the host-key prompt, and strip 8-bit `CSI` (`\x9b`) characters from pasted text.
+* Show a popup notification in addition to the terminal message when a forwarded agent signs a request.
+
+### :wrench: Bug fixes
+
+* Fix `agent remove <name>` for WebAuthn (`ecdsa-sk`) keys and deleted keys, and avoid holding the agent lock while fetching user certificates from an identity provider.
+* Fix `caTrustedFor` and host-certificate trust updates when the hostname includes a `:port` suffix (such as jump hosts).
+* Fix `db restore` when restoring empty maps, keys with identity providers, or backups with `persist: false`, and respect `config.json`'s `persist` setting.
+* Keep `sftp get` working across multiple screens when one screen exits.
+* Prevent `autoConnect` from overwriting keys and settings saved by other open tabs.
+* Fix a race condition when aborting a ZMODEM transfer with `Ctrl-C`, and reject negative file sizes in ZMODEM `ZFILE` headers.
+* Fix WebSocket connection cancellation and release `js.Func` callbacks across `websocket`, `terminal`, `jsutil`, `indexeddb`, `sftp`, and `app`.
+
+### :wrench: Misc
+
 * Update go 1.27.2
 * Update go dependencies:
   * upgraded github.com/fxamacker/cbor/v2 v2.9.4 => v2.9.6

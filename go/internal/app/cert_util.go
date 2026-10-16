@@ -27,10 +27,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path"
 	"slices"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/c2FmZQ/sshterm/internal/termsafe"
 )
 
 func checkCertificate(cert *ssh.Certificate, certType uint32) error {
@@ -42,11 +45,16 @@ func checkCertificate(cert *ssh.Certificate, certType uint32) error {
 	if cert.ValidAfter > now {
 		errs = append(errs, fmt.Errorf("certificate is not yet valid"))
 	}
-	if cert.ValidBefore > 0 && now > cert.ValidBefore {
+	if cert.ValidBefore != ssh.CertTimeInfinity && (now > cert.ValidBefore || cert.ValidBefore < cert.ValidAfter) {
 		errs = append(errs, fmt.Errorf("certificate is expired"))
 	}
 	if certType == ssh.HostCert && len(cert.CriticalOptions) > 0 {
-		errs = append(errs, fmt.Errorf("certificate has critical options: %v", cert.CriticalOptions))
+		var opts []string
+		for k := range cert.CriticalOptions {
+			opts = append(opts, termsafe.Name(k))
+		}
+		slices.Sort(opts)
+		errs = append(errs, fmt.Errorf("certificate has critical options: %v", opts))
 	}
 	c2 := *cert
 	c2.Signature = nil
@@ -71,4 +79,22 @@ func checkHostCertPrincipal(cert *ssh.Certificate, hostname string) error {
 		return nil
 	}
 	return fmt.Errorf("host certificate is not valid for hostname %q", hostname)
+}
+
+// matchHostnames returns true if any of names (or its host part when formatted
+// as host:port) matches any of patterns.
+func matchHostnames(patterns []string, names ...string) bool {
+	for _, pat := range patterns {
+		for _, n := range names {
+			if matched, err := path.Match(pat, n); err == nil && matched {
+				return true
+			}
+			if h, _, err := net.SplitHostPort(n); err == nil {
+				if matched, err := path.Match(pat, h); err == nil && matched {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

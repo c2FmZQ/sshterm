@@ -71,6 +71,15 @@ func TestMalformedFiles(t *testing.T) {
 		})
 		return pem.EncodeToMemory(&pem.Block{Type: "WEBAUTHN ENCRYPTED KEY", Bytes: b.BytesOrPanic()})
 	}
+	backupWithIter := func(iter uint32) []byte {
+		b := make([]byte, 56)
+		copy(b[:4], []byte{0xe2, 0x9b, 0x94, '0'})
+		b[12] = byte(iter >> 24)
+		b[13] = byte(iter >> 16)
+		b[14] = byte(iter >> 8)
+		b[15] = byte(iter)
+		return b
+	}
 	script(t, []line{
 		{Expect: prompt},
 		{Type: "db wipe\n", Expect: `Continue\?`},
@@ -84,8 +93,11 @@ func TestMalformedFiles(t *testing.T) {
 	}{
 		{"nopem.key", []byte("-----BEGIN WEBAUTHN KEY-----\nfoo\n"), "keys import bad\n", "invalid PEM data"},
 		{"badpoint.key", webauthnKey([]byte{4, 1, 2, 3}, 1000), "keys import bad\n", "invalid public key"},
+		{"lowiter.key", webauthnKey(elliptic.Marshal(elliptic.P256(), priv.X, priv.Y), 1), "keys import bad\n", "invalid iteration count"},
 		{"hugeiter.key", webauthnKey(elliptic.Marshal(elliptic.P256(), priv.X, priv.Y), 0xffffffff), "keys import bad\n", "invalid iteration count"},
 		{"short.backup", []byte{0xe2, 0x9b, 0x94, '0', 1, 2, 3}, "db restore\n", "invalid backup file"},
+		{"lowiter.backup", backupWithIter(1), "db restore\n", "invalid iter value"},
+		{"hugeiter.backup", backupWithIter(0xffffffff), "db restore\n", "invalid iter value"},
 	} {
 		fileUploader.enqueue(tc.name, "application/octet-stream", int64(len(tc.content)), tc.content)
 		script(t, []line{

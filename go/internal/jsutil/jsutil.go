@@ -75,8 +75,10 @@ func NewResolvedPromise(v any) js.Value {
 }
 
 func NewPromise(f func() (any, error)) js.Value {
-	return Promise.New(js.FuncOf(
+	var cb js.Func
+	cb = js.FuncOf(
 		func(this js.Value, args []js.Value) any {
+			defer cb.Release()
 			resolve := args[0]
 			reject := args[1]
 			go func() {
@@ -89,7 +91,8 @@ func NewPromise(f func() (any, error)) js.Value {
 			}()
 			return nil
 		},
-	))
+	)
+	return Promise.New(cb)
 }
 
 func Await(p js.Value) (js.Value, error) {
@@ -98,16 +101,18 @@ func Await(p js.Value) (js.Value, error) {
 	}
 	v := make(chan js.Value, 1)
 	e := make(chan error, 1)
-	resolve := func(this js.Value, args []js.Value) any {
+	resolveFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		v <- args[0]
 		return nil
-	}
-	reject := func(this js.Value, args []js.Value) any {
+	})
+	defer resolveFn.Release()
+	rejectFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		e <- fmt.Errorf("%s", args[0].Call("toString"))
 		return nil
-	}
-	p.Call("then", js.FuncOf(resolve)).
-		Call("catch", js.FuncOf(reject))
+	})
+	defer rejectFn.Release()
+	p.Call("then", resolveFn).
+		Call("catch", rejectFn)
 	select {
 	case value := <-v:
 		return value, nil
@@ -171,11 +176,12 @@ func ImportFiles(accept string, multiple bool) []ImportedFile {
 	}
 
 	ch := make(chan ImportedFile)
-	input.Call("addEventListener", "cancel", js.FuncOf(func(this js.Value, args []js.Value) any {
+	cancelFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		close(ch)
 		return nil
-	}))
-	input.Call("addEventListener", "change", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	defer cancelFn.Release()
+	changeFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		event := args[0]
 		files := event.Get("target").Get("files")
 		length := files.Length()
@@ -190,7 +196,10 @@ func ImportFiles(accept string, multiple bool) []ImportedFile {
 		}
 		close(ch)
 		return nil
-	}))
+	})
+	defer changeFn.Release()
+	input.Call("addEventListener", "cancel", cancelFn)
+	input.Call("addEventListener", "change", changeFn)
 	Body.Call("appendChild", input)
 	input.Call("click")
 	Body.Call("removeChild", input)

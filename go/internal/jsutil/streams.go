@@ -78,7 +78,13 @@ func (r *StreamReader) Close() error {
 
 func NewReadableStream(r io.Reader, done chan<- error, progress func(int64)) js.Value {
 	cancelCh := make(chan struct{})
+	var pullCb, cancelCb js.Func
+	releaseFuncs := sync.OnceFunc(func() {
+		pullCb.Release()
+		cancelCb.Release()
+	})
 	allDone := func(err error) {
+		releaseFuncs()
 		select {
 		case done <- err:
 		default:
@@ -86,7 +92,7 @@ func NewReadableStream(r io.Reader, done chan<- error, progress func(int64)) js.
 	}
 	offset := new(atomic.Int64)
 	s := Object.New()
-	s.Set("pull", js.FuncOf(func(this js.Value, args []js.Value) any {
+	pullCb = js.FuncOf(func(this js.Value, args []js.Value) any {
 		return NewPromise(func() (any, error) {
 			controller := args[0]
 			size := 16384
@@ -116,16 +122,30 @@ func NewReadableStream(r io.Reader, done chan<- error, progress func(int64)) js.
 			}
 			return nil, nil
 		})
-	}))
-	s.Set("cancel", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	cancelCb = js.FuncOf(func(this js.Value, args []js.Value) any {
 		close(cancelCh)
 		allDone(errors.New("canceled"))
 		return nil
-	}))
+	})
+	s.Set("pull", pullCb)
+	s.Set("cancel", cancelCb)
 	return ReadableStream.New(s)
 }
 
+var (
+	streamHelperMu      sync.Mutex
+	defaultStreamHelper *StreamHelper
+)
+
 func NewStreamHelper() *StreamHelper {
+	streamHelperMu.Lock()
+	defer streamHelperMu.Unlock()
+
+	if defaultStreamHelper != nil {
+		return defaultStreamHelper
+	}
+
 	container := js.Global().Get("navigator").Get("serviceWorker")
 	if !container.Truthy() {
 		return nil
@@ -215,6 +235,7 @@ func NewStreamHelper() *StreamHelper {
 		},
 	))
 
+	defaultStreamHelper = h
 	return h
 }
 
@@ -244,14 +265,6 @@ func waitForController(container, registration js.Value, timeout time.Duration) 
 		case <-ch:
 		case <-timer.C:
 			return false
-		}
-	}
-}
-
-func UnregisterServiceWorker() {
-	if c := js.Global().Get("navigator").Get("serviceWorker"); c.Truthy() {
-		if r, err := Await(c.Call("getRegistration")); err == nil && r.Truthy() {
-			r.Call("unregister")
 		}
 	}
 }

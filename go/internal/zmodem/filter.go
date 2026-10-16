@@ -112,12 +112,11 @@ func New(term TerminalPrinter, download DownloadFunc, upload UploadFunc) *Filter
 					if bytes.Contains(buf[:n], []byte{'\x03'}) { // Ctrl-C
 						f.term.Printf("\x1b[31m[ZMODEM] Transfer aborted by user.\x1b[0m\r\n")
 						f.mu.Lock()
-						f.active = false
-						f.window = [6]byte{}
 						pw := f.pipeW
 						f.mu.Unlock()
 
-						// Close the write side of the pipe to interrupt the parser
+						// Close the write side of the pipe to interrupt the parser;
+						// f.finish(pr) in the session goroutine will clear f.active.
 						if pw != nil {
 							pw.Close()
 						}

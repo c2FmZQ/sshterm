@@ -161,7 +161,8 @@ func TestPresetAuthorities(t *testing.T) {
 	script(t, []line{
 		{Type: "ca list\n", Expect: `testca ` + regexp.QuoteMeta(fp) + ` \*\.example\.com`},
 		{Type: "ep list\n", Expect: `myserver\.example\.com +\./websocket\?cert=true +foo `},
-		{Type: "ssh testuser@myserver.example.com foo\n", Expect: "Password: "},
+		{Type: "ssh testuser@myserver.example.com foo\n", Expect: `(?s)Host certificate for myserver\.example\.com \(foo\) is NOT trusted.*not trusted for hostname "foo".*Choice>`},
+		{Type: "2\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 		{Type: "exit\n"},
@@ -227,7 +228,7 @@ func TestPresetKeys(t *testing.T) {
 			{Type: "ssh testuser@myserver.example.com foo\n", Expect: `(?s)Host certificate for myserver.example.com is trusted.\r\n.*exec: foo`},
 			{Wait: time.Second, Type: "\n\n"},
 
-			{Type: "keys show foo\n", Expect: `Fingerprint: (SHA256:[^\r\n]+)`, Do: func(m []string) {
+			{Type: "keys show foo\n", Expect: `(?s)Fingerprint: (SHA256:[^\r\n]+).*Certificate: ssh-ed25519-cert-v01@openssh\.com [A-Za-z0-9+/=]+\r\n.*Validity:\.+ .* \(UTC\)`, Do: func(m []string) {
 				fingerprints = append(fingerprints, m[1])
 			}},
 			{Expect: prompt},

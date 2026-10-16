@@ -69,3 +69,20 @@ func TestIsSameOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceWorkerSingleton(t *testing.T) {
+	sw := js.Global().Get("navigator").Get("serviceWorker")
+	if sw.IsUndefined() {
+		t.Skip("Service Worker not available")
+	}
+	h1 := jsutil.NewStreamHelper()
+	cb1 := sw.Get("onmessage")
+	h2 := jsutil.NewStreamHelper()
+	cb2 := sw.Get("onmessage")
+	if h1 != h2 {
+		t.Errorf("NewStreamHelper() returned different instances: %p != %p", h1, h2)
+	}
+	if !cb1.Equal(cb2) {
+		t.Error("serviceWorker.onmessage was overwritten by second NewStreamHelper() call")
+	}
+}

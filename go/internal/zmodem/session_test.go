@@ -166,3 +166,24 @@ func TestSessionSendReceive(t *testing.T) {
 		}
 	}
 }
+
+func TestReceiveNegativeFileSize(t *testing.T) {
+	var in bytes.Buffer
+	if err := writeBinaryHeader(&in, header{Type: zFILE}); err != nil {
+		t.Fatalf("writeBinaryHeader: %v", err)
+	}
+	if err := writeDataBlock(&in, []byte("evil.bin\x00-42 0 0 0\x00"), zCRCW, false); err != nil {
+		t.Fatalf("writeDataBlock: %v", err)
+	}
+	rw := struct {
+		io.Reader
+		io.Writer
+	}{&in, io.Discard}
+	err := receive(rw, func(name string, size int64, rc io.Reader) error {
+		t.Errorf("onFile called with size %d, want error before callback", size)
+		return nil
+	})
+	if err == nil {
+		t.Fatal("receive succeeded with negative file size; want error")
+	}
+}

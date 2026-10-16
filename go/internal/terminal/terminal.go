@@ -58,12 +58,14 @@ func New(ctx context.Context, t js.Value) *Terminal {
 	tt.Escape = tt.vt.Escape
 	tt.setDefaultPrompt()
 
-	disp := t.Call("onBell", js.FuncOf(func(this js.Value, args []js.Value) any {
+	bellCb := js.FuncOf(func(this js.Value, args []js.Value) any {
 		fmt.Fprintf(os.Stderr, "onBell\n")
 		return nil
-	}))
+	})
+	disp := t.Call("onBell", bellCb)
 	tt.tw.dispose = append(tt.tw.dispose, disp)
-	disp = t.Call("onData", js.FuncOf(func(this js.Value, args []js.Value) any {
+	tt.tw.funcs = append(tt.tw.funcs, bellCb)
+	dataCb := js.FuncOf(func(this js.Value, args []js.Value) any {
 		key := args[0].String()
 		tt.tw.mu.Lock()
 		for _, i := range tt.tw.onDataKeys {
@@ -83,9 +85,11 @@ func New(ctx context.Context, t js.Value) *Terminal {
 			return nil
 		}
 		return nil
-	}))
+	})
+	disp = t.Call("onData", dataCb)
 	tt.tw.dispose = append(tt.tw.dispose, disp)
-	disp = t.Call("onResize", js.FuncOf(func(this js.Value, args []js.Value) any {
+	tt.tw.funcs = append(tt.tw.funcs, dataCb)
+	resizeCb := js.FuncOf(func(this js.Value, args []js.Value) any {
 		event := args[0]
 		select {
 		case <-tt.tw.ctx.Done():
@@ -96,8 +100,10 @@ func New(ctx context.Context, t js.Value) *Terminal {
 			return nil
 		}
 		return nil
-	}))
+	})
+	disp = t.Call("onResize", resizeCb)
 	tt.tw.dispose = append(tt.tw.dispose, disp)
+	tt.tw.funcs = append(tt.tw.funcs, resizeCb)
 
 	tt.vt.SetSize(tt.Cols(), tt.Rows())
 	go func() {
@@ -139,6 +145,7 @@ type termWrapper struct {
 	closeCh  chan struct{}
 	resizeCh chan resizeEvent
 	dispose  []js.Value
+	funcs    []js.Func
 	r        []byte
 
 	mu          sync.Mutex
@@ -163,6 +170,10 @@ func (t *termWrapper) Close() error {
 		d.Call("dispose")
 	}
 	t.dispose = nil
+	for _, f := range t.funcs {
+		f.Release()
+	}
+	t.funcs = nil
 	if !t.isClosed() {
 		close(t.resizeCh)
 		close(t.closeCh)
@@ -199,10 +210,13 @@ func (t *termWrapper) Write(b []byte) (int, error) {
 		return 0, ErrClosed
 	}
 	ch := make(chan struct{})
-	t.xt.Call("write", jsutil.Uint8ArrayFromBytes(b), js.FuncOf(func(this js.Value, args []js.Value) any {
+	var cb js.Func
+	cb = js.FuncOf(func(this js.Value, args []js.Value) any {
+		cb.Release()
 		close(ch)
 		return nil
-	}))
+	})
+	t.xt.Call("write", jsutil.Uint8ArrayFromBytes(b), cb)
 	<-ch
 	return len(b), nil
 }
@@ -284,6 +298,13 @@ func (t *Terminal) Errorf(f string, args ...any) {
 func (t *Terminal) Greenf(f string, args ...any) {
 	s := fmt.Sprintf(f, args...)
 	t.Printf("%s%s%s", t.vt.Escape.Green, s, t.vt.Escape.Reset)
+}
+
+func (t *Terminal) ShowMessage(f string, args ...any) {
+	if fn := t.tw.xt.Get("showMessage"); fn.Type() == js.TypeFunction {
+		s := strings.TrimSpace(fmt.Sprintf(f, args...))
+		t.tw.xt.Call("showMessage", s)
+	}
 }
 
 func (t *Terminal) Focus() {

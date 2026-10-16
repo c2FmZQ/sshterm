@@ -174,7 +174,7 @@ func TestSSHTerm(t *testing.T) {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		out := ssh.MarshalAuthorizedKey(cert)
+		out := append(bytes.TrimSpace(ssh.MarshalAuthorizedKey(cert)), []byte(" evil\x1b[31mcomment\n")...)
 		w.Header().Set("content-type", "text/plain")
 		w.Header().Set("content-length", fmt.Sprintf("%d", len(out)))
 		w.Write(out)
@@ -401,10 +401,11 @@ func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {
 	signer := authority
 	if hostCert {
 		cert := &ssh.Certificate{
-			Key:      sshPub,
-			Serial:   0x12345,
-			CertType: ssh.HostCert,
-			KeyId:    "test-server",
+			Key:         sshPub,
+			Serial:      0x12345,
+			CertType:    ssh.HostCert,
+			KeyId:       "test-server",
+			ValidBefore: ssh.CertTimeInfinity,
 			ValidPrincipals: []string{
 				"test-server",
 				"myserver.example.com",

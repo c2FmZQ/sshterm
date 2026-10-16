@@ -51,7 +51,7 @@ func (a *App) addAuthority(name, publicKey string, hostnames []string) error {
 		Name:        name,
 		Fingerprint: fp,
 		Public:      key.Marshal(),
-		Hostnames:   hostnames,
+		Hostnames:   slices.Clone(hostnames),
 	}
 	return nil
 }
