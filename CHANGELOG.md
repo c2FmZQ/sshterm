@@ -1,6 +1,6 @@
 # SSH Term Release Notes
 
-## next
+## v0.11.3
 
 ### :lock: Security fixes
 
