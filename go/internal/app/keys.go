@@ -97,7 +97,7 @@ func (a *App) generateKey(name, passphrase, idp, typ string, bits int, resident 
 		Provider: idp,
 		errorf:   a.term.Errorf,
 	}
-	globalAgent.(*keyRing).RemoveByName(name)
+	globalAgent.(*keyRing).ForceRemoveByName(name)
 	a.data.Keys[name] = k
 	return k, nil
 }
@@ -277,7 +277,7 @@ func (a *App) keysCommand() *cli.App {
 							a.term.Errorf("certificate update: %v", err)
 						}
 					}
-					globalAgent.(*keyRing).RemoveByName(name)
+					globalAgent.(*keyRing).ForceRemoveByName(name)
 					a.data.Keys[name] = k
 					if err := a.saveKeys(true); err != nil {
 						return err
@@ -307,10 +307,10 @@ func (a *App) keysCommand() *cli.App {
 					}
 					if key, exists := a.data.Keys[name]; exists {
 						if pub, err := key.sshPublicKey(); err == nil {
-							globalAgent.Remove(pub)
+							globalAgent.(*keyRing).ForceRemove(pub)
 						}
 					}
-					globalAgent.(*keyRing).RemoveByName(name)
+					globalAgent.(*keyRing).ForceRemoveByName(name)
 					delete(a.data.Keys, name)
 					return a.saveKeys(true)
 				},
@@ -471,7 +471,7 @@ func (a *App) keysCommand() *cli.App {
 						}
 						key.Public = sshPub.Marshal()
 					}
-					globalAgent.(*keyRing).RemoveByName(name)
+					globalAgent.(*keyRing).ForceRemoveByName(name)
 					a.data.Keys[name] = key
 					if err := a.saveKeys(true); err != nil {
 						return err

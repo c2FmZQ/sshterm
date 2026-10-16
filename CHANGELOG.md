@@ -8,7 +8,8 @@
 * Reject certificates with `ValidBefore == 0` as expired, while continuing to accept `ssh.CertTimeInfinity` (`0xffffffffffffffff`).
 * Expand SFTP wildcard patterns after CLI flag parsing so remote file names starting with `-` cannot inject command flags, and strip directory components from uploaded local file names.
 * Require confirmation when `CTRL-ALT-W` triggers `db wipe`, and only process keyboard shortcuts at the top-level `sshterm>` prompt.
-* Clear keys from the in-memory SSH agent on `db wipe`, `db restore`, `keys delete`, `keys generate`, `keys discover`, and `keys import`.
+* Clear keys from the in-memory SSH agent on `db wipe`, `db restore`, `keys delete`, `keys generate`, `keys discover`, and `keys import`, even when the agent is locked. `db wipe` and `db restore` also reset the agent lock.
+* Reject invalid host keys in `config.json`'s `hosts[].key`. The error is reported and the remaining preset config is still applied.
 * Bind the WebAuthn public key blob as AES-GCM additional authenticated data (AAD) in encrypted WebAuthn key files (existing v1 keys can still be loaded), verify the registration challenge in `WebAuthn.Create`, and enforce a minimum of 1,000 PBKDF2 iterations on encrypted WebAuthn keys and database backups.
 * Sanitize certificate critical option names, certificate comments in `keys show`, and error messages in the host-key prompt, and strip 8-bit `CSI` (`\x9b`) characters from pasted text.
 * Show a popup notification in addition to the terminal message when a forwarded agent signs a request.

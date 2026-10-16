@@ -142,6 +142,10 @@ func NewStreamHelper() *StreamHelper {
 	streamHelperMu.Lock()
 	defer streamHelperMu.Unlock()
 
+	if defaultStreamHelper != nil {
+		return defaultStreamHelper
+	}
+
 	container := js.Global().Get("navigator").Get("serviceWorker")
 	if !container.Truthy() {
 		return nil
@@ -158,10 +162,6 @@ func NewStreamHelper() *StreamHelper {
 	if !waitForController(container, registration, 10*time.Second) {
 		js.Global().Get("console").Call("error", "service worker is not controlling the page")
 		return nil
-	}
-
-	if defaultStreamHelper != nil {
-		return defaultStreamHelper
 	}
 
 	h := &StreamHelper{
@@ -265,14 +265,6 @@ func waitForController(container, registration js.Value, timeout time.Duration) 
 		case <-ch:
 		case <-timer.C:
 			return false
-		}
-	}
-}
-
-func UnregisterServiceWorker() {
-	if c := js.Global().Get("navigator").Get("serviceWorker"); c.Truthy() {
-		if r, err := Await(c.Call("getRegistration")); err == nil && r.Truthy() {
-			r.Call("unregister")
 		}
 	}
 }

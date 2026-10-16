@@ -74,7 +74,7 @@ func Create(name string, resident bool) (*Key, error) {
 	if err != nil {
 		return nil, fmt.Errorf("WebAuthnCreate: %w", err)
 	}
-	if err := verifyClientData(resp.ClientDataJSON, "webauthn.create", challenge); err != nil {
+	if _, err := verifyClientData(resp.ClientDataJSON, "webauthn.create", challenge); err != nil {
 		return nil, err
 	}
 	att, err := parseAttestationObject(resp.AttestationObject)
@@ -119,7 +119,7 @@ func Discover(promptTouch func(string)) (*Key, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("WebAuthnGet: %w", err)
 	}
-	if err := verifyClientData(resp1.ClientDataJSON, "webauthn.get", challenge1); err != nil {
+	if _, err := verifyClientData(resp1.ClientDataJSON, "webauthn.get", challenge1); err != nil {
 		return nil, "", fmt.Errorf("assertion 1: %w", err)
 	}
 
@@ -137,7 +137,7 @@ func Discover(promptTouch func(string)) (*Key, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("WebAuthnGet: %w", err)
 	}
-	if err := verifyClientData(resp2.ClientDataJSON, "webauthn.get", challenge2); err != nil {
+	if _, err := verifyClientData(resp2.ClientDataJSON, "webauthn.get", challenge2); err != nil {
 		return nil, "", fmt.Errorf("assertion 2: %w", err)
 	}
 	if !bytes.Equal(resp1.ID, resp2.ID) {
@@ -187,12 +187,9 @@ func (k *Key) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	if err := parseAuthenticatorData(resp.AuthenticatorData, &ad); err != nil {
 		return nil, fmt.Errorf("ParseAuthenticatorData: %w", err)
 	}
-	if err := verifyClientData(resp.ClientDataJSON, "webauthn.get", data); err != nil {
-		return nil, err
-	}
-	cd, err := parseClientData(resp.ClientDataJSON)
+	cd, err := verifyClientData(resp.ClientDataJSON, "webauthn.get", data)
 	if err != nil {
-		return nil, fmt.Errorf("ParseClientData: %w", err)
+		return nil, err
 	}
 
 	var sig struct {

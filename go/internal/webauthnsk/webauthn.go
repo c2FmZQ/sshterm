@@ -201,23 +201,23 @@ func parseClientData(js []byte) (*clientData, error) {
 
 // verifyClientData checks that a ClientDataJSON blob belongs to the ceremony
 // the caller just requested, i.e. that it has the expected type and echoes back
-// the challenge that was sent.
-func verifyClientData(js []byte, wantType string, wantChallenge []byte) error {
+// the challenge that was sent. It returns the parsed client data.
+func verifyClientData(js []byte, wantType string, wantChallenge []byte) (*clientData, error) {
 	cd, err := parseClientData(js)
 	if err != nil {
-		return fmt.Errorf("ParseClientData: %w", err)
+		return nil, fmt.Errorf("ParseClientData: %w", err)
 	}
 	if cd.Type != wantType {
-		return fmt.Errorf("unexpected client data type %q", cd.Type)
+		return nil, fmt.Errorf("unexpected client data type %q", cd.Type)
 	}
 	challenge, err := base64.RawURLEncoding.DecodeString(cd.Challenge)
 	if err != nil {
-		return fmt.Errorf("invalid client data challenge: %w", err)
+		return nil, fmt.Errorf("invalid client data challenge: %w", err)
 	}
 	if !bytes.Equal(challenge, wantChallenge) {
-		return errors.New("client data challenge doesn't match")
+		return nil, errors.New("client data challenge doesn't match")
 	}
-	return nil
+	return cd, nil
 }
 
 // isPrintableASCII reports whether s consists only of printable ASCII

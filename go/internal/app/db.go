@@ -108,7 +108,7 @@ func (a *App) dbCommand() *cli.App {
 					if !a.term.Confirm("You are about to WIPE the database.\nContinue? ", false) {
 						return errors.New("aborted")
 					}
-					globalAgent.(*keyRing).ForceRemoveAll()
+					globalAgent.(*keyRing).Reset()
 					a.data.Authorities = make(map[string]*authority)
 					a.data.Endpoints = make(map[string]*endpoint)
 					a.data.Hosts = make(map[string]*host)
@@ -244,7 +244,7 @@ func (a *App) dbCommand() *cli.App {
 					if a.cfg.Persist != nil {
 						newData.Persist = *a.cfg.Persist
 					}
-					globalAgent.(*keyRing).ForceRemoveAll()
+					globalAgent.(*keyRing).Reset()
 					a.data = newData
 					if !a.data.Persist {
 						if a.db != nil {

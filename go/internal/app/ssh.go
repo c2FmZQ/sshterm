@@ -150,8 +150,6 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	session.Stderr = t
 
 	if command != "" {
-		a.inShell.Store(true)
-		defer a.inShell.Store(false)
 		return session.Run(command)
 	}
 	modes := ssh.TerminalModes{

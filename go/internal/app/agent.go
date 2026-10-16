@@ -325,6 +325,19 @@ func (r *keyRing) Remove(key ssh.PublicKey) error {
 	if r.locked {
 		return errAgentLocked
 	}
+	return r.remove(key)
+}
+
+// ForceRemove removes a key from the agent even when the agent is locked. It
+// is used when the key is deleted or replaced in the database, so that the
+// old key cannot be used again after the agent is unlocked.
+func (r *keyRing) ForceRemove(key ssh.PublicKey) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.remove(key)
+}
+
+func (r *keyRing) remove(key ssh.PublicKey) error {
 	v := key.Marshal()
 	found := false
 	r.keys = slices.DeleteFunc(r.keys, func(k agentKey) bool {
@@ -346,6 +359,18 @@ func (r *keyRing) RemoveByName(name string) error {
 	if r.locked {
 		return errAgentLocked
 	}
+	return r.removeByName(name)
+}
+
+// ForceRemoveByName removes a key from the agent even when the agent is
+// locked. See ForceRemove.
+func (r *keyRing) ForceRemoveByName(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.removeByName(name)
+}
+
+func (r *keyRing) removeByName(name string) error {
 	found := false
 	r.keys = slices.DeleteFunc(r.keys, func(k agentKey) bool {
 		if k.comment == name {
@@ -370,10 +395,14 @@ func (r *keyRing) RemoveAll() error {
 	return nil
 }
 
-func (r *keyRing) ForceRemoveAll() {
+// Reset removes all keys and clears the lock state. It is used when the
+// database is wiped or restored.
+func (r *keyRing) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.keys = nil
+	r.locked = false
+	r.pp = nil
 }
 
 func (r *keyRing) Lock(passphrase []byte) error {

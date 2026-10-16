@@ -222,7 +222,7 @@ func TestVerifyClientData(t *testing.T) {
 		{"not json", `nope`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := verifyClientData([]byte(tc.js), "webauthn.get", challenge)
+			_, err := verifyClientData([]byte(tc.js), "webauthn.get", challenge)
 			if got := err != nil; got != tc.wantErr {
 				t.Errorf("verifyClientData() error = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -303,7 +303,7 @@ func TestKeyMarshalUnmarshal(t *testing.T) {
 	}
 
 	// Downgrading a v2 key to v1 must also fail AES-GCM authentication
-	downgraded := append([]byte(nil), tampered...)
+	downgraded := append([]byte(nil), block.Bytes...)
 	downgraded[0] = 1
 	downgradedPEM := pem.EncodeToMemory(&pem.Block{Type: block.Type, Bytes: downgraded})
 	if _, err := Unmarshal(downgradedPEM, "test", rp); err == nil {

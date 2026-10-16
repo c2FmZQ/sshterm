@@ -199,7 +199,9 @@ func (a *App) initPresetConfig() error {
 	}
 	for i, host := range a.cfg.Hosts {
 		if err := a.addHost(host.Name, host.Key); err != nil {
-			return fmt.Errorf("hosts[%d]: %w", i, err)
+			// Report the bad entry, but keep processing the rest of
+			// the preset config.
+			a.term.Errorf("hosts[%d]: %v", i, err)
 		}
 	}
 	for i, k := range a.cfg.GenerateKeys {
