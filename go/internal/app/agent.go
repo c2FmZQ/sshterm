@@ -116,15 +116,17 @@ func (a *App) agentCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
-					key, exists := a.data.Keys[name]
-					if !exists {
-						return fmt.Errorf("key %q not found", name)
+					err := globalAgent.(*keyRing).RemoveByName(name)
+					if key, exists := a.data.Keys[name]; exists {
+						pub, parseErr := key.sshPublicKey()
+						if parseErr != nil {
+							return fmt.Errorf("sshPublicKey: %w", parseErr)
+						}
+						if rmErr := globalAgent.Remove(pub); rmErr == nil {
+							err = nil
+						}
 					}
-					pub, err := ssh.ParsePublicKey(key.Public)
 					if err != nil {
-						return fmt.Errorf("ssh.ParsePublicKey: %w", err)
-					}
-					if err := globalAgent.Remove(pub); err != nil {
 						return fmt.Errorf("agent.Remove: %w", err)
 					}
 					return nil
@@ -221,14 +223,44 @@ type agentKey struct {
 	comment string
 }
 
+func rawPublicKey(s ssh.Signer) ssh.PublicKey {
+	if ds, ok := s.(*dynSigner); ok {
+		return ds.Signer.PublicKey()
+	}
+	pub := s.PublicKey()
+	if cert, ok := pub.(*ssh.Certificate); ok {
+		return cert.Key
+	}
+	return pub
+}
+
+func matchesKey(s ssh.Signer, v []byte) bool {
+	if ds, ok := s.(*dynSigner); ok {
+		if bytes.Equal(v, ds.Signer.PublicKey().Marshal()) {
+			return true
+		}
+		if cert := ds.key.parseCert(); cert != nil && bytes.Equal(v, cert.Marshal()) {
+			return true
+		}
+		return false
+	}
+	pub := s.PublicKey()
+	if cert, ok := pub.(*ssh.Certificate); ok && bytes.Equal(v, cert.Key.Marshal()) {
+		return true
+	}
+	return bytes.Equal(v, pub.Marshal())
+}
+
 func (r *keyRing) List() ([]*agent.Key, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.locked {
+		r.mu.Unlock()
 		return nil, nil
 	}
-	out := make([]*agent.Key, 0, len(r.keys))
-	for _, k := range r.keys {
+	keys := slices.Clone(r.keys)
+	r.mu.Unlock()
+	out := make([]*agent.Key, 0, len(keys))
+	for _, k := range keys {
 		pub := k.signer.PublicKey()
 		out = append(out, &agent.Key{
 			Format:  pub.Type(),
@@ -247,7 +279,7 @@ func (r *keyRing) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 	}
 	v := key.Marshal()
 	i := slices.IndexFunc(r.keys, func(k agentKey) bool {
-		return bytes.Equal(v, k.signer.PublicKey().Marshal())
+		return matchesKey(k.signer, v)
 	})
 	if i < 0 {
 		r.mu.Unlock()
@@ -266,15 +298,9 @@ func (r *keyRing) AddSigner(signer ssh.Signer, comment string) error {
 	if r.locked {
 		return errAgentLocked
 	}
-	realPub := func(pub ssh.PublicKey) ssh.PublicKey {
-		if cert, ok := pub.(*ssh.Certificate); ok {
-			return cert.Key
-		}
-		return pub
-	}
-	pub := realPub(signer.PublicKey()).Marshal()
+	pub := rawPublicKey(signer).Marshal()
 	for i, k := range r.keys {
-		kPub := realPub(k.signer.PublicKey()).Marshal()
+		kPub := rawPublicKey(k.signer).Marshal()
 		if !bytes.Equal(pub, kPub) {
 			continue
 		}
@@ -302,12 +328,27 @@ func (r *keyRing) Remove(key ssh.PublicKey) error {
 	v := key.Marshal()
 	found := false
 	r.keys = slices.DeleteFunc(r.keys, func(k agentKey) bool {
-		pub := k.signer.PublicKey()
-		if cert, ok := pub.(*ssh.Certificate); ok && bytes.Equal(v, cert.Key.Marshal()) {
+		if matchesKey(k.signer, v) {
 			found = true
 			return true
 		}
-		if bytes.Equal(v, pub.Marshal()) {
+		return false
+	})
+	if !found {
+		return errAgentKeyNotFound
+	}
+	return nil
+}
+
+func (r *keyRing) RemoveByName(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.locked {
+		return errAgentLocked
+	}
+	found := false
+	r.keys = slices.DeleteFunc(r.keys, func(k agentKey) bool {
+		if k.comment == name {
 			found = true
 			return true
 		}
@@ -327,6 +368,12 @@ func (r *keyRing) RemoveAll() error {
 	}
 	r.keys = nil
 	return nil
+}
+
+func (r *keyRing) ForceRemoveAll() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.keys = nil
 }
 
 func (r *keyRing) Lock(passphrase []byte) error {

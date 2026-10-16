@@ -27,6 +27,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -38,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -95,6 +97,7 @@ func (a *App) generateKey(name, passphrase, idp, typ string, bits int, resident 
 		Provider: idp,
 		errorf:   a.term.Errorf,
 	}
+	globalAgent.(*keyRing).RemoveByName(name)
 	a.data.Keys[name] = k
 	return k, nil
 }
@@ -274,6 +277,7 @@ func (a *App) keysCommand() *cli.App {
 							a.term.Errorf("certificate update: %v", err)
 						}
 					}
+					globalAgent.(*keyRing).RemoveByName(name)
 					a.data.Keys[name] = k
 					if err := a.saveKeys(true); err != nil {
 						return err
@@ -301,6 +305,12 @@ func (a *App) keysCommand() *cli.App {
 					if !a.term.Confirm(fmt.Sprintf("You are about to delete key %q\nContinue?", name), false) {
 						return errors.New("aborted")
 					}
+					if key, exists := a.data.Keys[name]; exists {
+						if pub, err := key.sshPublicKey(); err == nil {
+							globalAgent.Remove(pub)
+						}
+					}
+					globalAgent.(*keyRing).RemoveByName(name)
 					delete(a.data.Keys, name)
 					return a.saveKeys(true)
 				},
@@ -326,7 +336,7 @@ func (a *App) keysCommand() *cli.App {
 					a.term.Printf("Public key:  %s %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))), name)
 					a.term.Printf("Fingerprint: %s\n", ssh.FingerprintSHA256(pub))
 					if cert := key.Certificate(); cert != nil {
-						a.term.Printf("Certificate: %s\n", strings.TrimSpace(string(key.CertBytes)))
+						a.term.Printf("Certificate: %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(cert))))
 						a.term.Printf("Details:\n")
 						a.printCertificate(cert)
 						if err := checkCertificate(cert, ssh.UserCert); err != nil {
@@ -461,6 +471,7 @@ func (a *App) keysCommand() *cli.App {
 						}
 						key.Public = sshPub.Marshal()
 					}
+					globalAgent.(*keyRing).RemoveByName(name)
 					a.data.Keys[name] = key
 					if err := a.saveKeys(true); err != nil {
 						return err
@@ -614,10 +625,19 @@ func (a *App) printCertificate(cert *ssh.Certificate) {
 	a.term.Printf("  Public key fp:... %s\n", ssh.FingerprintSHA256(cert.Key))
 	a.term.Printf("  Type:............ %s\n", cert.Type())
 	a.term.Printf("  Key ID:.......... %s\n", termsafe.Name(cert.KeyId))
-	if cert.ValidBefore != 0 {
+	if cert.ValidAfter != 0 || cert.ValidBefore != ssh.CertTimeInfinity {
+		formatTime := func(t uint64) string {
+			if t == ssh.CertTimeInfinity {
+				return "forever"
+			}
+			if t > math.MaxInt64 {
+				return fmt.Sprintf("0x%x", t)
+			}
+			return time.Unix(int64(t), 0).UTC().Format(time.DateTime)
+		}
 		a.term.Printf("  Validity:........ %s - %s (UTC)\n",
-			time.Unix(int64(cert.ValidAfter), 0).UTC().Format(time.DateTime),
-			time.Unix(int64(cert.ValidBefore), 0).UTC().Format(time.DateTime))
+			formatTime(cert.ValidAfter),
+			formatTime(cert.ValidBefore))
 	}
 	a.term.Printf("  Authority key:... %s", ssh.MarshalAuthorizedKey(cert.SignatureKey))
 	a.term.Printf("  Authority key fp: %s\n", ssh.FingerprintSHA256(cert.SignatureKey))
@@ -680,26 +700,32 @@ func (k *key) sshPublicKey() (ssh.PublicKey, error) {
 	return ssh.ParsePublicKey(k.Public)
 }
 
-func (k *key) Certificate() (cert *ssh.Certificate) {
-	parseCert := func() *ssh.Certificate {
-		c, _, _, _, err := ssh.ParseAuthorizedKey(k.CertBytes)
-		if err != nil {
-			return nil
-		}
-		if cert, ok := c.(*ssh.Certificate); ok {
-			return cert
-		}
+func (k *key) parseCert() *ssh.Certificate {
+	if len(k.CertBytes) == 0 {
 		return nil
 	}
-	cert = parseCert()
-	if cert != nil && cert.ValidBefore > uint64(time.Now().Add(5*time.Minute).Unix()) {
+	c, _, _, _, err := ssh.ParseAuthorizedKey(k.CertBytes)
+	if err != nil {
+		return nil
+	}
+	if cert, ok := c.(*ssh.Certificate); ok {
+		return cert
+	}
+	return nil
+}
+
+func (k *key) Certificate() (cert *ssh.Certificate) {
+	cert = k.parseCert()
+	if cert != nil && (cert.ValidBefore == ssh.CertTimeInfinity || cert.ValidBefore > uint64(time.Now().Add(5*time.Minute).Unix())) {
 		return
 	}
 	if err := k.updateCert(); err != nil {
-		k.errorf("certificate update: %v", err)
+		if k.errorf != nil {
+			k.errorf("certificate update: %v", err)
+		}
 		return
 	}
-	return parseCert()
+	return k.parseCert()
 }
 
 func (k *key) updateCert() error {
@@ -710,7 +736,9 @@ func (k *key) updateCert() error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest("POST", k.Provider, bytes.NewReader(ssh.MarshalAuthorizedKey(pub)))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "POST", k.Provider, bytes.NewReader(ssh.MarshalAuthorizedKey(pub)))
 	if err != nil {
 		return err
 	}

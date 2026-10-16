@@ -42,14 +42,18 @@ var ErrNotFound = errors.New("not found")
 func Delete(name string) error {
 	req := js.Global().Get("indexedDB").Call("deleteDatabase", js.ValueOf(name))
 	ch := make(chan error, 1)
-	req.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) any {
+	errFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		ch <- errors.New("error deleting database")
 		return nil
-	}))
-	req.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	defer errFn.Release()
+	okFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		ch <- nil
 		return nil
-	}))
+	})
+	defer okFn.Release()
+	req.Set("onerror", errFn)
+	req.Set("onsuccess", okFn)
 	return <-ch
 }
 
@@ -62,7 +66,7 @@ func New(name string) (*DB, error) {
 	}
 	resCh := make(chan result, 2)
 
-	req.Set("onupgradeneeded", js.FuncOf(func(this js.Value, args []js.Value) any {
+	upgradeFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		db := req.Get("result")
 		names := db.Get("objectStoreNames")
 		var found bool
@@ -77,15 +81,21 @@ func New(name string) (*DB, error) {
 			db.Call("createObjectStore", storeName)
 		}
 		return nil
-	}))
-	req.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	defer upgradeFn.Release()
+	errFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		resCh <- result{err: errors.New("error loading database")}
 		return nil
-	}))
-	req.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	defer errFn.Release()
+	okFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		resCh <- result{v: req.Get("result")}
 		return nil
-	}))
+	})
+	defer okFn.Release()
+	req.Set("onupgradeneeded", upgradeFn)
+	req.Set("onerror", errFn)
+	req.Set("onsuccess", okFn)
 	r := <-resCh
 	if r.err != nil {
 		return nil, r.err
@@ -106,14 +116,18 @@ func (db *DB) Close() {
 func (db *DB) Get(key string, value any) error {
 	req := db.db.Call("transaction", storeName).Call("objectStore", storeName).Call("get", key)
 	errCh := make(chan error, 2)
-	req.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) any {
+	errFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		errCh <- errors.New("transaction error")
 		return nil
-	}))
-	req.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	defer errFn.Release()
+	okFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		errCh <- nil
 		return nil
-	}))
+	})
+	defer okFn.Release()
+	req.Set("onerror", errFn)
+	req.Set("onsuccess", okFn)
 	if err := <-errCh; err != nil {
 		return err
 	}
@@ -135,13 +149,17 @@ func (db *DB) Set(key string, value any) error {
 	t := db.db.Call("transaction", storeName, "readwrite")
 	req := t.Call("objectStore", storeName).Call("put", string(b), key)
 	errCh := make(chan error, 2)
-	req.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) any {
+	errFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		errCh <- errors.New("transaction error")
 		return nil
-	}))
-	req.Set("onsuccess", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	defer errFn.Release()
+	okFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		errCh <- nil
 		return nil
-	}))
+	})
+	defer okFn.Release()
+	req.Set("onerror", errFn)
+	req.Set("onsuccess", okFn)
 	return <-errCh
 }

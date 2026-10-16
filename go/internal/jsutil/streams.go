@@ -78,7 +78,13 @@ func (r *StreamReader) Close() error {
 
 func NewReadableStream(r io.Reader, done chan<- error, progress func(int64)) js.Value {
 	cancelCh := make(chan struct{})
+	var pullCb, cancelCb js.Func
+	releaseFuncs := sync.OnceFunc(func() {
+		pullCb.Release()
+		cancelCb.Release()
+	})
 	allDone := func(err error) {
+		releaseFuncs()
 		select {
 		case done <- err:
 		default:
@@ -86,7 +92,7 @@ func NewReadableStream(r io.Reader, done chan<- error, progress func(int64)) js.
 	}
 	offset := new(atomic.Int64)
 	s := Object.New()
-	s.Set("pull", js.FuncOf(func(this js.Value, args []js.Value) any {
+	pullCb = js.FuncOf(func(this js.Value, args []js.Value) any {
 		return NewPromise(func() (any, error) {
 			controller := args[0]
 			size := 16384
@@ -116,16 +122,26 @@ func NewReadableStream(r io.Reader, done chan<- error, progress func(int64)) js.
 			}
 			return nil, nil
 		})
-	}))
-	s.Set("cancel", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	cancelCb = js.FuncOf(func(this js.Value, args []js.Value) any {
 		close(cancelCh)
 		allDone(errors.New("canceled"))
 		return nil
-	}))
+	})
+	s.Set("pull", pullCb)
+	s.Set("cancel", cancelCb)
 	return ReadableStream.New(s)
 }
 
+var (
+	streamHelperMu      sync.Mutex
+	defaultStreamHelper *StreamHelper
+)
+
 func NewStreamHelper() *StreamHelper {
+	streamHelperMu.Lock()
+	defer streamHelperMu.Unlock()
+
 	container := js.Global().Get("navigator").Get("serviceWorker")
 	if !container.Truthy() {
 		return nil
@@ -142,6 +158,10 @@ func NewStreamHelper() *StreamHelper {
 	if !waitForController(container, registration, 10*time.Second) {
 		js.Global().Get("console").Call("error", "service worker is not controlling the page")
 		return nil
+	}
+
+	if defaultStreamHelper != nil {
+		return defaultStreamHelper
 	}
 
 	h := &StreamHelper{
@@ -215,6 +235,7 @@ func NewStreamHelper() *StreamHelper {
 		},
 	))
 
+	defaultStreamHelper = h
 	return h
 }
 

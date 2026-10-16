@@ -379,3 +379,94 @@ func TestZmodemFilterDownloadError(t *testing.T) {
 		t.Errorf("terminal output = %q", out)
 	}
 }
+
+func TestZmodemFilterCtrlCRace(t *testing.T) {
+	inR, inW := io.Pipe()
+	defer inW.Close()
+	term := &mockTerminal{Reader: inR}
+
+	inDownload := make(chan struct{})
+	unblockDownload := make(chan struct{})
+	downloadCount := 0
+	var countMu sync.Mutex
+
+	download := func(name string, size int64, r io.Reader) error {
+		countMu.Lock()
+		downloadCount++
+		countMu.Unlock()
+		close(inDownload)
+		// Read from r until EOF (triggered by Ctrl-C closing pw), then stay in
+		// the callback until unblockDownload is closed so the session goroutine
+		// has not yet called f.finish(pr).
+		io.ReadAll(r)
+		<-unblockDownload
+		return nil
+	}
+	filter := New(term, download, nil)
+
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for !strings.Contains(term.String(), "[y/N]") && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		inW.Write([]byte("y"))
+	}()
+
+	replies := &chanReader{ch: make(chan []byte, 100)}
+	go func() {
+		for {
+			buf := make([]byte, 1024)
+			n, err := filter.Read(buf)
+			if n > 0 {
+				replies.ch <- buf[:n]
+			}
+			if err != nil {
+				close(replies.ch)
+				return
+			}
+		}
+	}()
+
+	data := []byte("hello")
+	files := []*File{{Name: "file.txt", Size: int64(len(data)), R: io.NopCloser(bytes.NewReader(data))}}
+	go func() {
+		if err := writeHexHeader(filter, header{Type: zRQINIT}); err != nil {
+			return
+		}
+		send(struct {
+			io.Reader
+			io.Writer
+		}{replies, filter}, files, nil)
+	}()
+
+	select {
+	case <-inDownload:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for download callback. Terminal: %q", term.String())
+	}
+
+	// Send Ctrl-C while the session goroutine is still inside download().
+	inW.Write([]byte{'\x03'})
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(term.String(), "Transfer aborted by user") {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for abort message. Terminal: %q", term.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Write another ZRQINIT signature before the first session goroutine has finished.
+	// Because f.active is still true until f.finish(pr) runs, this must NOT start a
+	// concurrent second receive session.
+	filter.Write([]byte{'*', '*', zDLE, zHEX, '0', '0'})
+
+	close(unblockDownload)
+	time.Sleep(50 * time.Millisecond)
+
+	countMu.Lock()
+	gotCount := downloadCount
+	countMu.Unlock()
+	if gotCount != 1 {
+		t.Errorf("downloadCount = %d, want 1", gotCount)
+	}
+}

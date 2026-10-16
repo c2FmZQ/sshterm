@@ -60,8 +60,8 @@ func TestPaste(t *testing.T) {
 		{Type: "db wipe\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
 	})
-	// Escape characters are removed from pasted text.
-	paste("ep add pa\x1bste ./websocket\r")
+	// Escape characters (including C1 CSI \u009b) are removed from pasted text.
+	paste("ep add pa\x1bs\u009bte ./websocket\r")
 	script(t, []line{
 		{Expect: prompt},
 		{Type: "ep list\n", Expect: `(?s)paste +\./websocket.*sshterm> `},
