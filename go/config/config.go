@@ -90,6 +90,7 @@ type Config struct {
 		Identity     string `json:"identity,omitempty"`
 		Command      string `json:"command,omitempty"`
 		ForwardAgent bool   `json:"forwardAgent,omitempty"`
+		ForwardX11   bool   `json:"forwardX11,omitempty"`
 		JumpHosts    string `json:"jumpHosts,omitempty"`
 		ZModem       bool   `json:"zmodem,omitempty"`
 	} `json:"autoConnect,omitempty"`

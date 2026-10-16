@@ -528,7 +528,9 @@ func (k *Key) MarshalPrivate(passphrase string) (*pem.Block, error) {
 		}, nil
 	}
 	salt := make([]byte, 16)
-	rand.Read(salt)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, fmt.Errorf("failed to generate random salt: %w", err)
+	}
 	numIter := defaultIter
 	dk := pbkdf2.Key([]byte(passphrase), salt, numIter, 32, sha256.New)
 	block, err := aes.NewCipher(dk)
@@ -540,7 +542,9 @@ func (k *Key) MarshalPrivate(passphrase string) (*pem.Block, error) {
 		return nil, err
 	}
 	nonce := make([]byte, gcm.NonceSize())
-	rand.Read(nonce)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("failed to generate random nonce: %w", err)
+	}
 	encID := gcm.Seal(nonce, nonce, k.id, pubBytes)
 	buf := cryptobyte.NewBuilder([]byte{2})
 	buf.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {

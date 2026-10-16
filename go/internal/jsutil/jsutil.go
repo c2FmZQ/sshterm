@@ -33,16 +33,17 @@ import (
 )
 
 var (
-	ArrayBuffer = js.Global().Get("ArrayBuffer")
-	Uint8Array  = js.Global().Get("Uint8Array")
-	Error       = js.Global().Get("Error")
-	Array       = js.Global().Get("Array")
-	Object      = js.Global().Get("Object")
-	Promise     = js.Global().Get("Promise")
-	Blob        = js.Global().Get("Blob")
-	URL         = js.Global().Get("URL")
-	Document    = js.Global().Get("document")
-	Body        = Document.Get("body")
+	ArrayBuffer       = js.Global().Get("ArrayBuffer")
+	Uint8Array        = js.Global().Get("Uint8Array")
+	Uint8ClampedArray = js.Global().Get("Uint8ClampedArray")
+	Error             = js.Global().Get("Error")
+	Array             = js.Global().Get("Array")
+	Object            = js.Global().Get("Object")
+	Promise           = js.Global().Get("Promise")
+	Blob              = js.Global().Get("Blob")
+	URL               = js.Global().Get("URL")
+	Document          = js.Global().Get("document")
+	Body              = Document.Get("body")
 )
 
 func TryCatch(try func(), catch func(any)) {
@@ -96,18 +97,29 @@ func NewPromise(f func() (any, error)) js.Value {
 }
 
 func Await(p js.Value) (js.Value, error) {
+	if p.IsUndefined() || p.IsNull() {
+		return p, nil
+	}
 	if then := p.Get("then"); then.IsUndefined() || then.Type() != js.TypeFunction {
 		return p, nil
 	}
 	v := make(chan js.Value, 1)
 	e := make(chan error, 1)
 	resolveFn := js.FuncOf(func(this js.Value, args []js.Value) any {
-		v <- args[0]
+		var val js.Value
+		if len(args) > 0 {
+			val = args[0]
+		}
+		v <- val
 		return nil
 	})
 	defer resolveFn.Release()
 	rejectFn := js.FuncOf(func(this js.Value, args []js.Value) any {
-		e <- fmt.Errorf("%s", args[0].Call("toString"))
+		if len(args) > 0 {
+			e <- fmt.Errorf("%s", args[0].Call("toString"))
+		} else {
+			e <- fmt.Errorf("promise rejected")
+		}
 		return nil
 	})
 	defer rejectFn.Release()
@@ -130,6 +142,19 @@ func Uint8ArrayFromBytes(in []byte) js.Value {
 func Uint8ArrayToBytes(v js.Value) []byte {
 	buf := make([]byte, v.Length())
 	js.CopyBytesToGo(buf, v)
+	return buf
+}
+
+func Uint8ClampedArrayFromBytes(in []byte) js.Value {
+	out := Uint8ClampedArray.New(js.ValueOf(len(in)))
+	js.CopyBytesToJS(out, in)
+	return out
+}
+
+func GetImageDataBytes(imageData js.Value) []byte {
+	data := imageData.Get("data")
+	buf := make([]byte, data.Length())
+	js.CopyBytesToGo(buf, data)
 	return buf
 }
 

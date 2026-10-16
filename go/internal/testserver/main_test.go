@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-//go:build docker
+//go:build docker && x11
 
 package main
 
@@ -29,11 +29,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"flag"
 	"fmt"
@@ -44,7 +44,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,16 +54,14 @@ import (
 	"github.com/chromedp/cdproto/webauthn"
 	"github.com/chromedp/chromedp"
 	"github.com/gorilla/websocket"
-	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
-	"golang.org/x/crypto/ssh/terminal"
 )
 
 var (
 	addr         = flag.String("addr", ":8443", "The TCP address to listen to")
 	docRoot      = flag.String("document-root", "", "The document root directory")
 	withChromeDP = flag.String("with-chromedp", "", "The url of the remote debugging port")
+	outputDir    = flag.String("output-dir", "", "Where the test output files are written")
 )
 
 func TestMain(m *testing.M) {
@@ -162,6 +161,7 @@ func TestSSHTerm(t *testing.T) {
 			return
 		}
 		now := time.Now().UTC()
+
 		cert := &ssh.Certificate{
 			Key:         pub,
 			CertType:    ssh.UserCert,
@@ -181,7 +181,19 @@ func TestSSHTerm(t *testing.T) {
 	})
 	fs := http.FileServer(http.Dir(*docRoot))
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		t.Logf("%s %s", req.Method, req.RequestURI)
 		w.Header().Set("Cache-Control", "no-store")
+		if req.URL.Path == "/tests.x11.config.json" {
+			b, err := os.ReadFile(filepath.Join(*docRoot, "tests.x11.config.json"))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			key := bytes.TrimSpace(ssh.MarshalAuthorizedKey(sshServerWithCert.pubKey))
+			w.Header().Set("content-type", "application/json")
+			w.Write(bytes.Replace(b, []byte("===CAKEY==="), key, 1))
+			return
+		}
 		fs.ServeHTTP(w, req)
 	})
 
@@ -190,7 +202,6 @@ func TestSSHTerm(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	var cancel context.CancelFunc
 
 	// Generate self-signed certificate
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -241,13 +252,29 @@ func TestSSHTerm(t *testing.T) {
 		return
 	}
 
-	t.Run("WASM App Tests", func(t *testing.T) {
-		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Minute)
-		defer cancel()
-		ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
-		defer cancel()
+	logConsole := func(ev *runtime.EventConsoleAPICalled, cancel context.CancelFunc) {
+		var parts []string
+		for _, arg := range ev.Args {
+			if strings.Contains(arg.Value.String(), "ForwardX11 requested, but X11 is not enabled") {
+				t.Error("X11 not enabled")
+				cancel()
+			}
+			if s, err := strconv.Unquote(arg.Value.String()); err == nil {
+				parts = append(parts, s)
+			} else {
+				parts = append(parts, arg.Value.String())
+			}
+		}
+		fmt.Fprintf(os.Stderr, "console.%s: %s\n", ev.Type, strings.Join(parts, " "))
+	}
 
-		ctx, cancel = chromedp.NewContext(ctx,
+	t.Run("WASM App Tests", func(t *testing.T) {
+		ctx, cancelTimeout := context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancelTimeout()
+		ctx, cancelAlloc := chromedp.NewRemoteAllocator(ctx, *withChromeDP)
+		defer cancelAlloc()
+
+		ctx, cancel := chromedp.NewContext(ctx,
 			//chromedp.WithDebugf(t.Logf),
 			chromedp.WithErrorf(t.Logf),
 			chromedp.WithLogf(t.Logf),
@@ -258,10 +285,7 @@ func TestSSHTerm(t *testing.T) {
 			switch ev := ev.(type) {
 			case *cdproto.Message:
 			case *runtime.EventConsoleAPICalled:
-				//t.Logf("* console.%s call:", ev.Type)
-				//for _, arg := range ev.Args {
-				//	t.Logf("   %s - %s", arg.Type, arg.Value)
-				//}
+				logConsole(ev, cancel)
 			case *runtime.EventExceptionThrown:
 				t.Logf("Exception: * %s", ev.ExceptionDetails.Error())
 			case *webauthn.EventCredentialAdded, *webauthn.EventCredentialAsserted, *webauthn.EventCredentialDeleted, *webauthn.EventCredentialUpdated:
@@ -322,327 +346,167 @@ func TestSSHTerm(t *testing.T) {
 			t.FailNow()
 		}
 	})
-}
 
-var _ net.Conn = (*netConn)(nil)
+	t.Run("X11", func(t *testing.T) {
+		ctx, cancelTimeout := context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancelTimeout()
+		ctx, cancelAlloc := chromedp.NewRemoteAllocator(ctx, *withChromeDP)
+		defer cancelAlloc()
 
-type netConn struct {
-	conn *websocket.Conn
-	buf  []byte
-}
+		ctx, cancel := chromedp.NewContext(ctx,
+			chromedp.WithErrorf(t.Logf),
+			chromedp.WithLogf(t.Logf),
+		)
+		defer cancel()
 
-func (c *netConn) Close() error {
-	return c.conn.Close()
-}
-
-func (c *netConn) Read(b []byte) (int, error) {
-	if len(c.buf) == 0 {
-		_, p, err := c.conn.ReadMessage()
-		if err != nil {
-			return 0, err
-		}
-		c.buf = p
-	}
-	n := copy(b, c.buf)
-	c.buf = c.buf[n:]
-	return n, nil
-}
-
-func (c *netConn) Write(b []byte) (int, error) {
-	return len(b), c.conn.WriteMessage(websocket.BinaryMessage, b)
-}
-
-func (c *netConn) SetReadDeadline(t time.Time) error {
-	return c.conn.SetReadDeadline(t)
-}
-
-func (c *netConn) SetWriteDeadline(t time.Time) error {
-	return c.conn.SetWriteDeadline(t)
-}
-
-func (c *netConn) SetDeadline(t time.Time) error {
-	c.SetReadDeadline(t)
-	return c.SetWriteDeadline(t)
-}
-
-func (c *netConn) LocalAddr() net.Addr {
-	return c.conn.NetConn().LocalAddr()
-}
-
-func (c *netConn) RemoteAddr() net.Addr {
-	return c.conn.NetConn().RemoteAddr()
-}
-
-type sshServer struct {
-	t              *testing.T
-	mu             sync.Mutex
-	authorizedKeys map[string]bool
-	config         *ssh.ServerConfig
-	dir            string
-
-	authority ssh.Signer
-	signer    ssh.Signer
-	pubKey    ssh.PublicKey
-}
-
-func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("ed25519.GenerateKey: %w", err)
-	}
-	sshPub, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		return nil, fmt.Errorf("ssh.NewPublicKey: %w", err)
-	}
-	authority, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		return nil, fmt.Errorf("ssh.NewSignerFromKey: %w", err)
-	}
-	signer := authority
-	if hostCert {
-		cert := &ssh.Certificate{
-			Key:         sshPub,
-			Serial:      0x12345,
-			CertType:    ssh.HostCert,
-			KeyId:       "test-server",
-			ValidBefore: ssh.CertTimeInfinity,
-			ValidPrincipals: []string{
-				"test-server",
-				"myserver.example.com",
-				// Used by TestJumpHosts.
-				"foo",
-				"bar",
-				"baz",
-			},
-		}
-		if err := cert.SignCert(rand.Reader, authority); err != nil {
-			t.Fatalf("unable to create signer cert: %v", err)
-		}
-		certSigner, err := ssh.NewCertSigner(cert, authority)
-		if err != nil {
-			return nil, fmt.Errorf("ssh.NewCertSigner: %w", err)
-		}
-		signer = certSigner
-	}
-
-	server := &sshServer{
-		t:              t,
-		authorizedKeys: make(map[string]bool),
-		dir:            dir,
-		authority:      authority,
-		signer:         signer,
-		pubKey:         sshPub,
-	}
-
-	certChecker := &ssh.CertChecker{
-		IsUserAuthority: func(auth ssh.PublicKey) bool {
-			return bytes.Equal(authority.PublicKey().Marshal(), auth.Marshal())
-		},
-		UserKeyFallback: func(c ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
-			server.mu.Lock()
-			defer server.mu.Unlock()
-			t.Logf("PublicKeyCallback: %q", pubKey.Marshal())
-			if server.authorizedKeys[string(pubKey.Marshal())] {
-				return &ssh.Permissions{
-					Extensions: map[string]string{
-						"pubkey-fp": ssh.FingerprintSHA256(pubKey),
-					},
-				}, nil
-			}
-			return nil, fmt.Errorf("unknown public key for %q", c.User())
-		},
-	}
-
-	config := &ssh.ServerConfig{
-		KeyboardInteractiveCallback: func(c ssh.ConnMetadata, client ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
-			t.Logf("KeyboardInteractiveCallback")
-			answers, err := client("", "", []string{"Password: "}, []bool{false})
-			if err != nil {
-				return nil, err
-			}
-			if len(answers) == 1 && c.User() == "testuser" && string(answers[0]) == "password" {
-				return nil, nil
-			}
-			return nil, fmt.Errorf("keyboard interactive rejected for %q", c.User())
-		},
-
-		PublicKeyCallback: certChecker.Authenticate,
-	}
-	config.AddHostKey(signer)
-	server.config = config
-	return server, nil
-}
-
-func (s *sshServer) handle(nConn net.Conn) error {
-	sconn, chans, reqs, err := ssh.NewServerConn(nConn, s.config)
-	if err != nil {
-		return err
-	}
-
-	var wg sync.WaitGroup
-	defer wg.Wait()
-
-	wg.Add(1)
-	go func() {
-		ssh.DiscardRequests(reqs)
-		wg.Done()
-	}()
-
-	for newChannel := range chans {
-		s.t.Logf("newChannel type: %s", newChannel.ChannelType())
-		switch newChannel.ChannelType() {
-		case "direct-tcpip":
-			s.handleDirectTCPIP(&wg, newChannel)
-		case "session":
-			s.handleSession(&wg, sconn, newChannel)
-		default:
-			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
-		}
-	}
-	return nil
-}
-
-type fakeConn struct {
-	io.ReadWriteCloser
-}
-
-func (fakeConn) SetReadDeadline(t time.Time) error {
-	return nil
-}
-
-func (fakeConn) SetWriteDeadline(t time.Time) error {
-	return nil
-}
-
-func (fakeConn) SetDeadline(t time.Time) error {
-	return nil
-}
-
-func (fakeConn) LocalAddr() net.Addr {
-	return &net.TCPAddr{}
-}
-
-func (fakeConn) RemoteAddr() net.Addr {
-	return &net.TCPAddr{}
-}
-
-func (s *sshServer) handleDirectTCPIP(wg *sync.WaitGroup, newChannel ssh.NewChannel) {
-	s.t.Logf("port-forward: %q", newChannel.ExtraData())
-	channel, requests, err := newChannel.Accept()
-	if err != nil {
-		s.t.Errorf("Could not accept channel: %v", err)
-		return
-	}
-	wg.Add(1)
-	go func(in <-chan *ssh.Request) {
-		ssh.DiscardRequests(in)
-		wg.Done()
-	}(requests)
-	s.handle(fakeConn{channel})
-}
-
-func (s *sshServer) handleSession(wg *sync.WaitGroup, sconn *ssh.ServerConn, newChannel ssh.NewChannel) {
-	channel, requests, err := newChannel.Accept()
-	if err != nil {
-		s.t.Errorf("Could not accept channel: %v", err)
-		return
-	}
-	wg.Add(1)
-	go func(in <-chan *ssh.Request) {
-		defer wg.Done()
-		var agentForwarded bool
-		for req := range in {
-			s.t.Logf("request type: %s", req.Type)
-			switch req.Type {
-			case "auth-agent-req@openssh.com":
-				agentForwarded = true
-				req.Reply(true, nil)
-
-			case "shell":
-				req.Reply(true, nil)
-				term := terminal.NewTerminal(channel, "remote> ")
-
-				wg.Add(1)
-				go func() {
-					defer func() {
-						channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
-						channel.Close()
-						wg.Done()
-					}()
-					for {
-						line, err := term.ReadLine()
-						if err != nil || line == "exit" {
-							break
-						}
-					}
-				}()
-
-			case "exec":
-				req.Reply(true, nil)
-				if len(req.Payload) > 4 && string(req.Payload[4:]) == "agent-test" {
-					s.agentTest(channel, sconn, agentForwarded)
-				} else if len(req.Payload) > 4 {
-					fmt.Fprintf(channel, "exec: %s\n", req.Payload[4:])
-				}
-				channel.SendRequest("exit-status", false, []byte{0, 0, 0, 0})
-				channel.Close()
-
-			case "subsystem":
-				if len(req.Payload) < 4 || string(req.Payload[4:]) != "sftp" {
-					req.Reply(false, nil)
-					return
-				}
-				req.Reply(true, nil)
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					server, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(s.dir))
-					if err != nil {
-						s.t.Error(err)
-						return
-					}
-					if err := server.Serve(); err != nil {
-						if err != io.EOF {
-							s.t.Error("sftp server completed with error:", err)
-							return
-						}
-					}
-					server.Close()
-					s.t.Log("sftp client exited session.")
-				}()
-
+		chromedp.ListenTarget(ctx, func(ev any) {
+			switch ev := ev.(type) {
+			case *cdproto.Message:
+			case *runtime.EventConsoleAPICalled:
+				logConsole(ev, cancel)
+			case *runtime.EventExceptionThrown:
+				t.Logf("Exception: * %s", ev.ExceptionDetails.Error())
 			default:
-				req.Reply(false, nil)
+			}
+		})
+		clearX11Operations()
+		// Navigate to the WASM app to display the X11 output
+		var buf []byte
+		var canvasOperationsJSON string
+
+		if err := chromedp.Run(ctx,
+			chromedp.Navigate("https://devtest.local:8443/tests.html?x11"),
+			chromedp.WaitVisible(`div[id^="x11-window-"]`), // Wait for the X11 window to appear
+			chromedp.MouseClickXY(100, 100),                // Set lastPointerID
+		); err != nil {
+			t.Fatalf("Failed to run chromedp actions: %v", err)
+		}
+
+		t.Log("Waiting for X11 Simulation to finish")
+		select {
+		case <-sshServerWithCert.x11SimDone:
+		case <-ctx.Done():
+			t.Fatalf("Timed out or canceled waiting for X11 simulation: %v", ctx.Err())
+		}
+
+		if err := chromedp.Run(ctx,
+			chromedp.CaptureScreenshot(&buf),
+			chromedp.Evaluate(`JSON.stringify(window.getCanvasOperations())`, &canvasOperationsJSON),
+		); err != nil {
+			t.Fatalf("Failed to run chromedp actions: %v", err)
+		}
+		x11Ops := GetX11Operations()
+		var canvasOps []CanvasOperation
+		if err := json.Unmarshal([]byte(canvasOperationsJSON), &canvasOps); err != nil {
+			t.Fatalf("Failed to unmarshal canvas operations: %v", err)
+		}
+
+		compareOperations(t, x11Ops, canvasOps)
+
+		if *outputDir != "" {
+			screenshotPath := filepath.Join(*outputDir, "x11_screenshot.png")
+			if err := os.WriteFile(screenshotPath, buf, 0o644); err != nil {
+				t.Fatalf("Failed to save screenshot: %v", err)
+			}
+			t.Logf("X11 screenshot saved to %s", screenshotPath)
+		}
+		t.Log("X11 test completed")
+	})
+
+	t.Run("WASM X11 Tests", func(t *testing.T) {
+		ctx, cancelTimeout := context.WithTimeout(t.Context(), 5*time.Minute)
+		defer cancelTimeout()
+		ctx, cancelAlloc := chromedp.NewRemoteAllocator(ctx, *withChromeDP)
+		defer cancelAlloc()
+
+		ctx, cancel := chromedp.NewContext(ctx,
+			chromedp.WithErrorf(t.Logf),
+			chromedp.WithLogf(t.Logf),
+		)
+		defer cancel()
+
+		pass := make(chan bool, 1)
+		sendPass := func(v bool) {
+			select {
+			case pass <- v:
+			default:
 			}
 		}
-	}(requests)
+		chromedp.ListenTarget(ctx, func(ev any) {
+			switch ev := ev.(type) {
+			case *cdproto.Message:
+			case *runtime.EventConsoleAPICalled:
+				logConsole(ev, cancel)
+				if len(ev.Args) > 0 {
+					if v := ev.Args[0].Value.String(); v == `"Exit status 0"` {
+						sendPass(true)
+					} else if strings.HasPrefix(v, `"Exit status`) {
+						sendPass(false)
+					}
+				}
+			case *runtime.EventExceptionThrown:
+				t.Logf("Exception: * %s", ev.ExceptionDetails.Error())
+			default:
+			}
+		})
+		clearX11Operations()
+		// Navigate to the WASM app to display the X11 output
+		var buf []byte
+		if err := chromedp.Run(ctx,
+			chromedp.Navigate("https://devtest.local:8443/tests.x11.html"),
+			chromedp.WaitVisible("#x11-wasm-tests-done"),
+			chromedp.CaptureScreenshot(&buf),
+		); err != nil {
+			t.Fatalf("Failed to run chromedp actions: %v", err)
+		}
+		if *outputDir != "" {
+			screenshotPath := filepath.Join(*outputDir, "x11_wasm_screenshot.png")
+			if err := os.WriteFile(screenshotPath, buf, 0o644); err != nil {
+				t.Fatalf("Failed to save screenshot: %v", err)
+			}
+			t.Logf("X11 screenshot saved to %s", screenshotPath)
+		}
+		t.Log("X11 WASM tests completed")
+		select {
+		case ok := <-pass:
+			if !ok {
+				t.Error("Test failed")
+			}
+		case <-ctx.Done():
+			t.Errorf("Timed out waiting for test exit status: %v", ctx.Err())
+		}
+	})
 }
 
-// agentTest uses the forwarded agent and reports what happened.
-func (s *sshServer) agentTest(w io.Writer, sconn *ssh.ServerConn, forwarded bool) {
-	if !forwarded {
-		fmt.Fprintf(w, "agent-test: agent not forwarded\n")
-		return
+// CanvasOperation represents a single canvas drawing operation captured from the frontend.
+type CanvasOperation struct {
+	Type        string `json:"type"`
+	Args        []any  `json:"args"`
+	FillStyle   string `json:"fillStyle"`
+	StrokeStyle string `json:"strokeStyle"`
+}
+
+func compareOperations(t *testing.T, x11Ops []X11Operation, canvasOps []CanvasOperation) {
+	count := make(map[string]int)
+	for _, op := range x11Ops {
+		count[op.Type]++
 	}
-	ch, reqs, err := sconn.OpenChannel("auth-agent@openssh.com", nil)
-	if err != nil {
-		fmt.Fprintf(w, "agent-test: %v\n", err)
-		return
+	for _, op := range canvasOps {
+		count[op.Type]--
 	}
-	defer ch.Close()
-	go ssh.DiscardRequests(reqs)
-	client := agent.NewClient(ch)
-	keys, err := client.List()
-	if err != nil || len(keys) == 0 {
-		fmt.Fprintf(w, "agent-test: list: %d keys, %v\n", len(keys), err)
-		return
+	var diff bool
+	for k, v := range count {
+		if v == 0 {
+			continue
+		}
+		diff = true
+		if v > 0 {
+			t.Logf("X11 has %d more %s than Canvas", v, k)
+		} else {
+			t.Logf("Canvas has %d more %s than X11", -v, k)
+		}
 	}
-	fmt.Fprintf(w, "agent-test: list: %d keys\n", len(keys))
-	if _, err := client.Sign(keys[0], []byte("data")); err != nil {
-		fmt.Fprintf(w, "agent-test: sign: %v\n", err)
-	} else {
-		fmt.Fprintf(w, "agent-test: sign: ok\n")
+	if diff {
+		t.Fatalf("Operations mismatch: X11=%d, Canvas=%d", len(x11Ops), len(canvasOps))
 	}
-	fmt.Fprintf(w, "agent-test: lock: %v\n", client.Lock([]byte("x")))
-	fmt.Fprintf(w, "agent-test: removeall: %v\n", client.RemoveAll())
 }

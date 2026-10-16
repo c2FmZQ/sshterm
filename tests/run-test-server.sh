@@ -5,8 +5,8 @@ cd $(dirname $0)/..
 
 export CGO_ENABLED=0
 
-./build.sh
-(cd go && go test -tags docker -c -o ../testserver ./internal/testserver/)
+./build.sh -x11
+(cd go && go test -tags docker,x11 -c -o ../testserver ./internal/testserver/)
 
 docker build -f tests/Dockerfile -t sshterm-testserver .
 rm -f testserver
@@ -18,4 +18,5 @@ docker run \
   --publish=8443:8443 \
   --name=testserver \
   sshterm-testserver \
-  --test.v --test.failfast
+  --test.v \
+  --test.failfast

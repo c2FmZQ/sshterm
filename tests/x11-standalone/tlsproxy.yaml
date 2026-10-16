@@ -1,0 +1,12 @@
+tlsAddr: :8443
+httpAddr: :8080
+
+backends:
+  - serverNames:
+      - tester
+    mode: local
+    documentRoot: /docroot
+
+webSockets:
+  - endpoint: wss://tester/websocket
+    address: x11-apps:22

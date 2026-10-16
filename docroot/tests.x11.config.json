@@ -1,0 +1,25 @@
+{
+	"persist": false,
+	"theme": "dark",
+	"endpoints": [{
+		"name": "test-server",
+		"url": "./websocket?cert=true"
+        }],
+	"certificateAuthorities": [{
+	        "name": "test-ca",
+		"publicKey": "===CAKEY===",
+		"hostnames": [ "test-server" ]
+	 }],
+	"generateKeys": [{
+		"name": "default",
+		"type": "ed25519",
+		"identityProvider": "/cert",
+		"addToAgent": true
+	}],
+	"autoConnect": {
+		"username": "testuser",
+		"hostname": "test-server",
+		"identity": "default",
+		"forwardX11": true
+	}
+}

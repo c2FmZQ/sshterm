@@ -62,6 +62,32 @@ type Config struct {
 	StreamHook   func(url string) error                                   `json:"-"`
 }
 
+type termLogger struct {
+	t       *terminal.Terminal
+	inShell *atomic.Bool
+}
+
+func (l *termLogger) Errorf(format string, args ...interface{}) {
+	if l.inShell != nil && l.inShell.Load() {
+		return
+	}
+	l.t.Errorf(format, args...)
+}
+
+func (l *termLogger) Infof(format string, args ...interface{}) {
+	if l.inShell != nil && l.inShell.Load() {
+		return
+	}
+	l.t.Infof(format, args...)
+}
+
+func (l *termLogger) Printf(format string, args ...interface{}) {
+	if l.inShell != nil && l.inShell.Load() {
+		return
+	}
+	l.t.Printf(format, args...)
+}
+
 var globalAgent agent.Agent = &keyRing{}
 var globalLastDBChange time.Time
 
@@ -345,7 +371,7 @@ func (a *App) Run() error {
 					username, _ = t.Prompt("Username: ")
 				}
 				target := username + "@" + a.cfg.AutoConnect.Hostname
-				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent, a.cfg.AutoConnect.JumpHosts, a.cfg.AutoConnect.ZModem); err != nil {
+				if err := a.runSSH(ctx, target, a.cfg.AutoConnect.Identity, a.cfg.AutoConnect.Command, a.cfg.AutoConnect.ForwardAgent, a.cfg.AutoConnect.ForwardX11, a.cfg.AutoConnect.JumpHosts, a.cfg.AutoConnect.ZModem); err != nil {
 					t.Errorf("%s", termsafe.Text(err.Error()))
 				}
 			},

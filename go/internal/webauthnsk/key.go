@@ -44,7 +44,7 @@ import (
 func Create(name string, resident bool) (*Key, error) {
 	challenge := make([]byte, 32)
 	if _, err := rand.Read(challenge); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to generate random challenge: %w", err)
 	}
 	// user.id is the only field that an assertion returns (as userHandle), so
 	// for a discoverable credential it carries the key name and lets Discover
@@ -61,7 +61,7 @@ func Create(name string, resident bool) (*Key, error) {
 	} else {
 		uid = make([]byte, 32)
 		if _, err := rand.Read(uid); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to generate random user ID: %w", err)
 		}
 	}
 	resp, err := jsutil.WebAuthnCreate(jsutil.CreateOptions{

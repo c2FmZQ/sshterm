@@ -295,6 +295,11 @@ func (t *Terminal) Errorf(f string, args ...any) {
 	t.Printf("%s%s%s\n", t.vt.Escape.Red, s, t.vt.Escape.Reset)
 }
 
+func (t *Terminal) Infof(f string, args ...any) {
+	s := fmt.Sprintf(f, args...)
+	t.Printf("%s\n", s)
+}
+
 func (t *Terminal) Greenf(f string, args ...any) {
 	s := fmt.Sprintf(f, args...)
 	t.Printf("%s%s%s", t.vt.Escape.Green, s, t.vt.Escape.Reset)

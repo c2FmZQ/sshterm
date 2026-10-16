@@ -1,0 +1,9 @@
+{
+	"persist": false,
+	"theme": "dark",
+	"hosts": [],
+	"endpoints": [{
+		"name": "x11-apps",
+		"url": "wss://tester:8443/websocket"
+        }]
+}

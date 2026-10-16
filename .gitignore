@@ -1,5 +1,7 @@
+output/
 ssh.wasm
 tests.wasm
+tests.x11.wasm
 wasm_exec.js
 node_modules
 xterm.css
@@ -9,3 +11,9 @@ bin/
 cache/
 config.yaml
 tlsproxy.env
+.gemini/
+/testserver
+tests/x11-standalone/*.png
+tests/x11-standalone/tkinter_ui.log
+tests/x11-standalone/tkinter_state.json
+tests/x11-standalone/standalone.config.json

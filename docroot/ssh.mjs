@@ -29,6 +29,9 @@ import { Terminal, FitAddon } from './xterm.mjs';
 function isTest() {
   return window.location.pathname.indexOf('tests.html') !== -1;
 }
+function isX11Test() {
+  return window.location.pathname.indexOf('tests.html') !== -1 && window.location.search.indexOf('x11') !== -1;
+}
 
 class TerminalManager {
   constructor(elem, setTitle, onBell) {
@@ -195,13 +198,14 @@ export class TabManager {
 
     const term = terminalManager.getTerm();
     term.showMessage = text => this._showMessage(e, text);
-    const cfg = await fetch('config.json')
+    const configFile = isX11Test() ? 'tests.x11.config.json' : 'config.json';
+    const cfg = await fetch(configFile)
       .then(r => {
         if (r.ok) return r.json();
         return {};
       })
       .catch(e => {
-        term.writeln('\x1b[31mError reading config.json:\x1b[0m');
+        term.writeln('\x1b[31mError reading ' + configFile + ':\x1b[0m');
         term.writeln('\x1b[31m' + e.message + '\x1b[0m');
         term.writeln('');
         return {};
@@ -252,6 +256,6 @@ window.sshApp.ready = new Promise(resolve => {
 });
 
 const go = new Go();
-const wasmFile = isTest() ? 'tests.wasm' : 'ssh.wasm';
+const wasmFile = isTest() && !isX11Test() ? 'tests.wasm' : 'ssh.wasm';
 WebAssembly.instantiateStreaming(fetch(wasmFile), go.importObject)
   .then(r => go.run(r.instance));
