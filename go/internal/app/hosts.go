@@ -34,8 +34,12 @@ import (
 
 func (a *App) addHost(name, key string) error {
 	var hk []byte
-	if key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key)); err == nil {
-		hk = key.Marshal()
+	if key != "" {
+		pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key))
+		if err != nil {
+			return err
+		}
+		hk = pub.Marshal()
 	}
 	a.data.Hosts[name] = &host{Name: name, Key: hk}
 	return nil

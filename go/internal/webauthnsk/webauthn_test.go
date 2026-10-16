@@ -24,15 +24,23 @@
 package webauthnsk
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/asn1"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/pem"
 	"fmt"
 	"math/big"
 	"testing"
+
+	"golang.org/x/crypto/cryptobyte"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 func TestRecoverPublicKey(t *testing.T) {
@@ -214,7 +222,7 @@ func TestVerifyClientData(t *testing.T) {
 		{"not json", `nope`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := verifyClientData([]byte(tc.js), "webauthn.get", challenge)
+			_, err := verifyClientData([]byte(tc.js), "webauthn.get", challenge)
 			if got := err != nil; got != tc.wantErr {
 				t.Errorf("verifyClientData() error = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -240,6 +248,110 @@ func TestIsPrintableASCII(t *testing.T) {
 	} {
 		if got := isPrintableASCII(tc.in); got != tc.want {
 			t.Errorf("isPrintableASCII(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestKeyMarshalUnmarshal(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	orig := &Key{
+		typ:    ecdsa256KeyType,
+		id:     []byte("credential-id-12345"),
+		rpID:   []byte("ssh:default"),
+		pubKey: &priv.PublicKey,
+	}
+	passphrase := "secret-passphrase"
+	rp := func(string) (string, error) { return passphrase, nil }
+
+	// Round-trip without passphrase
+	block, err := orig.MarshalPrivate("")
+	if err != nil {
+		t.Fatalf("MarshalPrivate(\"\"): %v", err)
+	}
+	got, err := Unmarshal(pem.EncodeToMemory(block), "test", rp)
+	if err != nil {
+		t.Fatalf("Unmarshal(unencrypted): %v", err)
+	}
+	if got.typ != orig.typ || !bytes.Equal(got.rpID, orig.rpID) || !bytes.Equal(got.id, orig.id) {
+		t.Errorf("Unmarshal(unencrypted) mismatch: got %+v, want %+v", got, orig)
+	}
+
+	// Round-trip with passphrase
+	block, err = orig.MarshalPrivate(passphrase)
+	if err != nil {
+		t.Fatalf("MarshalPrivate(passphrase): %v", err)
+	}
+	got, err = Unmarshal(pem.EncodeToMemory(block), "test", rp)
+	if err != nil {
+		t.Fatalf("Unmarshal(passphrase): %v", err)
+	}
+	if got.typ != orig.typ || !bytes.Equal(got.rpID, orig.rpID) || !bytes.Equal(got.id, orig.id) {
+		t.Errorf("Unmarshal(passphrase) mismatch: got %+v, want %+v", got, orig)
+	}
+
+	// Tampered pubBytes must fail AES-GCM authentication (AAD binding)
+	pubLen := int(binary.BigEndian.Uint16(block.Bytes[1:3]))
+	// Flip a bit in the application string at the end of pubBytes so UnmarshalPublic still succeeds
+	tampered := append([]byte(nil), block.Bytes...)
+	tampered[1+2+pubLen-1] ^= 0x01
+	tamperedPEM := pem.EncodeToMemory(&pem.Block{Type: block.Type, Bytes: tampered})
+	if _, err := Unmarshal(tamperedPEM, "test", rp); err == nil {
+		t.Error("Unmarshal with tampered pubBytes succeeded; want AAD failure")
+	}
+
+	// Downgrading a v2 key to v1 must also fail AES-GCM authentication
+	downgraded := append([]byte(nil), block.Bytes...)
+	downgraded[0] = 1
+	downgradedPEM := pem.EncodeToMemory(&pem.Block{Type: block.Type, Bytes: downgraded})
+	if _, err := Unmarshal(downgradedPEM, "test", rp); err == nil {
+		t.Error("Unmarshal with v2->v1 version downgrade succeeded; want AAD failure")
+	}
+
+	// Backward compatibility: a legacy v1 encrypted key (sealed with nil AAD) still unmarshals
+	pubBytes := orig.Marshal()
+	salt := make([]byte, 16)
+	rand.Read(salt)
+	dk := pbkdf2.Key([]byte(passphrase), salt, minIter, 32, sha256.New)
+	cBlock, err := aes.NewCipher(dk)
+	if err != nil {
+		t.Fatalf("aes.NewCipher: %v", err)
+	}
+	gcm, err := cipher.NewGCM(cBlock)
+	if err != nil {
+		t.Fatalf("cipher.NewGCM: %v", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	rand.Read(nonce)
+	encIDv1 := gcm.Seal(nonce, nonce, orig.id, nil)
+	v1Buf := cryptobyte.NewBuilder([]byte{1})
+	v1Buf.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes(pubBytes)
+	})
+	v1Buf.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes(salt)
+		b.AddUint32(uint32(minIter))
+		b.AddBytes(encIDv1)
+	})
+	v1PEM := pem.EncodeToMemory(&pem.Block{Type: "WEBAUTHN ENCRYPTED KEY", Bytes: v1Buf.BytesOrPanic()})
+	gotV1, err := Unmarshal(v1PEM, "test", rp)
+	if err != nil {
+		t.Fatalf("Unmarshal(legacy v1): %v", err)
+	}
+	if gotV1.typ != orig.typ || !bytes.Equal(gotV1.rpID, orig.rpID) || !bytes.Equal(gotV1.id, orig.id) {
+		t.Errorf("Unmarshal(legacy v1) mismatch: got %+v, want %+v", gotV1, orig)
+	}
+
+	// Iteration count below minIter or above maxIter must be rejected
+	iterOffset := 1 + 2 + pubLen + 2 + 16
+	for _, badIter := range []uint32{0, 1, 999, maxIter + 1} {
+		badBytes := append([]byte(nil), block.Bytes...)
+		binary.BigEndian.PutUint32(badBytes[iterOffset:iterOffset+4], badIter)
+		badPEM := pem.EncodeToMemory(&pem.Block{Type: block.Type, Bytes: badBytes})
+		if _, err := Unmarshal(badPEM, "test", rp); err == nil {
+			t.Errorf("Unmarshal with numIter=%d succeeded; want error", badIter)
 		}
 	}
 }

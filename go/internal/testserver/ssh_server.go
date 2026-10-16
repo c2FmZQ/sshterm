@@ -60,10 +60,11 @@ func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {
 	signer := authority
 	if hostCert {
 		cert := &ssh.Certificate{
-			Key:      sshPub,
-			Serial:   0x12345,
-			CertType: ssh.HostCert,
-			KeyId:    "test-server",
+			Key:         sshPub,
+			Serial:      0x12345,
+			CertType:    ssh.HostCert,
+			KeyId:       "test-server",
+			ValidBefore: ssh.CertTimeInfinity,
 			ValidPrincipals: []string{
 				"test-server",
 				"myserver.example.com",

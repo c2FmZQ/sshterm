@@ -144,6 +144,34 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 		return base
 	}
 
+	expandArgs := func(in []string) []string {
+		var out []string
+		for _, pa := range in {
+			dirOnly := strings.HasSuffix(pa, "/")
+			matches, err := client.Glob(joinPath(cwd, pa))
+			if err != nil {
+				out = append(out, shellwords.UnquoteWild(pa))
+				continue
+			}
+			count := 0
+			for _, m := range matches {
+				if dirOnly {
+					if st, err := client.Stat(m); err == nil && st.IsDir() {
+						count++
+						out = append(out, strings.TrimPrefix(m+"/", cwd+"/"))
+					}
+					continue
+				}
+				count++
+				out = append(out, strings.TrimPrefix(m, cwd+"/"))
+			}
+			if count == 0 {
+				out = append(out, shellwords.UnquoteWild(pa))
+			}
+		}
+		return out
+	}
+
 	commands := []*cli.App{
 		{
 			Name:            "cd",
@@ -151,17 +179,18 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			UsageText:       "cd [dir]\ncd -\ncd",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
-				if ctx.Args().Len() > 1 {
+				args := expandArgs(ctx.Args().Slice())
+				if len(args) > 1 {
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
-				if ctx.Args().Len() == 0 {
+				if len(args) == 0 {
 					lastDir = cwd
 					cwd = homeDir
 					setPrompt()
 					return nil
 				}
-				dir := ctx.Args().Get(0)
+				dir := args[0]
 				if dir == "-" {
 					lastDir, cwd = cwd, lastDir
 					setPrompt()
@@ -210,12 +239,13 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 				},
 			},
 			Action: func(ctx *cli.Context) error {
-				if ctx.Args().Len() == 0 {
+				args := expandArgs(ctx.Args().Slice())
+				if len(args) == 0 {
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
 				var e []error
-				for _, dir := range ctx.Args().Slice() {
+				for _, dir := range args {
 					var err error
 					if ctx.Bool("p") {
 						err = client.MkdirAll(joinPath(cwd, dir))
@@ -235,12 +265,13 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			UsageText:       "rmdir <name> [<name> ...]",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
-				if ctx.Args().Len() == 0 {
+				args := expandArgs(ctx.Args().Slice())
+				if len(args) == 0 {
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
 				var e []error
-				for _, dir := range ctx.Args().Slice() {
+				for _, dir := range args {
 					if err := client.RemoveDirectory(joinPath(cwd, dir)); err != nil {
 						e = append(e, fmt.Errorf("%q: %w", dir, err))
 					}
@@ -260,12 +291,13 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 				},
 			},
 			Action: func(ctx *cli.Context) error {
-				if ctx.Args().Len() == 0 {
+				args := expandArgs(ctx.Args().Slice())
+				if len(args) == 0 {
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
 				var e []error
-				for _, dir := range ctx.Args().Slice() {
+				for _, dir := range args {
 					var err error
 					if ctx.Bool("R") {
 						err = client.RemoveAll(joinPath(cwd, dir))
@@ -285,11 +317,11 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			UsageText:       "mv <oldname> <newname>\nmv <name> [<name>...] <directory>",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
-				if ctx.Args().Len() < 2 {
+				args := expandArgs(ctx.Args().Slice())
+				if len(args) < 2 {
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
-				args := ctx.Args().Slice()
 				dest := args[len(args)-1]
 				files := args[:len(args)-1]
 				if st, err := client.Stat(joinPath(cwd, dest)); err == nil && st.IsDir() {
@@ -325,11 +357,11 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			UsageText:       "chmod <mode> <name> [<name>...]",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
-				if ctx.Args().Len() < 2 {
+				args := expandArgs(ctx.Args().Slice())
+				if len(args) < 2 {
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
-				args := ctx.Args().Slice()
 				mode, err := strconv.ParseInt(args[0], 8, 32)
 				if err != nil {
 					return fmt.Errorf("mode: %w", err)
@@ -355,12 +387,13 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 				},
 			},
 			Action: func(ctx *cli.Context) error {
-				if ctx.Args().Len() != 2 {
+				args := expandArgs(ctx.Args().Slice())
+				if len(args) != 2 {
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
-				oldName := ctx.Args().Get(0)
-				newName := ctx.Args().Get(1)
+				oldName := args[0]
+				newName := args[1]
 				if ctx.Bool("s") {
 					return client.Symlink(oldName, joinPath(cwd, newName))
 				}
@@ -374,13 +407,14 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			Description:     "The put command initiates the upload of one of more files. Without\narguments, it uploads to the current directory. With the name of an\nexisting directory as argument, it uploads to that directory. With\na non-existent file name, it upload one file to that file name.",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
-				if ctx.Args().Len() > 1 {
+				args := expandArgs(ctx.Args().Slice())
+				if len(args) > 1 {
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
 				dest := cwd
-				if ctx.Args().Len() == 1 {
-					dest = joinPath(cwd, ctx.Args().Get(0))
+				if len(args) == 1 {
+					dest = joinPath(cwd, args[0])
 				}
 				isDir := false
 				if st, err := client.Stat(dest); err == nil && st.IsDir() {
@@ -391,7 +425,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 					fmt.Fprintf(t, "%s ", f.Name)
 					var fn string
 					if isDir {
-						fn = joinPath(cwd, dest, f.Name)
+						fn = joinPath(cwd, dest, path.Base(f.Name))
 					} else {
 						fn = joinPath(cwd, dest)
 					}
@@ -409,7 +443,8 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			Description:     "The get command initiates the download of one of more files.",
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
-				if ctx.Args().Len() == 0 {
+				args := expandArgs(ctx.Args().Slice())
+				if len(args) == 0 {
 					cli.ShowSubcommandHelp(ctx)
 					return nil
 				}
@@ -448,7 +483,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 					fmt.Fprintln(t)
 					return nil
 				}
-				for _, f := range ctx.Args().Slice() {
+				for _, f := range args {
 					if err := get(joinPath(cwd, f)); err != nil {
 						return err
 					}
@@ -468,7 +503,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 				},
 			},
 			Action: func(ctx *cli.Context) error {
-				args := ctx.Args().Slice()
+				args := expandArgs(ctx.Args().Slice())
 				if len(args) == 0 {
 					args = []string{cwd}
 				}
@@ -668,6 +703,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 		event.Call("preventDefault")
 		return nil
 	})
+	defer dragoverHandler.Release()
 	dropHandler := js.FuncOf(func(this js.Value, args []js.Value) any {
 		event := args[0]
 		event.Call("preventDefault")
@@ -677,7 +713,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			a.term.Printf("\n")
 			for _, f := range files {
 				a.term.Printf("%s ", f.Name)
-				if err := a.sftpUploadFile(client, f, joinPath(cwd, f.Name)); err != nil {
+				if err := a.sftpUploadFile(client, f, joinPath(cwd, path.Base(f.Name))); err != nil {
 					a.term.Errorf("drop: %s", termsafe.Text(err.Error()))
 					return
 				}
@@ -685,6 +721,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 		}()
 		return nil
 	})
+	defer dropHandler.Release()
 	a.cfg.Term.Get("element").Call("addEventListener", "dragover", dragoverHandler)
 	a.cfg.Term.Get("element").Call("addEventListener", "drop", dropHandler)
 	defer a.cfg.Term.Get("element").Call("removeEventListener", "dragover", dragoverHandler)
@@ -702,35 +739,8 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 		if len(pArgs) == 0 {
 			continue
 		}
-		var args []string
-		for i, pa := range pArgs {
-			if i == 0 {
-				args = append(args, shellwords.UnquoteWild(pa))
-				continue
-			}
-			dirOnly := strings.HasSuffix(pa, "/")
-			matches, err := client.Glob(joinPath(cwd, pa))
-			if err != nil {
-				args = append(args, shellwords.UnquoteWild(pa))
-				continue
-			}
-			count := 0
-			for _, m := range matches {
-				if dirOnly {
-					if st, err := client.Stat(m); err == nil && st.IsDir() {
-						count++
-						args = append(args, strings.TrimPrefix(m+"/", cwd+"/"))
-					}
-					continue
-				}
-				count++
-				args = append(args, strings.TrimPrefix(m, cwd+"/"))
-			}
-			if count == 0 {
-				args = append(args, shellwords.UnquoteWild(pa))
-			}
-		}
-		switch name := args[0]; name {
+		pArgs[0] = shellwords.UnquoteWild(pArgs[0])
+		switch name := pArgs[0]; name {
 		case "help", "?":
 			fmt.Fprintf(t, "Available commands:\n")
 			maxLen := 0
@@ -743,6 +753,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			fmt.Fprintf(t, "Run any command with --help for more details.\n")
 
 		case "debug":
+			args := append([]string{pArgs[0]}, expandArgs(pArgs[1:])...)
 			fmt.Fprintf(t, "cmdline parsing: %q -> %q\n", pArgs, args)
 
 		case "exit", "quit", "bye":
@@ -756,7 +767,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 			}
 			jsutil.TryCatch(
 				func() { // try
-					if err := cmd.RunContext(ctx, args); err != nil {
+					if err := cmd.RunContext(ctx, pArgs); err != nil {
 						fmt.Fprintf(t, "%s\n", termsafe.Text(err.Error()))
 					}
 				},

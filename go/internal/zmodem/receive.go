@@ -71,6 +71,9 @@ sessionLoop:
 			var size int64
 			if len(parts) > 1 {
 				fmt.Sscanf(string(parts[1]), "%d", &size)
+				if size < 0 {
+					return fmt.Errorf("invalid file size: %d", size)
+				}
 			}
 
 			// We received ZFILE. We send ZRPOS to accept it.

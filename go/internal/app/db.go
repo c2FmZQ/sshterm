@@ -39,6 +39,8 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/nacl/secretbox"
 	"golang.org/x/crypto/pbkdf2"
+
+	"github.com/c2FmZQ/sshterm/internal/indexeddb"
 )
 
 func (a *App) dbCommand() *cli.App {
@@ -106,7 +108,7 @@ func (a *App) dbCommand() *cli.App {
 					if !a.term.Confirm("You are about to WIPE the database.\nContinue? ", false) {
 						return errors.New("aborted")
 					}
-					globalAgent = &keyRing{}
+					globalAgent.(*keyRing).Reset()
 					a.data.Authorities = make(map[string]*authority)
 					a.data.Endpoints = make(map[string]*endpoint)
 					a.data.Hosts = make(map[string]*host)
@@ -199,30 +201,66 @@ func (a *App) dbCommand() *cli.App {
 					if len(enc) < 40 || !bytes.Equal(enc[:4], backupMagic) {
 						return fmt.Errorf("invalid backup file")
 					}
+					iter := binary.BigEndian.Uint32(enc[12:16])
+					if iter < 1000 || iter > 1000000 {
+						return fmt.Errorf("invalid iter value")
+					}
 					passphrase, err := a.term.ReadPassword("Enter the passphrase for the backup: ")
 					if err != nil {
 						return fmt.Errorf("ReadPassword: %w", err)
 					}
-					iter := binary.BigEndian.Uint32(enc[12:16])
-					if iter > 1000000 {
-						return fmt.Errorf("invalid iter value")
-					}
 					dk := pbkdf2.Key([]byte(passphrase), enc[4:12], int(iter), 32, sha256.New)
 
 					var nonce [24]byte
-					var key [32]byte
+					var boxKey [32]byte
 					copy(nonce[:], enc[16:40])
-					copy(key[:], dk)
-					payload, ok := secretbox.Open(nil, enc[40:], &nonce, &key)
+					copy(boxKey[:], dk)
+					payload, ok := secretbox.Open(nil, enc[40:], &nonce, &boxKey)
 					if !ok {
 						return fmt.Errorf("unable to decrypt file")
 					}
-					globalAgent = &keyRing{}
 					var newData appData
 					if err := json.Unmarshal(payload, &newData); err != nil {
 						return fmt.Errorf("json.Unmarshal: %w", err)
 					}
+					if newData.Authorities == nil {
+						newData.Authorities = make(map[string]*authority)
+					}
+					if newData.Endpoints == nil {
+						newData.Endpoints = make(map[string]*endpoint)
+					}
+					if newData.Hosts == nil {
+						newData.Hosts = make(map[string]*host)
+					}
+					if newData.Keys == nil {
+						newData.Keys = make(map[string]*key)
+					}
+					if newData.Params == nil {
+						newData.Params = make(map[string]any)
+					}
+					for _, k := range newData.Keys {
+						k.errorf = a.term.Errorf
+					}
+					if a.cfg.Persist != nil {
+						newData.Persist = *a.cfg.Persist
+					}
+					globalAgent.(*keyRing).Reset()
 					a.data = newData
+					if !a.data.Persist {
+						if a.db != nil {
+							a.db.Close()
+							a.db = nil
+						}
+						return indexeddb.Delete(a.cfg.DBName)
+					}
+					if a.db == nil {
+						db, err := indexeddb.New(a.cfg.DBName)
+						if err != nil {
+							return fmt.Errorf("indexeddb.New: %w", err)
+						}
+						a.db = db
+						a.lastDBRefresh = globalLastDBChange
+					}
 					return a.saveAll()
 				},
 			},

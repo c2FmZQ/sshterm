@@ -76,8 +76,10 @@ func NewResolvedPromise(v any) js.Value {
 }
 
 func NewPromise(f func() (any, error)) js.Value {
-	return Promise.New(js.FuncOf(
+	var cb js.Func
+	cb = js.FuncOf(
 		func(this js.Value, args []js.Value) any {
+			defer cb.Release()
 			resolve := args[0]
 			reject := args[1]
 			go func() {
@@ -90,7 +92,8 @@ func NewPromise(f func() (any, error)) js.Value {
 			}()
 			return nil
 		},
-	))
+	)
+	return Promise.New(cb)
 }
 
 func Await(p js.Value) (js.Value, error) {
@@ -198,11 +201,12 @@ func ImportFiles(accept string, multiple bool) []ImportedFile {
 	}
 
 	ch := make(chan ImportedFile)
-	input.Call("addEventListener", "cancel", js.FuncOf(func(this js.Value, args []js.Value) any {
+	cancelFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		close(ch)
 		return nil
-	}))
-	input.Call("addEventListener", "change", js.FuncOf(func(this js.Value, args []js.Value) any {
+	})
+	defer cancelFn.Release()
+	changeFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		event := args[0]
 		files := event.Get("target").Get("files")
 		length := files.Length()
@@ -217,7 +221,10 @@ func ImportFiles(accept string, multiple bool) []ImportedFile {
 		}
 		close(ch)
 		return nil
-	}))
+	})
+	defer changeFn.Release()
+	input.Call("addEventListener", "cancel", cancelFn)
+	input.Call("addEventListener", "change", changeFn)
 	Body.Call("appendChild", input)
 	input.Call("click")
 	Body.Call("removeChild", input)

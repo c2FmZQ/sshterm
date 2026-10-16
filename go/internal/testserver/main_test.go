@@ -174,7 +174,7 @@ func TestSSHTerm(t *testing.T) {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		out := ssh.MarshalAuthorizedKey(cert)
+		out := append(bytes.TrimSpace(ssh.MarshalAuthorizedKey(cert)), []byte(" evil\x1b[31mcomment\n")...)
 		w.Header().Set("content-type", "text/plain")
 		w.Header().Set("content-length", fmt.Sprintf("%d", len(out)))
 		w.Write(out)

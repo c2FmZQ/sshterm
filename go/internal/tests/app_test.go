@@ -166,9 +166,22 @@ func TestKeys(t *testing.T) {
 		{Type: "blah\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "(?s)ssh-ed25519 .* samekey\r\nssh-ed25519 .* test\r\n"},
 		{Expect: prompt},
+		{Type: "agent add test\n", Expect: "Enter the passphrase for test:"},
+		{Type: "blah\n", Expect: prompt},
+		{Type: "agent list\n", Expect: "test"},
+		{Expect: prompt},
 		{Type: "keys delete test\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
+		{Type: "agent list\n", Expect: "<none>"},
+		{Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* samekey\r\n"},
+		{Expect: prompt},
+		{Type: "agent add samekey\n", Expect: "Enter the passphrase for samekey:"},
+		{Type: "blah\n", Expect: prompt},
+		{Type: "agent list\n", Expect: "samekey"},
+		{Expect: prompt},
+		{Type: "agent remove samekey\n", Expect: prompt},
+		{Type: "agent list\n", Expect: "<none>"},
 		{Expect: prompt},
 		{Type: "keys delete samekey\n", Expect: `Continue\?`},
 		{Type: "Y\n", Expect: prompt},
@@ -238,6 +251,19 @@ func TestDB(t *testing.T) {
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
 		{Expect: prompt},
+		{Type: "agent add test\n", Expect: "Enter the passphrase for test:"},
+		{Type: "foobar\n", Expect: prompt},
+		{Type: "agent list\n", Expect: "test"},
+		// CTRL-ALT-W triggers db wipe but waits for confirmation instead of auto-confirming.
+		{Expect: prompt, Do: func([]string) {
+			terminalIO.Reset()
+			appConfig.Term.Call("input", "\x1b\x17", true)
+		}},
+		{Expect: `Continue\?`},
+		// Shortcuts (like CTRL-L) are ignored while inside a sub-prompt.
+		{Type: "\x0cn\n", Expect: prompt},
+		{Type: "ep list\n", Expect: "test .* websocket"},
+		{Expect: prompt},
 		{Type: "db backup --iter=1000\n", Expect: `(?s)invalid iter value.*sshterm> `},
 		{Type: "db backup\n", Expect: "Enter a passphrase for the backup:"},
 		{Type: "foobar\n", Expect: "Enter the same passphrase:"},
@@ -246,6 +272,7 @@ func TestDB(t *testing.T) {
 		{Type: "Y\n", Expect: prompt},
 		{Type: "ep list\n", Expect: "<none>"},
 		{Type: "keys list\n", Expect: "<none>"},
+		{Type: "agent list\n", Expect: "<none>"},
 		{Expect: prompt},
 	})
 	file := <-downloadCh
@@ -263,6 +290,11 @@ func TestDB(t *testing.T) {
 		{Type: "foobar\n", Expect: prompt},
 		{Type: "ep list\n", Expect: "test .* websocket"},
 		{Type: "keys list\n", Expect: "ssh-ed25519 .* test"},
+		{Type: "agent list\n", Expect: "<none>"},
+		{Expect: prompt},
+		{Type: "agent add test\n", Expect: "Enter the passphrase for test:"},
+		{Type: "foobar\n", Expect: prompt},
+		{Type: "agent list\n", Expect: "test"},
 		{Expect: prompt},
 		{Type: "exit\n"},
 	})
@@ -485,10 +517,9 @@ func TestHostCerts(t *testing.T) {
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 
-		// Use one of the certificate's principals as the endpoint's hostname.
+		// Use one of the certificate's principals that the CA is trusted for as the endpoint's hostname.
 		{Type: "ssh testuser@fooserver foo\n", Expect: `(?s)Host certificate for fooserver is NOT trusted.*` +
-			`3- Continue, and set the hostname of endpoint fooserver to test-server\..*` +
-			`7- Continue, and set the hostname of endpoint fooserver to baz\..*Choice>`},
+			`3- Continue, and set the hostname of endpoint fooserver to test-server\..*Choice>`},
 		{Type: "3\n", Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
@@ -506,6 +537,13 @@ func TestHostCerts(t *testing.T) {
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
 		{Type: "ssh testuser@alias foo\n", Expect: `Host certificate for alias \(myserver.example.com\) is trusted`},
+		{Expect: "Password: "},
+		{Type: "password\n", Expect: "exec: foo"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// Endpoint with a host:port hostname matches CA trusted for myserver.example.com.
+		{Type: "ep add --hostname=myserver.example.com:2222 alias-port websocket?cert=true\n", Expect: prompt},
+		{Type: "ssh testuser@alias-port foo\n", Expect: `Host certificate for alias-port \(myserver\.example\.com:2222\) is trusted`},
 		{Expect: "Password: "},
 		{Type: "password\n", Expect: "exec: foo"},
 		{Wait: time.Second, Type: "\n\n"},
@@ -615,12 +653,24 @@ func TestSFTP(t *testing.T) {
 		{Type: "ls -l test\n", Expect: `(?s)"test": file does not exist.*sftp> `},
 	})
 
-	// File names from the server are sanitized.
-	fileUploader.enqueue("evil\x1b[31m.txt", "text/plain", int64(len(txt)), txt)
+	// File names from the server are sanitized, and uploaded file names have directory components stripped.
+	fileUploader.enqueue("../sub/evil\x1b[31m.txt", "text/plain", int64(len(txt)), txt)
 	script(t, []line{
 		{Type: "put\n", Expect: "100%"},
 		{Type: "ls\n", Expect: `(?s)evil\?\[31m\.txt.*sftp> `},
 		{Type: "rm evil*\n", Expect: "sftp> "},
+	})
+
+	// Remote file names starting with '-' expanded by globs must not be parsed as flags.
+	fileUploader.enqueue("-l", "text/plain", int64(len(txt)), txt)
+	script(t, []line{
+		{Type: "mkdir flagtest\n", Expect: "sftp> "},
+		{Type: "cd flagtest\n", Expect: "sftp> "},
+		{Type: "put\n", Expect: "100%"},
+		{Type: "ls *\n", Expect: `(?s)-l\r\n.*sftp> `},
+		{Type: "rm *\n", Expect: "sftp> "},
+		{Type: "cd ..\n", Expect: "sftp> "},
+		{Type: "rmdir flagtest\n", Expect: "sftp> "},
 		{Type: "exit\n"},
 
 		{Expect: prompt},

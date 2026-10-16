@@ -26,6 +26,7 @@ package app
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,16 +57,17 @@ func TestCheckCertificate(t *testing.T) {
 		badSig    bool
 		expectErr bool
 	}{
-		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert}},
+		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: ssh.CertTimeInfinity}},
 		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidAfter: earlier, ValidBefore: later}},
-		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidAfter: earlier}},
+		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidAfter: earlier, ValidBefore: ssh.CertTimeInfinity}},
 		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: later}},
-		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidAfter: later}, expectErr: true},
+		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: 0}, expectErr: true},
+		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidAfter: later, ValidBefore: ssh.CertTimeInfinity}, expectErr: true},
 		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: earlier}, expectErr: true},
-		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert}, badSig: true, expectErr: true},
-		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, Permissions: ssh.Permissions{CriticalOptions: map[string]string{"foo": ""}}}, expectErr: true},
-		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert}, certType: ssh.UserCert, expectErr: true},
-		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.UserCert}, certType: ssh.HostCert, expectErr: true},
+		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: ssh.CertTimeInfinity}, badSig: true, expectErr: true},
+		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: ssh.CertTimeInfinity, Permissions: ssh.Permissions{CriticalOptions: map[string]string{"foo\x1b[31m": "bar\x1b[32m"}}}, expectErr: true},
+		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: ssh.CertTimeInfinity}, certType: ssh.UserCert, expectErr: true},
+		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.UserCert, ValidBefore: ssh.CertTimeInfinity}, certType: ssh.HostCert, expectErr: true},
 		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidAfter: later, ValidBefore: earlier}, badSig: true, expectErr: true},
 	} {
 		tc.cert.SignCert(rand.Reader, signer)
@@ -79,6 +81,9 @@ func TestCheckCertificate(t *testing.T) {
 		if (err != nil) != tc.expectErr {
 			t.Errorf("[#%d] checkCertificate(): %v", i, err)
 			continue
+		}
+		if err != nil && strings.Contains(err.Error(), "\x1b") {
+			t.Errorf("[#%d] checkCertificate() error contains unsanitized escape sequence: %q", i, err.Error())
 		}
 		t.Logf("[#%d] OK checkCertificate(): %v", i, err)
 	}
@@ -102,6 +107,25 @@ func TestCheckHostCertPrincipal(t *testing.T) {
 		cert := &ssh.Certificate{CertType: ssh.HostCert, ValidPrincipals: tc.principals}
 		if err := checkHostCertPrincipal(cert, tc.hostname); (err != nil) != tc.expectErr {
 			t.Errorf("[#%d] checkHostCertPrincipal(%q, %q): %v", i, tc.principals, tc.hostname, err)
+		}
+	}
+}
+
+func TestMatchHostnames(t *testing.T) {
+	for i, tc := range []struct {
+		patterns []string
+		names    []string
+		want     bool
+	}{
+		{patterns: []string{"foo.example.com"}, names: []string{"foo.example.com"}, want: true},
+		{patterns: []string{"foo.example.com"}, names: []string{"foo.example.com:2222"}, want: true},
+		{patterns: []string{"*.example.com"}, names: []string{"bar.example.com:22"}, want: true},
+		{patterns: []string{"*.dev.example.com"}, names: []string{"prod.example.com"}, want: false},
+		{patterns: []string{"*.dev.example.com"}, names: []string{"prod.example.com:2222"}, want: false},
+		{patterns: nil, names: []string{"foo.example.com"}, want: false},
+	} {
+		if got := matchHostnames(tc.patterns, tc.names...); got != tc.want {
+			t.Errorf("[#%d] matchHostnames(%q, %q) = %v, want %v", i, tc.patterns, tc.names, got, tc.want)
 		}
 	}
 }

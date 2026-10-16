@@ -59,7 +59,7 @@ class TerminalManager {
 
     // Remove escape characters from pasted text so that it can't end
     // bracketed paste mode early, e.g. with "\x1b[201~some command\r".
-    const paste = t => this.term.paste(t.replace(/\x1b/g, ''));
+    const paste = t => this.term.paste(t.replace(/[\x1b\x9b]/g, ''));
     this.contextmenuHandler = event => {
       event.preventDefault();
       event.stopPropagation();
@@ -197,6 +197,7 @@ export class TabManager {
     this.selectScreen(b.id);
 
     const term = terminalManager.getTerm();
+    term.showMessage = text => this._showMessage(e, text);
     const configFile = isX11Test() ? 'tests.x11.config.json' : 'config.json';
     const cfg = await fetch(configFile)
       .then(r => {
