@@ -1,5 +1,15 @@
 # SSH Term Release Notes
 
+## v0.11.4
+
+### :star2: New features
+
+* Add a lightweight standalone server option that embeds the docroot.
+
+### :wrench: Misc
+
+* Update go 1.27.3
+
 ## v0.11.3
 
 ### :lock: Security fixes
