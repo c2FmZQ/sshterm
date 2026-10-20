@@ -27,7 +27,9 @@ You can get started by either downloading a pre-built release or by building the
 
 **Option 1: Download a Release**
 
-You can find pre-packaged releases on the [releases page](https://github.com/c2FmZQ/sshterm/releases). Download the `sshterm-docroot-${VERSION}.tar.gz` file, which contains all the necessary files ready to be deployed.
+You can find pre-packaged releases on the [releases page](https://github.com/c2FmZQ/sshterm/releases). Download either:
+*   `sshterm-docroot-${VERSION}.tar.gz`: The static web application files, ready to be served by `tlsproxy` or another web server.
+*   `sshterm-server-${OS}-${ARCH}-${VERSION}`: The standalone `sshterm-server` binary (for Linux and macOS on `amd64` and `arm64`) with the web application embedded.
 
 **Option 2: Build from Source**
 
@@ -39,11 +41,13 @@ cd sshterm
 ./build.sh
 ```
 
-After the build completes, the `docroot/` directory will contain all the required application files.
+After the build completes, the `docroot/` directory will contain all the required application files, and the standalone `./sshterm-server` binary will be built with `docroot/` embedded.
 
 ### Configuration
 
-SSH Term connects to SSH servers via a WebSocket proxy. You will need to configure `tlsproxy` to forward connections.
+SSH Term connects to SSH servers via a WebSocket proxy. For full production deployments (with ACME/Let's Encrypt, authentication, and SSH certificate issuance), we recommend [tlsproxy](https://github.com/c2FmZQ/tlsproxy). For local use or deployments behind an existing reverse proxy, you can also use the built-in lightweight `sshterm-server`.
+
+#### Option A: Using `tlsproxy` (Recommended for Production)
 
 1.  **Configure `tlsproxy`**
 
@@ -71,6 +75,22 @@ SSH Term connects to SSH servers via a WebSocket proxy. You will need to configu
     ```
     The URL can also be a relative path, e.g. `./myserver`.
     Alternatively, you can provide this configuration in a `config.json` file in the `docroot` directory.
+
+#### Option B: Using `sshterm-server` (Lightweight Standalone Server)
+
+`sshterm-server` is a self-contained binary that embeds the web application and proxies WebSocket connections to configured SSH servers. It automatically injects the configured endpoints into `/config.json` on the fly, so no `ep add` step is needed in the browser.
+
+```bash
+./sshterm-server \
+  --addr 127.0.0.1:8080 \
+  --ep myserver=192.168.0.100:22
+```
+
+Available flags:
+*   `--addr <ip:port>`: The TCP address to listen on (default `127.0.0.1:8080`).
+*   `--ep <name=host[:port]>` (or `--endpoint`, repeatable): Defines a WebSocket endpoint at `/_ws/<name>` forwarding to `host:port` (defaults to port `22` if omitted) and adds it to `/config.json`.
+*   `--config <file>`: Optional path to a base `config.json` file. Configured endpoints are merged into it on the fly.
+*   `--tls-cert <file>` and `--tls-key <file>`: Optional TLS certificate and private key files to serve HTTPS instead of HTTP.
 
 ### Using `config.json`
 
@@ -324,6 +344,7 @@ The codebase is organized into the following main directories:
     *   `go/internal/webauthnsk/`: Implements the `ecdsa-sk` (WebAuthn) key type.
     *   `go/internal/tests/`: Contains internal end-to-end tests for the Go application, which are also compiled to WASM and run in a browser.
     *   `go/internal/testserver/`: A backend server used for running the internal Go tests, providing a mock SSH server and other endpoints.
+    *   `go/sshterm-server/`: A lightweight standalone HTTP/HTTPS and WebSocket proxy server with the `docroot/` assets embedded.
 *   `docroot/`: The web root for the application. It contains the main `index.html`, the compiled `ssh.wasm` binary, and the necessary JavaScript and CSS assets. This is the directory you would serve to users.
 *   `xterm/`: Contains the `xterm.js` frontend component and its dependencies, which provides the terminal UI.
 *   `tests/`: Contains scripts and Docker configurations for running the end-to-end browser tests.

@@ -48,7 +48,7 @@ jobs:
           exit 1
         fi
 
-    - name: Create tar file
+    - name: Create tar file and server binary
       run: |
         export GNUPGHOME="$(mktemp -d)"
         chmod 700 "${GNUPGHOME}"
@@ -67,6 +67,20 @@ jobs:
         rm -rf "${basename}"
         sha256sum "${basename}.tar.gz" | cut -d " " -f1 > "${basename}.tar.gz.sha256"
         gpg --batch --pinentry-mode loopback --yes --passphrase "${GPG_PASSPHRASE}" --detach-sig --local-user c2FmZQ-bot --output "${basename}.tar.gz.sig" "${basename}.tar.gz"
+
+        export CGO_ENABLED=0
+        flag="-ldflags=-extldflags=-static -s -w -X main.Version=${GITHUB_REF_NAME:-dev}"
+        cd ../go
+        for os in darwin linux; do
+          for arch in amd64 arm64; do
+            serverbin="sshterm-server-${os}-${arch}-${GITHUB_REF_NAME}"
+            echo "Building ${serverbin}"
+            GOOS="${os}" GOARCH="${arch}" go build -a -trimpath "${flag}" -o "../bin/${serverbin}" ./sshterm-server
+            (cd ../bin && sha256sum "${serverbin}" | cut -d " " -f1 > "${serverbin}.sha256")
+            (cd ../bin && gpg --batch --pinentry-mode loopback --yes --passphrase "${GPG_PASSPHRASE}" --detach-sig --local-user c2FmZQ-bot --output "${serverbin}.sig" "${serverbin}")
+          done
+        done
+
       env:
         GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
