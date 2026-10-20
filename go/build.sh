@@ -11,5 +11,6 @@ mkdir -p sshterm-server/internal/docroot
 cp -r ../docroot/* sshterm-server/internal/docroot/
 rm -f sshterm-server/internal/docroot/tests.* sshterm-server/internal/docroot/config.json*
 
-go build -ldflags="-extldflags=-s -w" -o ../sshterm-server ./sshterm-server
+export CGO_ENABLED=0
+go build -trimpath -ldflags="-extldflags=-s -w" -o ../sshterm-server ./sshterm-server
 
