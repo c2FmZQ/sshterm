@@ -27,7 +27,9 @@ You can get started by either downloading a pre-built release or by building the
 
 **Option 1: Download a Release**
 
-You can find pre-packaged releases on the [releases page](https://github.com/c2FmZQ/sshterm/releases). Download the `sshterm-docroot-${VERSION}.tar.gz` file, which contains all the necessary files ready to be deployed.
+You can find pre-packaged releases on the [releases page](https://github.com/c2FmZQ/sshterm/releases). Download either:
+*   `sshterm-docroot-${VERSION}.tar.gz`: The static web application files, ready to be served by `tlsproxy` or another web server.
+*   `sshterm-server-${OS}-${ARCH}-${VERSION}`: The standalone `sshterm-server` binary (for Linux and macOS on `amd64` and `arm64`) with the web application embedded.
 
 **Option 2: Build from Source**
 

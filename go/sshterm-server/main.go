@@ -30,11 +30,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 
 	"github.com/c2FmZQ/sshterm/sshterm-server/internal"
 )
+
+var Version = "dev"
 
 type endpointFlags []internal.Endpoint
 
@@ -57,16 +60,23 @@ func (f *endpointFlags) Set(value string) error {
 
 func main() {
 	var (
-		addr      = flag.String("addr", "127.0.0.1:8080", "The TCP address to listen on.")
-		cfgFile   = flag.String("config", "", "Optional path to a base config.json file.")
-		tlsCert   = flag.String("tls-cert", "", "Path to a TLS certificate file (requires --tls-key).")
-		tlsKey    = flag.String("tls-key", "", "Path to a TLS private key file (requires --tls-cert).")
-		endpoints endpointFlags
+		addr        = flag.String("addr", "127.0.0.1:8080", "The TCP address to listen on.")
+		cfgFile     = flag.String("config", "", "Optional path to a base config.json file.")
+		tlsCert     = flag.String("tls-cert", "", "Path to a TLS certificate file (requires --tls-key).")
+		tlsKey      = flag.String("tls-key", "", "Path to a TLS private key file (requires --tls-cert).")
+		versionFlag = flag.Bool("v", false, "Show the version.")
+		endpoints   endpointFlags
 	)
 	flag.Var(&endpoints, "ep", "SSH endpoint in the form name=host[:port] (repeatable).")
 	flag.Var(&endpoints, "endpoint", "Alias for -ep.")
 	flag.Parse()
 
+	if *versionFlag {
+		os.Stdout.WriteString(Version + " " + runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH + "\n")
+		return
+	}
+
+	log.Printf("sshterm-server %s %s %s/%s", Version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	srv, err := internal.New(internal.Options{
 		Addr:        *addr,
 		ConfigFile:  *cfgFile,
