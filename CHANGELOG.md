@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## v0.11.5
+
+### :star: Feature improvements
+
+* The lightweight sshterm server is now built automatically.
+
 ## v0.11.4
 
 ### :star2: New features
