@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/*'
+      - 'Dockerfile'
       - '.goversion'
       - 'go/go.*'
       - '**.go'
@@ -48,3 +49,8 @@ jobs:
       run: cd go && go test ./...
     - name: Run headless tests
       run: ./tests/run-headless-tests.sh
+    - name: Build test docker image
+      run: |
+        touch version.sh
+        docker build -t c2fmzq/sshterm-server:test .
+        docker run --rm --interactive c2fmzq/sshterm-server:test -v

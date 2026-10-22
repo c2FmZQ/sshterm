@@ -33,6 +33,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -48,6 +49,24 @@ import (
 
 //go:embed docroot
 var embeddedDocroot embed.FS
+
+func init() {
+	for ext, typ := range map[string]string{
+		".css":         "text/css; charset=utf-8",
+		".html":        "text/html; charset=utf-8",
+		".ico":         "image/x-icon",
+		".js":          "text/javascript; charset=utf-8",
+		".json":        "application/json",
+		".mjs":         "text/javascript; charset=utf-8",
+		".png":         "image/png",
+		".svg":         "image/svg+xml",
+		".txt":         "text/plain; charset=utf-8",
+		".wasm":        "application/wasm",
+		".webmanifest": "application/manifest+json",
+	} {
+		_ = mime.AddExtensionType(ext, typ)
+	}
+}
 
 const (
 	defaultCSP = "default-src 'self'; style-src 'unsafe-inline' 'self'; script-src 'wasm-unsafe-eval' 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';"
