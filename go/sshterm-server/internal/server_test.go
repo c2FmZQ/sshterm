@@ -166,25 +166,41 @@ func TestEmbeddedStaticFilesAndHeaders(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	for _, path := range []string{"/", "/index.html", "/ssh.wasm", "/xterm.mjs", "/stream-helper.js"} {
-		resp, err := http.Get(ts.URL + path)
+	for _, tc := range []struct {
+		path     string
+		wantType string
+	}{
+		{"/", "text/html; charset=utf-8"},
+		{"/index.html", "text/html; charset=utf-8"},
+		{"/ssh.wasm", "application/wasm"},
+		{"/xterm.mjs", "text/javascript; charset=utf-8"},
+		{"/stream-helper.js", "text/javascript; charset=utf-8"},
+		{"/xterm.css", "text/css; charset=utf-8"},
+		{"/ssh.png", "image/png"},
+		{"/ssh.webmanifest", "application/manifest+json"},
+		{"/LICENSE.xterm.txt", "text/plain; charset=utf-8"},
+	} {
+		resp, err := http.Get(ts.URL + tc.path)
 		if err != nil {
-			t.Fatalf("GET %s: %v", path, err)
+			t.Fatalf("GET %s: %v", tc.path, err)
 		}
 		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			t.Errorf("GET %s: status = %d, want 200", path, resp.StatusCode)
+			t.Errorf("GET %s: status = %d, want 200", tc.path, resp.StatusCode)
+		}
+		if got := resp.Header.Get("Content-Type"); got != tc.wantType {
+			t.Errorf("GET %s: Content-Type = %q, want %q", tc.path, got, tc.wantType)
 		}
 		if got := resp.Header.Get("X-Frame-Options"); got != "DENY" {
-			t.Errorf("GET %s: X-Frame-Options = %q, want DENY", path, got)
+			t.Errorf("GET %s: X-Frame-Options = %q, want DENY", tc.path, got)
 		}
 		if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
-			t.Errorf("GET %s: X-Content-Type-Options = %q, want nosniff", path, got)
+			t.Errorf("GET %s: X-Content-Type-Options = %q, want nosniff", tc.path, got)
 		}
 		if got := resp.Header.Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'none'") {
-			t.Errorf("GET %s: Content-Security-Policy = %q, want frame-ancestors 'none'", path, got)
+			t.Errorf("GET %s: Content-Security-Policy = %q, want frame-ancestors 'none'", tc.path, got)
 		}
 	}
 

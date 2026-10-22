@@ -25,11 +25,12 @@ You can get started by either downloading a pre-built release or by building the
 
 ### Installation
 
-**Option 1: Download a Release**
+**Option 1: Download a Release or Use Docker**
 
-You can find pre-packaged releases on the [releases page](https://github.com/c2FmZQ/sshterm/releases). Download either:
+You can find pre-packaged releases on the [releases page](https://github.com/c2FmZQ/sshterm/releases) or on [Docker Hub](https://hub.docker.com/r/c2fmzq/sshterm-server):
 *   `sshterm-docroot-${VERSION}.tar.gz`: The static web application files, ready to be served by `tlsproxy` or another web server.
-*   `sshterm-server-${OS}-${ARCH}-${VERSION}`: The standalone `sshterm-server` binary (for Linux and macOS on `amd64` and `arm64`) with the web application embedded.
+*   `sshterm-server-${OS}-${ARCH}-${VERSION}`: The standalone `sshterm-server` binary (for Linux and macOS on `amd64`, `arm64`, and Linux `arm`) with the web application embedded.
+*   `c2fmzq/sshterm-server:latest`: Multi-architecture Docker image (`linux/amd64`, `linux/arm64`, `linux/arm/v7`) for `sshterm-server`.
 
 **Option 2: Build from Source**
 
@@ -83,6 +84,17 @@ SSH Term connects to SSH servers via a WebSocket proxy. For full production depl
 ```bash
 ./sshterm-server \
   --addr 127.0.0.1:8080 \
+  --ep myserver=192.168.0.100:22
+```
+
+Or using Docker:
+
+```bash
+docker run \
+  --name=sshterm-server \
+  --user=1000:1000 \
+  --publish=127.0.0.1:8080:8080 \
+  c2fmzq/sshterm-server:latest \
   --ep myserver=192.168.0.100:22
 ```
 
