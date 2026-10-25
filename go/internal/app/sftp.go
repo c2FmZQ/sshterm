@@ -43,7 +43,6 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/term"
 
-	"github.com/c2FmZQ/sshterm/internal/depfix"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 	"github.com/c2FmZQ/sshterm/internal/shellwords"
 	"github.com/c2FmZQ/sshterm/internal/termsafe"
@@ -95,7 +94,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 	}
 	go sshKeepAlive(ctx, c, cancel)
 
-	client, err := depfix.NewSFTPClient(c)
+	client, err := sftp.NewClient(c)
 	if err != nil {
 		return err
 	}

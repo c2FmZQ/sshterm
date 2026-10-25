@@ -5,9 +5,8 @@
 ### :lock: Security fixes
 
 * Align `go/go.mod` (`go 1.27.3`) and `go/build.sh` (`GOTOOLCHAIN`) with `.goversion` so local builds do not fall back to Go 1.26.0, and remove stale `docroot/xterm.js` from the embedded server docroot.
-* Upgrade `github.com/pkg/sftp` to `v1.13.12` (fixing truncated packet unmarshaling panics and `Client.RemoveAll` directory symlink traversal), reject 0-byte `SSH_FXP_DATA` packets (preventing an infinite read loop), and bound the number of entries accumulated in `ReadDirContext`.
+* Upgrade `github.com/pkg/sftp` to `v1.13.12` (fixing truncated packet unmarshaling panics and `Client.RemoveAll` directory symlink traversal).
 * Harden SSH client and forwarded agent (`golang.org/x/crypto/ssh`):
-  * Bound concurrent `"auth-agent@openssh.com"` channels and cap incoming agent request frames to 256 KiB before `agent.ServeAgent` allocates up to 16 MiB per channel.
   * Implement `ssh.MultiAlgorithmSigner` on `dynSigner` and `agent.ExtendedAgent` (`SignWithFlags`) on `keyRing` and `forwardedAgent` so RSA keys and user certificates use `rsa-sha2-256` / `rsa-sha2-512` instead of falling back to deprecated SHA-1 (`ssh-rsa`).
   * Reject deprecated SHA-1 (`ssh-rsa`) and DSA (`ssh-dss`) CA signatures in `checkCertificate`.
 * Fix a trailing-backslash parsing bug in `shellwords.Parse` that could cause a slice-bounds panic during tab auto-completion.

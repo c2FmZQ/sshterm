@@ -40,7 +40,6 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
-	"github.com/c2FmZQ/sshterm/internal/depfix"
 	"github.com/c2FmZQ/sshterm/internal/termsafe"
 	"github.com/c2FmZQ/sshterm/internal/websocket"
 )
@@ -133,7 +132,7 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 				t.ShowMessage(f, args...)
 			},
 		}
-		if err := depfix.ForwardToAgent(client, fwd); err != nil {
+		if err := agent.ForwardToAgent(client, fwd); err != nil {
 			return fmt.Errorf("agent.ForwardToAgent: %w", err)
 		}
 		if err := agent.RequestAgentForwarding(session); err != nil {
