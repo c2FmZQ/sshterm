@@ -49,32 +49,20 @@ export function sanitizeTitle(title) {
 export function applyXtermWorkarounds(term, flags = workarounds) {
   const disposables = [];
   const registerClampCsi = (final, getMax) => {
-    if (term._core && typeof term._core.registerCsiHandler === 'function') {
-      disposables.push(
-        term._core.registerCsiHandler({ final }, params => {
-          const active = final === 'b' ? flags.csiRepGuard : flags.csiLoopGuard;
-          if (!active) return false;
-          const maxVal = Math.max(1, getMax());
-          if (params.length > 0 && params.params[0] > maxVal) {
-            params.params[0] = maxVal;
-          }
-          return false;
-        })
-      );
-    } else {
-      disposables.push(
-        term.parser.registerCsiHandler({ final }, params => {
-          const active = final === 'b' ? flags.csiRepGuard : flags.csiLoopGuard;
-          if (!active) return false;
-          const maxVal = Math.max(1, getMax());
-          const p0 = typeof params[0] === 'number' ? params[0] : 0;
-          return p0 > maxVal;
-        })
-      );
-    }
+    disposables.push(
+      term._core.registerCsiHandler({ final }, params => {
+        const active = final === 'b' ? flags.csiRepGuard : flags.csiLoopGuard;
+        if (!active) return false;
+        const maxVal = Math.max(1, getMax());
+        if (params.length > 0 && params.params[0] > maxVal) {
+          params.params[0] = maxVal;
+        }
+        return false;
+      })
+    );
   };
 
-  registerClampCsi('b', () => term.cols);
+  registerClampCsi('b', () => term.cols * term.rows);
   registerClampCsi('I', () => term.cols);
   registerClampCsi('Z', () => term.cols);
   registerClampCsi('L', () => term.rows);
@@ -236,7 +224,7 @@ export class TabManager {
     this.screens[b.id].title = 'sshterm';
 
     const setTitle = rawTitle => {
-      const title = sanitizeTitle(rawTitle);
+      const title = sanitizeTitle(rawTitle) || 'sshterm';
       this.screens[b.id].title = title;
       this.screens[b.id].b.title = title;
       document.querySelector('head title').textContent = title;
@@ -314,9 +302,11 @@ export class TabManager {
 }
 
 window.sshApp = {};
-window.sshApp.workarounds = workarounds;
-window.sshApp.applyXtermWorkarounds = applyXtermWorkarounds;
-window.sshApp.Terminal = Terminal;
+if (isTest()) {
+  window.sshApp.workarounds = workarounds;
+  window.sshApp.applyXtermWorkarounds = applyXtermWorkarounds;
+  window.sshApp.Terminal = Terminal;
+}
 window.sshApp.exited = null;
 window.sshApp.ready = new Promise(resolve => {
   window.sshApp.sshIsReady = () => {

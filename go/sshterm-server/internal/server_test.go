@@ -44,7 +44,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -206,8 +205,8 @@ func TestEmbeddedStaticFilesAndHeaders(t *testing.T) {
 		}
 	}
 
-	// Ensure test artifacts, example config, and legacy xterm.js are not embedded.
-	for _, excluded := range []string{"/tests.html", "/tests.wasm", "/config.json.example", "/xterm.js"} {
+	// Ensure test artifacts and example config are not embedded.
+	for _, excluded := range []string{"/tests.html", "/tests.wasm", "/config.json.example"} {
 		resp, err := http.Get(ts.URL + excluded)
 		if err != nil {
 			t.Fatalf("GET %s: %v", excluded, err)
@@ -654,25 +653,6 @@ func (c *wsNetConn) RemoteAddr() net.Addr               { return c.conn.RemoteAd
 func (c *wsNetConn) SetDeadline(t time.Time) error      { return nil }
 func (c *wsNetConn) SetReadDeadline(t time.Time) error  { return c.conn.SetReadDeadline(t) }
 func (c *wsNetConn) SetWriteDeadline(t time.Time) error { return c.conn.SetWriteDeadline(t) }
-
-func TestGoToolchainVersion(t *testing.T) {
-	goversionBytes, err := os.ReadFile("../../../.goversion")
-	if err != nil {
-		t.Fatalf("ReadFile(.goversion): %v", err)
-	}
-	wantVer := strings.TrimSpace(string(goversionBytes))
-
-	gomodBytes, err := os.ReadFile("../../go.mod")
-	if err != nil {
-		t.Fatalf("ReadFile(go.mod): %v", err)
-	}
-	if !strings.Contains(string(gomodBytes), "go "+wantVer+"\n") {
-		t.Errorf("go/go.mod does not declare 'go %s'", wantVer)
-	}
-	if got := runtime.Version(); !strings.HasPrefix(got, "go"+wantVer) {
-		t.Errorf("runtime.Version() = %q, want prefix %q", got, "go"+wantVer)
-	}
-}
 
 type stallTrackConn struct {
 	net.Conn

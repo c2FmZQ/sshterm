@@ -11,7 +11,7 @@ cp -f $(go env GOROOT)/lib/wasm/wasm_exec.js ../docroot/
 rm -rf sshterm-server/internal/docroot
 mkdir -p sshterm-server/internal/docroot
 cp -r ../docroot/* sshterm-server/internal/docroot/
-rm -f sshterm-server/internal/docroot/tests.* sshterm-server/internal/docroot/config.json* sshterm-server/internal/docroot/xterm.js
+rm -f sshterm-server/internal/docroot/tests.* sshterm-server/internal/docroot/config.json*
 
 export CGO_ENABLED=0
 go build -trimpath -ldflags="-extldflags=-s -w" -o ../sshterm-server ./sshterm-server
