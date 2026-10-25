@@ -100,7 +100,16 @@ func NewReadableStream(r io.Reader, done chan<- error, progress func(int64)) js.
 				size = max(size, ds.Int())
 			}
 			buf := make([]byte, size)
-			n, err := r.Read(buf)
+			var n int
+			var err error
+			TryCatch(
+				func() {
+					n, err = r.Read(buf)
+				},
+				func(p any) {
+					err = fmt.Errorf("panic: %v", p)
+				},
+			)
 			if n > 0 {
 				select {
 				case <-cancelCh:

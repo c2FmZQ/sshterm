@@ -33,6 +33,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/c2FmZQ/sshterm/internal/depfix"
 	"github.com/c2FmZQ/sshterm/internal/termsafe"
 )
 
@@ -56,10 +57,7 @@ func checkCertificate(cert *ssh.Certificate, certType uint32) error {
 		slices.Sort(opts)
 		errs = append(errs, fmt.Errorf("certificate has critical options: %v", opts))
 	}
-	c2 := *cert
-	c2.Signature = nil
-	signBytes := c2.Marshal()
-	if err := cert.SignatureKey.Verify(signBytes[:len(signBytes)-4], cert.Signature); err != nil {
+	if err := depfix.VerifyCertificateSignature(cert); err != nil {
 		errs = append(errs, fmt.Errorf("certificate signature is invalid"))
 	}
 	return errors.Join(errs...)

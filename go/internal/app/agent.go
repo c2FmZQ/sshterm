@@ -37,6 +37,8 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+
+	"github.com/c2FmZQ/sshterm/internal/depfix"
 )
 
 func (a *App) agentCommand() *cli.App {
@@ -212,7 +214,7 @@ type keyRing struct {
 	pp     []byte
 }
 
-var _ agent.Agent = (*keyRing)(nil)
+var _ agent.ExtendedAgent = (*keyRing)(nil)
 
 var errAgentLocked = errors.New("agent is locked")
 var errAgentNotLocked = errors.New("agent is not locked")
@@ -272,6 +274,10 @@ func (r *keyRing) List() ([]*agent.Key, error) {
 }
 
 func (r *keyRing) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
+	return r.SignWithFlags(key, data, 0)
+}
+
+func (r *keyRing) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
 	r.mu.Lock()
 	if r.locked {
 		r.mu.Unlock()
@@ -289,7 +295,25 @@ func (r *keyRing) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 	// Don't hold the lock while signing. With WebAuthn keys, Sign waits for
 	// the user to touch the security key.
 	r.mu.Unlock()
-	return signer.Sign(rand.Reader, data)
+	if !depfix.EnableRSASHA2 || flags == 0 {
+		return signer.Sign(rand.Reader, data)
+	}
+	as, ok := signer.(ssh.AlgorithmSigner)
+	if !ok {
+		return nil, fmt.Errorf("agent: key does not support custom signature algorithms")
+	}
+	switch flags {
+	case agent.SignatureFlagRsaSha256:
+		return as.SignWithAlgorithm(rand.Reader, data, ssh.KeyAlgoRSASHA256)
+	case agent.SignatureFlagRsaSha512:
+		return as.SignWithAlgorithm(rand.Reader, data, ssh.KeyAlgoRSASHA512)
+	default:
+		return nil, fmt.Errorf("agent: unsupported signature flags: %d", flags)
+	}
+}
+
+func (r *keyRing) Extension(extensionType string, contents []byte) ([]byte, error) {
+	return nil, agent.ErrExtensionUnsupported
 }
 
 func (r *keyRing) AddSigner(signer ssh.Signer, comment string) error {
@@ -454,13 +478,17 @@ type forwardedAgent struct {
 	notify func(format string, args ...any)
 }
 
-var _ agent.Agent = (*forwardedAgent)(nil)
+var _ agent.ExtendedAgent = (*forwardedAgent)(nil)
 
 func (f *forwardedAgent) List() ([]*agent.Key, error) {
 	return f.agent.List()
 }
 
 func (f *forwardedAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
+	return f.SignWithFlags(key, data, 0)
+}
+
+func (f *forwardedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
 	name := ssh.FingerprintSHA256(key)
 	if keys, err := f.agent.List(); err == nil {
 		v := key.Marshal()
@@ -472,7 +500,16 @@ func (f *forwardedAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, e
 		}
 	}
 	f.notify("[agent] %s requested a signature with key %q\n", f.host, name)
+	if depfix.EnableRSASHA2 {
+		if ea, ok := f.agent.(agent.ExtendedAgent); ok {
+			return ea.SignWithFlags(key, data, flags)
+		}
+	}
 	return f.agent.Sign(key, data)
+}
+
+func (f *forwardedAgent) Extension(extensionType string, contents []byte) ([]byte, error) {
+	return nil, agent.ErrExtensionUnsupported
 }
 
 func (f *forwardedAgent) Add(key agent.AddedKey) error {

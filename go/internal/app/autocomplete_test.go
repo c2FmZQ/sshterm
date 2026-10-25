@@ -129,3 +129,16 @@ func TestMaybeQuote(t *testing.T) {
 		}
 	}
 }
+
+func TestAutoCompleteTrailingBackslash(t *testing.T) {
+	ac := &autoCompleter{
+		cmds: []*cli.App{
+			{Name: `al\pha`},
+		},
+	}
+
+	nl, np, _, ok := ac.autoComplete(`al\`, 3, '\t')
+	if !ok || nl != `"al\\pha" ` || np != len(nl) {
+		t.Fatalf("autoComplete(\"al\\\\\", 3, '\\t') = %q, %d, %v; want %q, %d, true", nl, np, ok, `"al\\pha" `, len(`"al\\pha" `))
+	}
+}

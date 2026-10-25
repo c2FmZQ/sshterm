@@ -38,6 +38,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/c2FmZQ/sshterm/internal/depfix"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 )
 
@@ -54,7 +55,7 @@ func New(ctx context.Context, t js.Value) *Terminal {
 			onData:   make(map[int]func(k string) any),
 		},
 	}
-	tt.vt = term.NewTerminal(tt.tw, "")
+	tt.vt = term.NewTerminal(depfix.WrapTermReadWriter(tt.tw), "")
 	tt.Escape = tt.vt.Escape
 	tt.setDefaultPrompt()
 
@@ -313,6 +314,26 @@ func (t *Terminal) Focus() {
 
 func (t *Terminal) Clear() {
 	t.tw.xt.Call("clear")
+}
+
+// ResetSessionState resets terminal modes/colors that may have been altered by
+// a remote session and drains any pending asynchronous query responses from the
+// input buffer before returning to the local prompt.
+func (t *Terminal) ResetSessionState() {
+	for {
+		select {
+		case <-t.tw.dataCh:
+		default:
+			t.tw.r = nil
+			_, _ = t.tw.Write([]byte(
+				"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l" +
+					"\x1b[?1004l\x1b[?2004l\x1b[?6l\x1b[r\x1b[?1049l" +
+					"\x1b[0m\x1b[?25h" +
+					"\x1b]104\x07\x1b]110\x07\x1b]111\x07\x1b]112\x07",
+			))
+			return
+		}
+	}
 }
 
 func (t *Terminal) Rows() int {

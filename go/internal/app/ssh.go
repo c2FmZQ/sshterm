@@ -40,6 +40,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
+	"github.com/c2FmZQ/sshterm/internal/depfix"
 	"github.com/c2FmZQ/sshterm/internal/termsafe"
 	"github.com/c2FmZQ/sshterm/internal/websocket"
 )
@@ -109,7 +110,10 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	go sshKeepAlive(ctx, client, cancel)
 
 	t.Printf("\x1b]0;ssh %s\x07", target)
-	defer t.Printf("\x1b]0;sshterm\x07")
+	defer func() {
+		t.ResetSessionState()
+		t.Printf("\x1b]0;sshterm\x07")
+	}()
 
 	session, err := client.NewSession()
 	if err != nil {
@@ -129,7 +133,7 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 				t.ShowMessage(f, args...)
 			},
 		}
-		if err := agent.ForwardToAgent(client, fwd); err != nil {
+		if err := depfix.ForwardToAgent(client, fwd); err != nil {
 			return fmt.Errorf("agent.ForwardToAgent: %w", err)
 		}
 		if err := agent.RequestAgentForwarding(session); err != nil {
@@ -339,7 +343,7 @@ func (a *App) sshClientFromConn(ctx context.Context, c net.Conn, username, hostn
 		return nil, err
 	}
 
-	return ssh.NewClient(conn, chans, reqs), nil
+	return ssh.NewClient(depfix.WrapSSHConn(conn), chans, reqs), nil
 }
 
 func (a *App) hostCertificateCallback(hostname string, ep *endpoint, cert *ssh.Certificate) error {

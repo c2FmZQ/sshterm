@@ -1,5 +1,26 @@
 # SSH Term Release Notes
 
+## Next
+
+### :lock: Security fixes
+
+* Align `go/go.mod` (`go 1.27.3`) and `go/build.sh` (`GOTOOLCHAIN`) with `.goversion` so local builds do not fall back to Go 1.26.0, and remove stale `docroot/xterm.js` from the embedded server docroot.
+* Harden SFTP client (`github.com/pkg/sftp`) against malicious or malformed server responses:
+  * Validate incoming SFTP packet framing and field bounds before `pkg/sftp` unmarshals them, and add panic recovery to SFTP background goroutines (`sftp get`, drag-and-drop uploads, `Getwd`, and tab completion).
+  * Reject `SSH_FXP_READDIR` filenames that contain `/` or resolve to `.` or `..` after `path.Base`, and use `Lstat` in recursive `rm -R` (`RemoveAll`) so symbolic links to directories are not followed.
+  * Reject 0-byte `SSH_FXP_DATA` packets (preventing an infinite read loop) and bound the number of entries accumulated in `ReadDirContext`.
+* Harden SSH client and forwarded agent (`golang.org/x/crypto/ssh`):
+  * Bound concurrent `"auth-agent@openssh.com"` channels, cap incoming agent request frames to 256 KiB before allocation, and reject disallowed request types (such as `SSH2_AGENTC_ADD_IDENTITY`) before `agent.ServeAgent` parses attacker-supplied keys.
+  * Implement `ssh.MultiAlgorithmSigner` on `dynSigner` and `agent.ExtendedAgent` (`SignWithFlags`) on `keyRing` and `forwardedAgent` so RSA keys and user certificates use `rsa-sha2-256` / `rsa-sha2-512` instead of falling back to deprecated SHA-1 (`ssh-rsa`).
+  * Close the session channel and drain remaining channel requests when a remote server sends a malformed `"exit-status"` or `"exit-signal"` request, preventing an SSH connection multiplexer deadlock.
+  * Reject deprecated SHA-1 (`ssh-rsa`) and DSA (`ssh-dss`) CA signatures in `checkCertificate` and support `no-touch-required` security-key (`sk-*`) CA signatures.
+* Prevent `golang.org/x/term` `Terminal.ReadLine` from entering an infinite synchronous 0-byte `Read` loop when receiving an unterminated escape sequence longer than 256 bytes.
+* Fix a trailing-backslash parsing bug in `shellwords.Parse` that could cause a slice-bounds panic during tab auto-completion.
+* Set upstream TCP write deadlines and WebSocket `HandshakeTimeout` in `sshterm-server`.
+* Harden `@xterm/xterm` terminal handling in `docroot/ssh.mjs`:
+  * Clamp `CSI Ps b` (`REP`) and `CSI I`, `Z`, `L`, `M`, `S`, `T` parameters to terminal dimensions to prevent `RangeError` crashes (which wedged `WriteBuffer` and deadlocked WASM writes) and $2^{31}-1$ synchronous main-thread loops.
+  * Cap chained `OSC 4` color queries and `OSC 8` hyperlink markers, sanitize and truncate `OSC 0`/`OSC 2` window titles while reusing a single toast element in `_showMessage`, and reset terminal modes and pending input buffers when an SSH or SFTP session exits.
+
 ## v0.11.5
 
 ### :star: Feature improvements

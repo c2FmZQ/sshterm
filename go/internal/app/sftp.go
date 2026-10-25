@@ -43,6 +43,7 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/term"
 
+	"github.com/c2FmZQ/sshterm/internal/depfix"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 	"github.com/c2FmZQ/sshterm/internal/shellwords"
 	"github.com/c2FmZQ/sshterm/internal/termsafe"
@@ -94,19 +95,30 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 	}
 	go sshKeepAlive(ctx, c, cancel)
 
-	client, err := sftp.NewClient(c)
+	client, err := depfix.NewSFTPClient(c)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
 	a.term.Printf("\x1b]0;sftp %s\x07", target)
-	defer a.term.Printf("\x1b]0;sshterm\x07")
+	defer func() {
+		a.term.ResetSessionState()
+		a.term.Printf("\x1b]0;sshterm\x07")
+	}()
 
 	raw := a.term.Raw()
 
-	t := term.NewTerminal(raw, "sftp> ")
-	cwd, err := client.Getwd()
+	t := term.NewTerminal(depfix.WrapTermReadWriter(raw), "sftp> ")
+	var cwd string
+	jsutil.TryCatch(
+		func() {
+			cwd, err = client.Getwd()
+		},
+		func(p any) {
+			err = fmt.Errorf("panic: %v", p)
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
@@ -300,7 +312,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 				for _, dir := range args {
 					var err error
 					if ctx.Bool("R") {
-						err = client.RemoveAll(joinPath(cwd, dir))
+						err = depfix.RemoveAll(client, joinPath(cwd, dir))
 					} else {
 						err = client.Remove(joinPath(cwd, dir))
 					}
@@ -674,7 +686,14 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 	}
 	t.AutoCompleteCallback = func(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
 		var options []string
-		newLine, newPos, options, ok = ac.autoComplete(line, pos, key)
+		jsutil.TryCatch(
+			func() {
+				newLine, newPos, options, ok = ac.autoComplete(line, pos, key)
+			},
+			func(err any) {
+				ok = false
+			},
+		)
 		if len(options) > 0 {
 			var w int
 			for _, o := range options {
@@ -710,14 +729,21 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 		event.Call("stopPropagation")
 		files := jsutil.AcceptFileDrop(event)
 		go func() {
-			a.term.Printf("\n")
-			for _, f := range files {
-				a.term.Printf("%s ", f.Name)
-				if err := a.sftpUploadFile(client, f, joinPath(cwd, path.Base(f.Name))); err != nil {
-					a.term.Errorf("drop: %s", termsafe.Text(err.Error()))
-					return
-				}
-			}
+			jsutil.TryCatch(
+				func() {
+					a.term.Printf("\n")
+					for _, f := range files {
+						a.term.Printf("%s ", f.Name)
+						if err := a.sftpUploadFile(client, f, joinPath(cwd, path.Base(f.Name))); err != nil {
+							a.term.Errorf("drop: %s", termsafe.Text(err.Error()))
+							return
+						}
+					}
+				},
+				func(err any) {
+					a.term.Errorf("drop: %v", err)
+				},
+			)
 		}()
 		return nil
 	})

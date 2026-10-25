@@ -30,6 +30,100 @@ function isTest() {
   return window.location.pathname.indexOf('tests.html') !== -1;
 }
 
+export const workarounds = {
+  // Protects @xterm/xterm (5.5.0) InputHandler.repeatPrecedingCharacter
+  // (CSI Ps b) from throwing an uncaught RangeError on large Ps values and
+  // permanently wedging WriteBuffer.
+  csiRepGuard: true,
+
+  // Protects @xterm/xterm (5.5.0) InputHandler from 2^31-1 synchronous
+  // while(param--) loops in CSI I, Z, L, M, S, and T.
+  csiLoopGuard: true,
+
+  // Protects @xterm/xterm (5.5.0) from amplified OSC 4 color query floods
+  // and unbounded OSC 8 hyperlink Marker/listener retention.
+  oscQueryAndLinkGuard: true,
+};
+
+export function sanitizeTitle(title) {
+  const clean = String(title).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim();
+  return clean.length > 128 ? clean.slice(0, 128) + '…' : clean;
+}
+
+export function applyXtermWorkarounds(term, flags = workarounds) {
+  const disposables = [];
+  const registerClampCsi = (final, getMax) => {
+    if (term._core && typeof term._core.registerCsiHandler === 'function') {
+      disposables.push(
+        term._core.registerCsiHandler({ final }, params => {
+          const active = final === 'b' ? flags.csiRepGuard : flags.csiLoopGuard;
+          if (!active) return false;
+          const maxVal = Math.max(1, getMax());
+          if (params.length > 0 && params.params[0] > maxVal) {
+            params.params[0] = maxVal;
+          }
+          return false;
+        })
+      );
+    } else {
+      disposables.push(
+        term.parser.registerCsiHandler({ final }, params => {
+          const active = final === 'b' ? flags.csiRepGuard : flags.csiLoopGuard;
+          if (!active) return false;
+          const maxVal = Math.max(1, getMax());
+          const p0 = typeof params[0] === 'number' ? params[0] : 0;
+          return p0 > maxVal;
+        })
+      );
+    }
+  };
+
+  registerClampCsi('b', () => term.cols);
+  registerClampCsi('I', () => term.cols);
+  registerClampCsi('Z', () => term.cols);
+  registerClampCsi('L', () => term.rows);
+  registerClampCsi('M', () => term.rows);
+  registerClampCsi('S', () => term.rows);
+  registerClampCsi('T', () => term.rows);
+
+  disposables.push(
+    term.parser.registerOscHandler(4, data => {
+      if (!flags.oscQueryAndLinkGuard) return false;
+      let queries = 0;
+      for (let i = 0; i < data.length; i++) {
+        if (data.charCodeAt(i) === 63 /* '?' */) {
+          queries++;
+          if (queries > 16) return true;
+        }
+      }
+      return false;
+    })
+  );
+
+  let lastLinkLine = -1;
+  let linksOnLine = 0;
+  disposables.push(
+    term.parser.registerOscHandler(8, data => {
+      if (!flags.oscQueryAndLinkGuard) return false;
+      if (data === ';') return false;
+      const buf = term.buffer?.active;
+      const line = buf ? buf.baseY + buf.cursorY : 0;
+      if (line !== lastLinkLine) {
+        lastLinkLine = line;
+        linksOnLine = 0;
+      }
+      linksOnLine++;
+      const totalMarkers = term._core?.markers ? term._core.markers.length : 0;
+      if (linksOnLine > 32 || totalMarkers > 256 || data.length > 2048) {
+        return true;
+      }
+      return false;
+    })
+  );
+
+  return disposables;
+}
+
 class TerminalManager {
   constructor(elem, setTitle, onBell) {
     this.term = new Terminal({
@@ -42,7 +136,10 @@ class TerminalManager {
     this.term.open(elem);
     this.fitAddon.fit();
 
+    const workaroundDisposables = applyXtermWorkarounds(this.term, workarounds);
+
     this.disposables = [
+      ...workaroundDisposables,
       this.term.onTitleChange(setTitle),
       this.term.onBell(onBell),
       this.term.onSelectionChange(() => {
@@ -177,7 +274,8 @@ export class TabManager {
     this.screens[b.id] = { e, b };
     this.screens[b.id].title = 'sshterm';
 
-    const setTitle = title => {
+    const setTitle = rawTitle => {
+      const title = sanitizeTitle(rawTitle);
       this.screens[b.id].title = title;
       this.screens[b.id].b.title = title;
       document.querySelector('head title').textContent = title;
@@ -231,15 +329,33 @@ export class TabManager {
   }
 
   _showMessage(element, text) {
-    const msg = document.createElement('div');
-    msg.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
-    msg.textContent = text;
-    element.appendChild(msg);
-    setTimeout(() => element.removeChild(msg), 3000);
+    const safeText = sanitizeTitle(text);
+    let msg = element._toastMsg;
+    if (!msg || msg.parentNode !== element) {
+      msg = document.createElement('div');
+      msg.className = 'sshterm-toast';
+      msg.style = 'position: absolute; bottom: 0; right: 0; max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black; z-index: 10;';
+      element.appendChild(msg);
+      element._toastMsg = msg;
+    }
+    msg.textContent = safeText;
+    if (element._toastTimer) {
+      clearTimeout(element._toastTimer);
+    }
+    element._toastTimer = setTimeout(() => {
+      if (msg.parentNode === element) {
+        element.removeChild(msg);
+      }
+      element._toastMsg = null;
+      element._toastTimer = null;
+    }, 3000);
   }
 }
 
 window.sshApp = {};
+window.sshApp.workarounds = workarounds;
+window.sshApp.applyXtermWorkarounds = applyXtermWorkarounds;
+window.sshApp.Terminal = Terminal;
 window.sshApp.exited = null;
 window.sshApp.ready = new Promise(resolve => {
   window.sshApp.sshIsReady = () => {

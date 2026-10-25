@@ -638,10 +638,15 @@ func (s *sshServer) agentTest(w io.Writer, sconn *ssh.ServerConn, forwarded bool
 		return
 	}
 	fmt.Fprintf(w, "agent-test: list: %d keys\n", len(keys))
-	if _, err := client.Sign(keys[0], []byte("data")); err != nil {
+	if sig, err := client.Sign(keys[0], []byte("data")); err != nil {
 		fmt.Fprintf(w, "agent-test: sign: %v\n", err)
 	} else {
-		fmt.Fprintf(w, "agent-test: sign: ok\n")
+		fmt.Fprintf(w, "agent-test: sign: ok (%s)\n", sig.Format)
+	}
+	if sig, err := client.SignWithFlags(keys[0], []byte("data"), agent.SignatureFlagRsaSha512); err != nil {
+		fmt.Fprintf(w, "agent-test: sign-sha512: %v\n", err)
+	} else {
+		fmt.Fprintf(w, "agent-test: sign-sha512: ok (%s)\n", sig.Format)
 	}
 	fmt.Fprintf(w, "agent-test: lock: %v\n", client.Lock([]byte("x")))
 	fmt.Fprintf(w, "agent-test: removeall: %v\n", client.RemoveAll())
