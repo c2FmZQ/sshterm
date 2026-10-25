@@ -343,7 +343,7 @@ func (a *App) sshClientFromConn(ctx context.Context, c net.Conn, username, hostn
 		return nil, err
 	}
 
-	return ssh.NewClient(depfix.WrapSSHConn(conn), chans, reqs), nil
+	return ssh.NewClient(conn, chans, reqs), nil
 }
 
 func (a *App) hostCertificateCallback(hostname string, ep *endpoint, cert *ssh.Certificate) error {

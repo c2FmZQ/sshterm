@@ -109,16 +109,8 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 
 	raw := a.term.Raw()
 
-	t := term.NewTerminal(depfix.WrapTermReadWriter(raw), "sftp> ")
-	var cwd string
-	jsutil.TryCatch(
-		func() {
-			cwd, err = client.Getwd()
-		},
-		func(p any) {
-			err = fmt.Errorf("panic: %v", p)
-		},
-	)
+	t := term.NewTerminal(raw, "sftp> ")
+	cwd, err := client.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
@@ -686,14 +678,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 	}
 	t.AutoCompleteCallback = func(line string, pos int, key rune) (newLine string, newPos int, ok bool) {
 		var options []string
-		jsutil.TryCatch(
-			func() {
-				newLine, newPos, options, ok = ac.autoComplete(line, pos, key)
-			},
-			func(err any) {
-				ok = false
-			},
-		)
+		newLine, newPos, options, ok = ac.autoComplete(line, pos, key)
 		if len(options) > 0 {
 			var w int
 			for _, o := range options {
@@ -729,21 +714,14 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 		event.Call("stopPropagation")
 		files := jsutil.AcceptFileDrop(event)
 		go func() {
-			jsutil.TryCatch(
-				func() {
-					a.term.Printf("\n")
-					for _, f := range files {
-						a.term.Printf("%s ", f.Name)
-						if err := a.sftpUploadFile(client, f, joinPath(cwd, path.Base(f.Name))); err != nil {
-							a.term.Errorf("drop: %s", termsafe.Text(err.Error()))
-							return
-						}
-					}
-				},
-				func(err any) {
-					a.term.Errorf("drop: %v", err)
-				},
-			)
+			a.term.Printf("\n")
+			for _, f := range files {
+				a.term.Printf("%s ", f.Name)
+				if err := a.sftpUploadFile(client, f, joinPath(cwd, path.Base(f.Name))); err != nil {
+					a.term.Errorf("drop: %s", termsafe.Text(err.Error()))
+					return
+				}
+			}
 		}()
 		return nil
 	})

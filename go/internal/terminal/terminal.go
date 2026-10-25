@@ -38,7 +38,6 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/c2FmZQ/sshterm/internal/depfix"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 )
 
@@ -55,7 +54,7 @@ func New(ctx context.Context, t js.Value) *Terminal {
 			onData:   make(map[int]func(k string) any),
 		},
 	}
-	tt.vt = term.NewTerminal(depfix.WrapTermReadWriter(tt.tw), "")
+	tt.vt = term.NewTerminal(tt.tw, "")
 	tt.Escape = tt.vt.Escape
 	tt.setDefaultPrompt()
 

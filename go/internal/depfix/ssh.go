@@ -25,23 +25,13 @@ package depfix
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-)
-
-const (
-	agentFailureMsg        = 5
-	agentRequestIdentities = 11
-	agentSignRequest       = 13
 )
 
 var (
@@ -56,15 +46,12 @@ var (
 	// channel upon reading a 4-byte length header).
 	MaxAgentRequestBytes uint32 = 256 * 1024
 
-	ErrAgentRequestTooLarge  = errors.New("ssh/agent: request exceeds maximum allowed size")
-	ErrDeprecatedCertSigAlgo = errors.New("certificate signature uses deprecated algorithm")
-	ErrInvalidCertSignature  = errors.New("certificate signature is invalid")
+	ErrAgentRequestTooLarge = errors.New("ssh/agent: request exceeds maximum allowed size")
 )
 
 // ForwardToAgent routes incoming "auth-agent@openssh.com" channels on client to
 // keyring. When EnableSSHAgentGuard is true, it limits concurrent agent
-// channels, caps request frame sizes to MaxAgentRequestBytes, and rejects
-// non-list/sign requests before agent.ServeAgent parses private key payloads.
+// channels and caps request frame sizes to MaxAgentRequestBytes.
 func ForwardToAgent(client *ssh.Client, keyring agent.Agent) error {
 	if !EnableSSHAgentGuard {
 		return agent.ForwardToAgent(client, keyring)
@@ -88,6 +75,7 @@ func ForwardToAgent(client *ssh.Client, keyring agent.Agent) error {
 				continue
 			}
 			go ssh.DiscardRequests(reqs)
+			go io.Copy(io.Discard, ch.Stderr())
 			go func(c ssh.Channel) {
 				defer func() {
 					_ = c.Close()
@@ -102,7 +90,7 @@ func ForwardToAgent(client *ssh.Client, keyring agent.Agent) error {
 
 // ServeAgent serves the SSH agent protocol over c. When EnableSSHAgentGuard is
 // true, it wraps c in an agentSafeChannel that enforces MaxAgentRequestBytes
-// and filters out disallowed message types before agent.ServeAgent reads them.
+// before agent.ServeAgent pre-allocates the request buffer.
 func ServeAgent(keyring agent.Agent, c io.ReadWriter) error {
 	if !EnableSSHAgentGuard {
 		return agent.ServeAgent(keyring, c)
@@ -134,224 +122,22 @@ func (a *agentSafeChannel) Read(p []byte) (int, error) {
 }
 
 func (a *agentSafeChannel) readNextFrame() error {
-	for {
-		var hdr [4]byte
-		if _, err := io.ReadFull(a.rw, hdr[:]); err != nil {
-			return err
-		}
-		length := binary.BigEndian.Uint32(hdr[:])
-		if length == 0 || length > MaxAgentRequestBytes {
-			return fmt.Errorf("%w: %d bytes", ErrAgentRequestTooLarge, length)
-		}
-		var msgType [1]byte
-		if _, err := io.ReadFull(a.rw, msgType[:]); err != nil {
-			if errors.Is(err, io.EOF) {
-				return io.ErrUnexpectedEOF
-			}
-			return err
-		}
-		// Only allow RequestIdentities (11) and SignRequest (13) to reach
-		// agent.ServeAgent. For any other message type (such as AddIdentity
-		// which triggers expensive RSA key validation in ServeAgent before
-		// forwardedAgent.Add is called), discard the payload and return
-		// SSH_AGENT_FAILURE immediately.
-		if msgType[0] != agentRequestIdentities && msgType[0] != agentSignRequest {
-			if length > 1 {
-				if _, err := io.CopyN(io.Discard, a.rw, int64(length-1)); err != nil {
-					return err
-				}
-			}
-			if _, err := a.rw.Write([]byte{0, 0, 0, 1, agentFailureMsg}); err != nil {
-				return err
-			}
-			continue
-		}
-		payload := make([]byte, length-1)
-		if _, err := io.ReadFull(a.rw, payload); err != nil {
-			if errors.Is(err, io.EOF) {
-				return io.ErrUnexpectedEOF
-			}
-			return err
-		}
-		a.buf.Write(hdr[:])
-		a.buf.Write(msgType[:])
-		a.buf.Write(payload)
-		return nil
-	}
-}
-
-// WrapSSHConn wraps an ssh.Conn so that when EnableSSHSessionExitGuard is true,
-// malformed "exit-status" or "exit-signal" channel requests on "session"
-// channels close the session channel and drain remaining channel requests
-// rather than deadlocking the connection's multiplexer loop.
-func WrapSSHConn(c ssh.Conn) ssh.Conn {
-	if !EnableSSHSessionExitGuard {
-		return c
-	}
-	return &safeSSHConn{Conn: c}
-}
-
-type safeSSHConn struct {
-	ssh.Conn
-}
-
-func (s *safeSSHConn) OpenChannel(name string, data []byte) (ssh.Channel, <-chan *ssh.Request, error) {
-	ch, reqs, err := s.Conn.OpenChannel(name, data)
-	if err != nil || name != "session" || !EnableSSHSessionExitGuard {
-		return ch, reqs, err
-	}
-	out := make(chan *ssh.Request)
-	go func() {
-		defer close(out)
-		for msg := range reqs {
-			malformedExit := false
-			switch msg.Type {
-			case "exit-status":
-				if len(msg.Payload) < 4 {
-					malformedExit = true
-				}
-			case "exit-signal":
-				var sigval struct {
-					Signal     string
-					CoreDumped bool
-					Error      string
-					Lang       string
-				}
-				if err := ssh.Unmarshal(msg.Payload, &sigval); err != nil {
-					malformedExit = true
-				}
-			}
-			out <- msg
-			if malformedExit {
-				// (*ssh.Session).wait returns early upon receiving a
-				// malformed exit-status/exit-signal without closing the
-				// channel or draining reqs. Close ch to unblock
-				// (*ssh.Session).Wait's copyFuncs and drain remaining
-				// requests so mux.loop() cannot block.
-				_ = ch.Close()
-				go ssh.DiscardRequests(reqs)
-				return
-			}
-		}
-	}()
-	return ch, out, nil
-}
-
-// VerifyCertificateSignature checks the cryptographic signature on cert. When
-// EnableCertSignatureGuard is true, it rejects weak SHA-1 (ssh-rsa) and DSA
-// (ssh-dss) CA signatures and accepts security-key (sk-*) CA signatures that
-// omit the UserPresence flag (matching OpenSSH and ssh.CertChecker.CheckCert).
-func VerifyCertificateSignature(cert *ssh.Certificate) error {
-	if cert == nil || cert.SignatureKey == nil || cert.Signature == nil {
-		return ErrInvalidCertSignature
-	}
-	if EnableCertSignatureGuard {
-		switch cert.Signature.Format {
-		case ssh.KeyAlgoRSA, ssh.KeyAlgoDSA:
-			return fmt.Errorf("%w: %s", ErrDeprecatedCertSigAlgo, cert.Signature.Format)
-		}
-	}
-	c2 := *cert
-	c2.Signature = nil
-	signBytes := c2.Marshal()
-	if len(signBytes) < 4 {
-		return ErrInvalidCertSignature
-	}
-	signedData := signBytes[:len(signBytes)-4]
-	err := cert.SignatureKey.Verify(signedData, cert.Signature)
-	if err == nil {
-		return nil
-	}
-	if EnableCertSignatureGuard {
-		switch cert.SignatureKey.Type() {
-		case ssh.KeyAlgoSKECDSA256, ssh.KeyAlgoSKED25519:
-			if verifySKSignatureWithoutUP(cert.SignatureKey, signedData, cert.Signature) == nil {
-				return nil
-			}
-		}
-	}
-	return ErrInvalidCertSignature
-}
-
-func verifySKSignatureWithoutUP(pub ssh.PublicKey, data []byte, sig *ssh.Signature) error {
-	if sig == nil || sig.Format != pub.Type() {
-		return ErrInvalidCertSignature
-	}
-	cryptoPub, ok := pub.(ssh.CryptoPublicKey)
-	if !ok {
-		return ErrInvalidCertSignature
-	}
-	var skf struct {
-		Flags   byte
-		Counter uint32
-	}
-	if err := ssh.Unmarshal(sig.Rest, &skf); err != nil {
+	var hdr [4]byte
+	if _, err := io.ReadFull(a.rw, hdr[:]); err != nil {
 		return err
 	}
-	switch pub.Type() {
-	case ssh.KeyAlgoSKECDSA256:
-		var w struct {
-			Name        string
-			Curve       string
-			KeyBytes    []byte
-			Application string
-		}
-		if err := ssh.Unmarshal(pub.Marshal(), &w); err != nil {
-			return err
-		}
-		var ecSig struct {
-			R *big.Int
-			S *big.Int
-		}
-		if err := ssh.Unmarshal(sig.Blob, &ecSig); err != nil {
-			return err
-		}
-		ecPub, ok := cryptoPub.CryptoPublicKey().(*ecdsa.PublicKey)
-		if !ok {
-			return ErrInvalidCertSignature
-		}
-		appDigest := sha256.Sum256([]byte(w.Application))
-		dataDigest := sha256.Sum256(data)
-		blob := ssh.Marshal(struct {
-			ApplicationDigest []byte `ssh:"rest"`
-			Flags             byte
-			Counter           uint32
-			MessageDigest     []byte `ssh:"rest"`
-		}{appDigest[:], skf.Flags, skf.Counter, dataDigest[:]})
-		digest := sha256.Sum256(blob)
-		if ecdsa.Verify(ecPub, digest[:], ecSig.R, ecSig.S) {
-			return nil
-		}
-	case ssh.KeyAlgoSKED25519:
-		var w struct {
-			Name        string
-			KeyBytes    []byte
-			Application string
-		}
-		if err := ssh.Unmarshal(pub.Marshal(), &w); err != nil {
-			return err
-		}
-		var edSig struct {
-			Signature []byte `ssh:"rest"`
-		}
-		if err := ssh.Unmarshal(sig.Blob, &edSig); err != nil {
-			return err
-		}
-		edPub, ok := cryptoPub.CryptoPublicKey().(ed25519.PublicKey)
-		if !ok {
-			return ErrInvalidCertSignature
-		}
-		appDigest := sha256.Sum256([]byte(w.Application))
-		dataDigest := sha256.Sum256(data)
-		blob := ssh.Marshal(struct {
-			ApplicationDigest []byte `ssh:"rest"`
-			Flags             byte
-			Counter           uint32
-			MessageDigest     []byte `ssh:"rest"`
-		}{appDigest[:], skf.Flags, skf.Counter, dataDigest[:]})
-		if ed25519.Verify(edPub, blob, edSig.Signature) {
-			return nil
-		}
+	length := binary.BigEndian.Uint32(hdr[:])
+	if length == 0 || length > MaxAgentRequestBytes {
+		return fmt.Errorf("%w: %d bytes", ErrAgentRequestTooLarge, length)
 	}
-	return ErrInvalidCertSignature
+	payload := make([]byte, length)
+	if _, err := io.ReadFull(a.rw, payload); err != nil {
+		if errors.Is(err, io.EOF) {
+			return io.ErrUnexpectedEOF
+		}
+		return err
+	}
+	a.buf.Write(hdr[:])
+	a.buf.Write(payload)
+	return nil
 }

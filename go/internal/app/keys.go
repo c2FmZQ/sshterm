@@ -48,7 +48,6 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/c2FmZQ/sshterm/internal/depfix"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 	"github.com/c2FmZQ/sshterm/internal/termsafe"
 	"github.com/c2FmZQ/sshterm/internal/webauthnsk"
@@ -832,9 +831,6 @@ func (s *dynSigner) PublicKey() ssh.PublicKey {
 }
 
 func (s *dynSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
-	if !depfix.EnableRSASHA2 {
-		return s.Signer.Sign(rand, data)
-	}
 	if as, ok := s.Signer.(ssh.AlgorithmSigner); ok {
 		return as.SignWithAlgorithm(rand, data, algorithm)
 	}
@@ -845,9 +841,6 @@ func (s *dynSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm str
 }
 
 func (s *dynSigner) Algorithms() []string {
-	if !depfix.EnableRSASHA2 {
-		return []string{s.Signer.PublicKey().Type()}
-	}
 	if mas, ok := s.Signer.(ssh.MultiAlgorithmSigner); ok {
 		return mas.Algorithms()
 	}

@@ -37,8 +37,6 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-
-	"github.com/c2FmZQ/sshterm/internal/depfix"
 )
 
 func (a *App) agentCommand() *cli.App {
@@ -295,7 +293,7 @@ func (r *keyRing) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.Sign
 	// Don't hold the lock while signing. With WebAuthn keys, Sign waits for
 	// the user to touch the security key.
 	r.mu.Unlock()
-	if !depfix.EnableRSASHA2 || flags == 0 {
+	if flags == 0 {
 		return signer.Sign(rand.Reader, data)
 	}
 	as, ok := signer.(ssh.AlgorithmSigner)
@@ -500,10 +498,8 @@ func (f *forwardedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags age
 		}
 	}
 	f.notify("[agent] %s requested a signature with key %q\n", f.host, name)
-	if depfix.EnableRSASHA2 {
-		if ea, ok := f.agent.(agent.ExtendedAgent); ok {
-			return ea.SignWithFlags(key, data, flags)
-		}
+	if ea, ok := f.agent.(agent.ExtendedAgent); ok {
+		return ea.SignWithFlags(key, data, flags)
 	}
 	return f.agent.Sign(key, data)
 }

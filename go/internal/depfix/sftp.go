@@ -29,8 +29,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path"
-	"strings"
 	"sync"
 
 	"github.com/pkg/sftp"
@@ -48,12 +46,6 @@ const (
 	sshFxpData    = 103
 	sshFxpName    = 104
 
-	sshFileXferAttrSize        = 0x00000001
-	sshFileXferAttrUIDGID      = 0x00000002
-	sshFileXferAttrPermissions = 0x00000004
-	sshFileXferAttrACmodTime   = 0x00000008
-	sshFileXferAttrExtended    = 0x80000000
-
 	maxSFTPPacketSize = 256 * 1024
 )
 
@@ -65,14 +57,13 @@ var (
 
 	ErrMalformedSFTPPacket = errors.New("sftp: malformed packet from server")
 	ErrZeroLengthSFTPData  = errors.New("sftp: zero-length SSH_FXP_DATA packet")
-	ErrInvalidSFTPFilename = errors.New("sftp: invalid filename in SSH_FXP_NAME response")
 	ErrTooManySFTPEntries  = errors.New("sftp: directory listing exceeds maximum entry limit")
 )
 
-// NewSFTPClient creates a new *sftp.Client over conn with path and resource
-// guards applied when enabled.
+// NewSFTPClient creates a new *sftp.Client over conn with resource guards
+// applied when EnableSFTPResourceGuard is enabled.
 func NewSFTPClient(conn *ssh.Client, opts ...sftp.ClientOption) (*sftp.Client, error) {
-	if !EnableSFTPPathAndRemoveGuard && !EnableSFTPResourceGuard {
+	if !EnableSFTPResourceGuard {
 		return sftp.NewClient(conn, opts...)
 	}
 	s, err := conn.NewSession()
@@ -102,10 +93,10 @@ func NewSFTPClient(conn *ssh.Client, opts ...sftp.ClientOption) (*sftp.Client, e
 	return client, nil
 }
 
-// NewSFTPClientPipe creates a new *sftp.Client over rd and wr with path and
-// resource guards applied when enabled.
+// NewSFTPClientPipe creates a new *sftp.Client over rd and wr with resource
+// guards applied when EnableSFTPResourceGuard is enabled.
 func NewSFTPClientPipe(rd io.Reader, wr io.WriteCloser, opts ...sftp.ClientOption) (*sftp.Client, error) {
-	if !EnableSFTPPathAndRemoveGuard && !EnableSFTPResourceGuard {
+	if !EnableSFTPResourceGuard {
 		return sftp.NewClientPipe(rd, wr, opts...)
 	}
 	sc := newSFTPSafeConn(rd, wr)
@@ -256,139 +247,28 @@ func (c *sftpSafeConn) validatePacket(pktType byte, data []byte) error {
 		if !EnableSFTPResourceGuard {
 			return nil
 		}
-		d, _, err := readStringSafe(rest)
-		if err != nil {
-			return nil
-		}
-		if len(d) == 0 {
+		if len(rest) >= 4 && binary.BigEndian.Uint32(rest[:4]) == 0 {
 			return ErrZeroLengthSFTPData
 		}
 		return nil
 
 	case sshFxpName:
 		isReaddir := c.isReaddirSID(sid, true)
-		if !isReaddir || (!EnableSFTPPathAndRemoveGuard && !EnableSFTPResourceGuard) {
-			return nil
-		}
-		if len(rest) < 4 {
+		if !isReaddir || !EnableSFTPResourceGuard || len(rest) < 4 {
 			return nil
 		}
 		count := binary.BigEndian.Uint32(rest[:4])
 		rest = rest[4:]
-		if EnableSFTPResourceGuard && count == 0 {
+		if count == 0 {
 			return fmt.Errorf("%w: zero count in SSH_FXP_NAME", ErrMalformedSFTPPacket)
 		}
 		// Each entry requires at least 12 bytes (filename len + longname len + attr flags).
 		if count > uint32(len(rest)/12) {
 			return nil
 		}
-		if EnableSFTPResourceGuard {
-			if err := c.addReaddirEntries(int(count)); err != nil {
-				return err
-			}
-		}
-		if !EnableSFTPPathAndRemoveGuard {
-			return nil
-		}
-		for i := uint32(0); i < count; i++ {
-			filename, r, err := readStringSafe(rest)
-			if err != nil {
-				return nil
-			}
-			if err := validateReaddirFilename(filename); err != nil {
-				return err
-			}
-			_, r, err = readStringSafe(r)
-			if err != nil {
-				return nil
-			}
-			r, err = skipAttrsSafe(r)
-			if err != nil {
-				return nil
-			}
-			rest = r
-		}
-		return nil
+		return c.addReaddirEntries(int(count))
 
 	default:
 		return nil
 	}
-}
-
-func validateReaddirFilename(filename string) error {
-	if filename == "." || filename == ".." {
-		return nil
-	}
-	if filename == "" || strings.ContainsAny(filename, "/\x00") {
-		return fmt.Errorf("%w: %q", ErrInvalidSFTPFilename, filename)
-	}
-	base := path.Base(filename)
-	if base == "." || base == ".." || base == "/" || base == "" {
-		return fmt.Errorf("%w: %q", ErrInvalidSFTPFilename, filename)
-	}
-	return nil
-}
-
-func readStringSafe(b []byte) (string, []byte, error) {
-	if len(b) < 4 {
-		return "", nil, fmt.Errorf("%w: truncated string length", ErrMalformedSFTPPacket)
-	}
-	n := binary.BigEndian.Uint32(b[:4])
-	b = b[4:]
-	if int64(n) > int64(len(b)) {
-		return "", nil, fmt.Errorf("%w: string length %d exceeds remaining %d bytes", ErrMalformedSFTPPacket, n, len(b))
-	}
-	return string(b[:n]), b[n:], nil
-}
-
-func skipAttrsSafe(b []byte) ([]byte, error) {
-	if len(b) < 4 {
-		return nil, fmt.Errorf("%w: truncated attrs flags", ErrMalformedSFTPPacket)
-	}
-	flags := binary.BigEndian.Uint32(b[:4])
-	b = b[4:]
-	if flags&sshFileXferAttrSize != 0 {
-		if len(b) < 8 {
-			return nil, fmt.Errorf("%w: truncated attr size", ErrMalformedSFTPPacket)
-		}
-		b = b[8:]
-	}
-	if flags&sshFileXferAttrUIDGID != 0 {
-		if len(b) < 8 {
-			return nil, fmt.Errorf("%w: truncated attr uid/gid", ErrMalformedSFTPPacket)
-		}
-		b = b[8:]
-	}
-	if flags&sshFileXferAttrPermissions != 0 {
-		if len(b) < 4 {
-			return nil, fmt.Errorf("%w: truncated attr permissions", ErrMalformedSFTPPacket)
-		}
-		b = b[4:]
-	}
-	if flags&sshFileXferAttrACmodTime != 0 {
-		if len(b) < 8 {
-			return nil, fmt.Errorf("%w: truncated attr acmodtime", ErrMalformedSFTPPacket)
-		}
-		b = b[8:]
-	}
-	if flags&sshFileXferAttrExtended != 0 {
-		if len(b) < 4 {
-			return nil, fmt.Errorf("%w: truncated attr extended count", ErrMalformedSFTPPacket)
-		}
-		count := binary.BigEndian.Uint32(b[:4])
-		b = b[4:]
-		if count > uint32(len(b)/8) {
-			return nil, fmt.Errorf("%w: attr extended count %d exceeds payload", ErrMalformedSFTPPacket, count)
-		}
-		for i := uint32(0); i < count; i++ {
-			var err error
-			if _, b, err = readStringSafe(b); err != nil {
-				return nil, err
-			}
-			if _, b, err = readStringSafe(b); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return b, nil
 }

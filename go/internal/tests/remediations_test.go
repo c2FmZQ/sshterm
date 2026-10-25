@@ -36,7 +36,6 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/c2FmZQ/sshterm/internal/app"
-	"github.com/c2FmZQ/sshterm/internal/depfix"
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 )
 
@@ -100,9 +99,8 @@ func TestXtermWorkarounds(t *testing.T) {
 	t.Run("CSIRepGuard", func(t *testing.T) {
 		t.Run("VulnerabilityWithoutRemediation", func(t *testing.T) {
 			term, cleanup := createTestTerm(t, map[string]any{
-				"csiRepGuard":          false,
-				"csiLoopGuard":         false,
-				"oscQueryAndLinkGuard": false,
+				"csiRepGuard":  false,
+				"csiLoopGuard": false,
 			})
 			defer cleanup()
 			writeTerm(t, term, "a")
@@ -125,9 +123,8 @@ func TestXtermWorkarounds(t *testing.T) {
 
 		t.Run("RemediationEnabled", func(t *testing.T) {
 			term, cleanup := createTestTerm(t, map[string]any{
-				"csiRepGuard":          true,
-				"csiLoopGuard":         true,
-				"oscQueryAndLinkGuard": true,
+				"csiRepGuard":  true,
+				"csiLoopGuard": true,
 			})
 			defer cleanup()
 			writeTerm(t, term, "a\x1b[2147483647bOK")
@@ -138,9 +135,8 @@ func TestXtermWorkarounds(t *testing.T) {
 	t.Run("CSILoopGuard", func(t *testing.T) {
 		t.Run("VulnerabilityWithoutRemediation", func(t *testing.T) {
 			term, cleanup := createTestTerm(t, map[string]any{
-				"csiRepGuard":          true,
-				"csiLoopGuard":         false,
-				"oscQueryAndLinkGuard": true,
+				"csiRepGuard":  true,
+				"csiLoopGuard": false,
 			})
 			defer cleanup()
 
@@ -160,9 +156,8 @@ func TestXtermWorkarounds(t *testing.T) {
 
 		t.Run("RemediationEnabled", func(t *testing.T) {
 			term, cleanup := createTestTerm(t, map[string]any{
-				"csiRepGuard":          true,
-				"csiLoopGuard":         true,
-				"oscQueryAndLinkGuard": true,
+				"csiRepGuard":  true,
+				"csiLoopGuard": true,
 			})
 			defer cleanup()
 			start := time.Now()
@@ -173,67 +168,7 @@ func TestXtermWorkarounds(t *testing.T) {
 		})
 	})
 
-	// 3. OSC 4 query amplification & OSC 8 hyperlink marker flood
-	t.Run("OSCQueryAndLinkGuard", func(t *testing.T) {
-		chainedOsc4 := "\x1b]4" + strings.Repeat(";0;?", 25) + "\x07"
-		floodOsc8 := strings.Repeat("\x1b]8;;https://example.com\x07", 50) + "\x1b]8;;\x07"
-
-		t.Run("VulnerabilityWithoutRemediation", func(t *testing.T) {
-			term, cleanup := createTestTerm(t, map[string]any{
-				"csiRepGuard":          true,
-				"csiLoopGuard":         true,
-				"oscQueryAndLinkGuard": false,
-			})
-			defer cleanup()
-
-			responses := 0
-			cb := js.FuncOf(func(this js.Value, args []js.Value) any {
-				responses++
-				return nil
-			})
-			defer cb.Release()
-			disp := term.Call("onData", cb)
-			writeTerm(t, term, chainedOsc4)
-			writeTerm(t, term, floodOsc8)
-			disp.Call("dispose")
-
-			if responses != 25 {
-				t.Fatalf("expected 25 OSC 4 responses without oscQueryAndLinkGuard, got %d", responses)
-			}
-			if got := term.Get("_core").Get("markers").Length(); got < 50 {
-				t.Fatalf("expected >= 50 OSC 8 markers without oscQueryAndLinkGuard, got %d", got)
-			}
-		})
-
-		t.Run("RemediationEnabled", func(t *testing.T) {
-			term, cleanup := createTestTerm(t, map[string]any{
-				"csiRepGuard":          true,
-				"csiLoopGuard":         true,
-				"oscQueryAndLinkGuard": true,
-			})
-			defer cleanup()
-
-			responses := 0
-			cb := js.FuncOf(func(this js.Value, args []js.Value) any {
-				responses++
-				return nil
-			})
-			defer cb.Release()
-			disp := term.Call("onData", cb)
-			writeTerm(t, term, chainedOsc4)
-			writeTerm(t, term, floodOsc8)
-			disp.Call("dispose")
-
-			if responses != 0 {
-				t.Fatalf("expected 0 OSC 4 responses for >16 chained query flood, got %d", responses)
-			}
-			if got := term.Get("_core").Get("markers").Length(); got > 32 {
-				t.Fatalf("expected <= 32 OSC 8 markers with oscQueryAndLinkGuard, got %d", got)
-			}
-		})
-	})
-
-	// 4. Title sanitization and _showMessage toast DOM reuse
+	// 3. Title sanitization and _showMessage toast DOM reuse
 	t.Run("TitleOverlay", func(t *testing.T) {
 		screen := doc.Call("querySelector", `[id^="screen-"]`)
 		if screen.IsNull() || screen.IsUndefined() {
@@ -254,7 +189,7 @@ func TestXtermWorkarounds(t *testing.T) {
 	})
 }
 
-func TestRSASHA2AndForwardedAgentRemediation(t *testing.T) {
+func TestRSASHA2ForwardedAgent(t *testing.T) {
 	a, err := app.New(appConfig)
 	if err != nil {
 		t.Fatalf("app.New: %v", err)
@@ -284,23 +219,8 @@ func TestRSASHA2AndForwardedAgentRemediation(t *testing.T) {
 		}},
 		{Type: "agent add rsatest\n", Expect: "Enter the passphrase for rsatest:"},
 		{Type: "foobar\n", Expect: prompt},
-	})
-
-	// 1. With EnableRSASHA2 disabled, forwarded agent SignWithFlags(SignatureFlagRsaSha512)
-	// ignores the flag and returns "ssh-rsa" (SHA-1).
-	depfix.WithDisabled(&depfix.EnableRSASHA2, func() {
-		script(t, []line{
-			{Type: "ssh -A testuser@test-server agent-test\n", Expect: `(?s)Host key for test-server.*Choice>`},
-			{Type: "3\n", Expect: `\[agent\] test-server requested a signature with key "rsatest"`},
-			{Expect: `(?s)agent-test: sign: ok \(ssh-rsa\).*agent-test: sign-sha512: ok \(ssh-rsa\).*agent-test: removeall: agent: failure`},
-			{Wait: time.Second, Type: "\n\n", Expect: prompt},
-		})
-	})
-
-	// 2. With EnableRSASHA2 enabled, forwarded agent SignWithFlags(SignatureFlagRsaSha512)
-	// returns "rsa-sha2-512".
-	script(t, []line{
-		{Type: "ssh -A testuser@test-server agent-test\n", Expect: `\[agent\] test-server requested a signature with key "rsatest"`},
+		{Type: "ssh -A testuser@test-server agent-test\n", Expect: `(?s)Host key for test-server.*Choice>`},
+		{Type: "3\n", Expect: `\[agent\] test-server requested a signature with key "rsatest"`},
 		{Expect: `(?s)agent-test: sign: ok \(ssh-rsa\).*agent-test: sign-sha512: ok \(rsa-sha2-512\).*agent-test: removeall: agent: failure`},
 		{Wait: time.Second, Type: "\n\n", Expect: prompt},
 		{Type: "exit\n"},

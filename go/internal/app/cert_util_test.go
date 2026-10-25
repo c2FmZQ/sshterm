@@ -26,6 +26,8 @@ package app
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -87,6 +89,46 @@ func TestCheckCertificate(t *testing.T) {
 		}
 		t.Logf("[#%d] OK checkCertificate(): %v", i, err)
 	}
+
+	// Verify that SHA-1 (ssh-rsa) CA signatures are rejected while RSA-SHA2-512 is accepted.
+	rsaPriv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey: %v", err)
+	}
+	rsaSigner, err := ssh.NewSignerFromKey(rsaPriv)
+	if err != nil {
+		t.Fatalf("ssh.NewSignerFromKey: %v", err)
+	}
+	algSigner := rsaSigner.(ssh.AlgorithmSigner)
+
+	sha1Cert := &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: ssh.CertTimeInfinity}
+	if err := sha1Cert.SignCert(rand.Reader, &fixedAlgoSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSA}); err != nil {
+		t.Fatalf("SignCert(ssh-rsa): %v", err)
+	}
+	if err := checkCertificate(sha1Cert, ssh.HostCert); err == nil {
+		t.Errorf("expected checkCertificate to reject ssh-rsa (SHA-1) CA signature")
+	}
+
+	sha512Cert := &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: ssh.CertTimeInfinity}
+	if err := sha512Cert.SignCert(rand.Reader, &fixedAlgoSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSASHA512}); err != nil {
+		t.Fatalf("SignCert(rsa-sha2-512): %v", err)
+	}
+	if err := checkCertificate(sha512Cert, ssh.HostCert); err != nil {
+		t.Errorf("expected checkCertificate to accept rsa-sha2-512 CA signature, got: %v", err)
+	}
+}
+
+type fixedAlgoSigner struct {
+	ssh.AlgorithmSigner
+	algo string
+}
+
+func (s *fixedAlgoSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+	return s.AlgorithmSigner.SignWithAlgorithm(rand, data, s.algo)
+}
+
+func (s *fixedAlgoSigner) SignWithAlgorithm(rand io.Reader, data []byte, _ string) (*ssh.Signature, error) {
+	return s.AlgorithmSigner.SignWithAlgorithm(rand, data, s.algo)
 }
 
 func TestCheckHostCertPrincipal(t *testing.T) {

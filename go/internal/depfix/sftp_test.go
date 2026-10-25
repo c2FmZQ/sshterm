@@ -177,121 +177,50 @@ func TestSFTPPacketGuard(t *testing.T) {
 	}
 }
 
-func TestSFTPPathAndRemoveGuard(t *testing.T) {
-	// 1. Verify ReadDirContext path traversal filename ("/..") handling.
-	makeReaddirServer := func(t *testing.T) *sftp.Client {
-		var sentEntry atomic.Bool
-		return runMockSFTPSession(t, func(pktType byte, sid uint32, wr io.Writer) {
-			switch pktType {
-			case sshFxpOpendir:
-				var b [9]byte
-				binary.BigEndian.PutUint32(b[0:4], sid)
-				binary.BigEndian.PutUint32(b[4:8], 1)
-				b[8] = 'h'
-				_, _ = wr.Write(buildSFTPPacket(sshFxpHandle, b[:]))
-			case sshFxpReaddir:
-				if !sentEntry.Swap(true) {
-					// Return 1 entry with filename "/.."
-					var payload []byte
-					var hdr [8]byte
-					binary.BigEndian.PutUint32(hdr[0:4], sid)
-					binary.BigEndian.PutUint32(hdr[4:8], 1) // count = 1
-					payload = append(payload, hdr[:]...)
-					// filename = "/.."
-					payload = append(payload, 0, 0, 0, 3, '/', '.', '.')
-					// longname = "/.."
-					payload = append(payload, 0, 0, 0, 3, '/', '.', '.')
-					// attrs flags = 0
-					payload = append(payload, 0, 0, 0, 0)
-					_, _ = wr.Write(buildSFTPPacket(sshFxpName, payload))
-					return
-				}
-				// Second READDIR returns SSH_FX_EOF (1).
-				var b [16]byte
-				binary.BigEndian.PutUint32(b[0:4], sid)
-				binary.BigEndian.PutUint32(b[4:8], 1)
-				_, _ = wr.Write(buildSFTPPacket(sshFxpStatus, b[:]))
-			default:
-				// SSH_FX_OK (0) for SSH_FXP_CLOSE
-				var b [16]byte
-				binary.BigEndian.PutUint32(b[0:4], sid)
-				_, _ = wr.Write(buildSFTPPacket(sshFxpStatus, b[:]))
-			}
-		})
+func TestSFTPRemoveAllSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetDir := filepath.Join(tmpDir, "target")
+	if err := os.Mkdir(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secretFile := filepath.Join(targetDir, "keep.txt")
+	if err := os.WriteFile(secretFile, []byte("important"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(tmpDir, "link_to_target")
+	if err := os.Symlink(targetDir, linkPath); err != nil {
+		t.Fatal(err)
 	}
 
-	t.Run("ReadDirTraversal/VulnerabilityWithoutRemediation", func(t *testing.T) {
-		WithDisabled(&EnableSFTPPathAndRemoveGuard, func() {
-			client := makeReaddirServer(t)
-			entries, err := client.ReadDir("/dir")
-			if err != nil {
-				t.Fatalf("ReadDir: %v", err)
-			}
-			if len(entries) != 1 || entries[0].Name() != ".." {
-				t.Fatalf("expected pkg/sftp ReadDir to return Name() == \"..\" for \"/..\", got %v; if fixed upstream, remove EnableSFTPPathAndRemoveGuard", entries)
-			}
-		})
+	c1, s1 := io.Pipe()
+	s2, c2 := io.Pipe()
+	srv, err := sftp.NewServer(struct {
+		io.Reader
+		io.WriteCloser
+	}{c1, c2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_ = srv.Serve()
+	}()
+	t.Cleanup(func() {
+		_ = srv.Close()
 	})
-
-	t.Run("ReadDirTraversal/RemediationEnabled", func(t *testing.T) {
-		client := makeReaddirServer(t)
-		_, err := client.ReadDir("/dir")
-		if err == nil {
-			t.Fatal("expected ReadDir to reject \"/..\" filename when EnableSFTPPathAndRemoveGuard is enabled")
-		}
-	})
-
-	// 2. Regression test: RemoveAll symlink handling against a real local sftp.Server.
-	setupSymlinkTree := func(t *testing.T) (string, string, string, *sftp.Client) {
-		t.Helper()
-		tmpDir := t.TempDir()
-		targetDir := filepath.Join(tmpDir, "target")
-		if err := os.Mkdir(targetDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		secretFile := filepath.Join(targetDir, "keep.txt")
-		if err := os.WriteFile(secretFile, []byte("important"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		linkPath := filepath.Join(tmpDir, "link_to_target")
-		if err := os.Symlink(targetDir, linkPath); err != nil {
-			t.Fatal(err)
-		}
-
-		c1, s1 := io.Pipe()
-		s2, c2 := io.Pipe()
-		srv, err := sftp.NewServer(struct {
-			io.Reader
-			io.WriteCloser
-		}{c1, c2})
-		if err != nil {
-			t.Fatal(err)
-		}
-		go func() {
-			_ = srv.Serve()
-		}()
-		t.Cleanup(func() {
-			_ = srv.Close()
-		})
-		client, err := NewSFTPClientPipe(s2, s1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return linkPath, secretFile, targetDir, client
+	client, err := NewSFTPClientPipe(s2, s1)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	t.Run("RemoveAllSymlink/RemediationEnabled", func(t *testing.T) {
-		linkPath, secretFile, _, client := setupSymlinkTree(t)
-		if err := client.RemoveAll(linkPath); err != nil {
-			t.Fatalf("RemoveAll: %v", err)
-		}
-		if _, err := os.Lstat(linkPath); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("expected symlink %s to be removed, err = %v", linkPath, err)
-		}
-		if _, err := os.Stat(secretFile); err != nil {
-			t.Errorf("expected target file %s to remain intact, err = %v", secretFile, err)
-		}
-	})
+	if err := client.RemoveAll(linkPath); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+	if _, err := os.Lstat(linkPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("expected symlink %s to be removed, err = %v", linkPath, err)
+	}
+	if _, err := os.Stat(secretFile); err != nil {
+		t.Errorf("expected target file %s to remain intact, err = %v", secretFile, err)
+	}
 }
 
 func TestSFTPResourceGuard(t *testing.T) {

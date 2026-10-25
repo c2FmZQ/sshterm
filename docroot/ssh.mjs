@@ -39,10 +39,6 @@ export const workarounds = {
   // Protects @xterm/xterm (5.5.0) InputHandler from 2^31-1 synchronous
   // while(param--) loops in CSI I, Z, L, M, S, and T.
   csiLoopGuard: true,
-
-  // Protects @xterm/xterm (5.5.0) from amplified OSC 4 color query floods
-  // and unbounded OSC 8 hyperlink Marker/listener retention.
-  oscQueryAndLinkGuard: true,
 };
 
 export function sanitizeTitle(title) {
@@ -85,41 +81,6 @@ export function applyXtermWorkarounds(term, flags = workarounds) {
   registerClampCsi('M', () => term.rows);
   registerClampCsi('S', () => term.rows);
   registerClampCsi('T', () => term.rows);
-
-  disposables.push(
-    term.parser.registerOscHandler(4, data => {
-      if (!flags.oscQueryAndLinkGuard) return false;
-      let queries = 0;
-      for (let i = 0; i < data.length; i++) {
-        if (data.charCodeAt(i) === 63 /* '?' */) {
-          queries++;
-          if (queries > 16) return true;
-        }
-      }
-      return false;
-    })
-  );
-
-  let lastLinkLine = -1;
-  let linksOnLine = 0;
-  disposables.push(
-    term.parser.registerOscHandler(8, data => {
-      if (!flags.oscQueryAndLinkGuard) return false;
-      if (data === ';') return false;
-      const buf = term.buffer?.active;
-      const line = buf ? buf.baseY + buf.cursorY : 0;
-      if (line !== lastLinkLine) {
-        lastLinkLine = line;
-        linksOnLine = 0;
-      }
-      linksOnLine++;
-      const totalMarkers = term._core?.markers ? term._core.markers.length : 0;
-      if (linksOnLine > 32 || totalMarkers > 256 || data.length > 2048) {
-        return true;
-      }
-      return false;
-    })
-  );
 
   return disposables;
 }
