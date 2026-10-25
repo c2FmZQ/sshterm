@@ -45,6 +45,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -652,3 +653,70 @@ func (c *wsNetConn) RemoteAddr() net.Addr               { return c.conn.RemoteAd
 func (c *wsNetConn) SetDeadline(t time.Time) error      { return nil }
 func (c *wsNetConn) SetReadDeadline(t time.Time) error  { return c.conn.SetReadDeadline(t) }
 func (c *wsNetConn) SetWriteDeadline(t time.Time) error { return c.conn.SetWriteDeadline(t) }
+
+type stallTrackConn struct {
+	net.Conn
+	mu          sync.Mutex
+	deadlineSet bool
+}
+
+func (s *stallTrackConn) SetWriteDeadline(t time.Time) error {
+	s.mu.Lock()
+	if !t.IsZero() {
+		s.deadlineSet = true
+	}
+	s.mu.Unlock()
+	return s.Conn.SetWriteDeadline(t)
+}
+
+func (s *stallTrackConn) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	hasDeadline := s.deadlineSet
+	s.mu.Unlock()
+	if hasDeadline {
+		return 0, os.ErrDeadlineExceeded
+	}
+	return len(p), nil
+}
+
+func TestWSProxyWriteDeadline(t *testing.T) {
+	c1, s1 := net.Pipe()
+	defer c1.Close()
+	defer s1.Close()
+	tracked := &stallTrackConn{Conn: c1}
+
+	srv, err := New(Options{
+		Endpoints: []Endpoint{{Name: "stall", Address: "127.0.0.1:22"}},
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return tracked, nil
+		},
+		Logger: log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/_ws/stall"
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer wsConn.Close()
+
+	if err := wsConn.WriteMessage(websocket.BinaryMessage, []byte("ping")); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+	_ = wsConn.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
+	_, _, readErr := wsConn.ReadMessage()
+	tracked.mu.Lock()
+	dlSet := tracked.deadlineSet
+	tracked.mu.Unlock()
+	if !dlSet {
+		t.Fatal("expected WriteDeadline to be set on upstream TCP connection")
+	}
+	if readErr == nil {
+		t.Fatal("expected proxyConn to close connection when upstream TCP write times out")
+	}
+}

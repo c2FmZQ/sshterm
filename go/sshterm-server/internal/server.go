@@ -206,8 +206,9 @@ func New(opts Options) (*Server, error) {
 		endpoints:  epMap,
 		configJSON: cfgBytes,
 		upgrader: websocket.Upgrader{
-			ReadBufferSize:  8192,
-			WriteBufferSize: 8192,
+			HandshakeTimeout: dialTimeout,
+			ReadBufferSize:   8192,
+			WriteBufferSize:  8192,
 		},
 		mux:    http.NewServeMux(),
 		logger: logger,
@@ -382,7 +383,7 @@ func (s *Server) proxyConn(wsConn *websocket.Conn, tcpConn net.Conn) {
 				)
 				return
 			}
-			if _, err := io.Copy(tcpConn, r); err != nil {
+			if _, err := io.Copy(&tcpDeadlineWriter{conn: tcpConn}, r); err != nil {
 				return
 			}
 		}
@@ -408,6 +409,15 @@ func (s *Server) proxyConn(wsConn *websocket.Conn, tcpConn net.Conn) {
 	}()
 
 	wg.Wait()
+}
+
+type tcpDeadlineWriter struct {
+	conn net.Conn
+}
+
+func (w *tcpDeadlineWriter) Write(p []byte) (int, error) {
+	_ = w.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	return w.conn.Write(p)
 }
 
 // Addr returns the network address the server is listening on, or nil if it has

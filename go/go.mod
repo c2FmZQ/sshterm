@@ -1,13 +1,13 @@
 module github.com/c2FmZQ/sshterm
 
-go 1.26.0
+go 1.27.3
 
 require (
 	github.com/chromedp/cdproto v0.0.0-20250803210736-d308e07a266d
 	github.com/chromedp/chromedp v0.14.2
 	github.com/fxamacker/cbor/v2 v2.9.6
 	github.com/gorilla/websocket v1.5.3
-	github.com/pkg/sftp v1.13.11
+	github.com/pkg/sftp v1.13.12
 	github.com/urfave/cli/v2 v2.27.7
 	golang.org/x/crypto v0.58.0
 	golang.org/x/term v0.47.0

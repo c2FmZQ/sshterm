@@ -1,5 +1,19 @@
 # SSH Term Release Notes
 
+## Next
+
+### :lock: Security fixes
+
+* Upgrade `github.com/pkg/sftp` to `v1.13.12` (fixing truncated packet unmarshaling panics and `Client.RemoveAll` directory symlink traversal).
+* Harden SSH client and forwarded agent (`golang.org/x/crypto/ssh`):
+  * Implement `ssh.MultiAlgorithmSigner` on `dynSigner` and `agent.ExtendedAgent` (`SignWithFlags`) on `keyRing` and `forwardedAgent` so RSA keys and user certificates use `rsa-sha2-256` / `rsa-sha2-512` instead of falling back to deprecated SHA-1 (`ssh-rsa`).
+  * Reject deprecated SHA-1 (`ssh-rsa`) and DSA (`ssh-dss`) CA signatures in `checkCertificate`.
+* Fix a trailing-backslash parsing bug in `shellwords.Parse` that could cause a slice-bounds panic during tab auto-completion.
+* Set upstream TCP write deadlines and WebSocket `HandshakeTimeout` in `sshterm-server`.
+* Harden `@xterm/xterm` terminal handling in `docroot/ssh.mjs`:
+  * Clamp `CSI Ps b` (`REP`) and `CSI I`, `Z`, `L`, `M`, `S`, `T` parameters to terminal dimensions to prevent `RangeError` crashes (which wedged `WriteBuffer` and deadlocked WASM writes) and `2^31 - 1` synchronous main-thread loops.
+  * Sanitize and truncate `OSC 0`/`OSC 2` window titles while reusing a single toast element in `_showMessage`, and reset terminal modes and pending input buffers when an SSH or SFTP session exits.
+
 ## v0.11.5
 
 ### :star: Feature improvements

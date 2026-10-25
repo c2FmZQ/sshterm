@@ -30,6 +30,49 @@ function isTest() {
   return window.location.pathname.indexOf('tests.html') !== -1;
 }
 
+export const workarounds = {
+  // Protects @xterm/xterm (5.5.0) InputHandler.repeatPrecedingCharacter
+  // (CSI Ps b) from throwing an uncaught RangeError on large Ps values and
+  // permanently wedging WriteBuffer.
+  csiRepGuard: true,
+
+  // Protects @xterm/xterm (5.5.0) InputHandler from 2^31-1 synchronous
+  // while(param--) loops in CSI I, Z, L, M, S, and T.
+  csiLoopGuard: true,
+};
+
+export function sanitizeTitle(title) {
+  const clean = String(title).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim();
+  return clean.length > 128 ? clean.slice(0, 128) + '…' : clean;
+}
+
+export function applyXtermWorkarounds(term, flags = workarounds) {
+  const disposables = [];
+  const registerClampCsi = (final, getMax) => {
+    disposables.push(
+      term._core.registerCsiHandler({ final }, params => {
+        const active = final === 'b' ? flags.csiRepGuard : flags.csiLoopGuard;
+        if (!active) return false;
+        const maxVal = Math.max(1, getMax());
+        if (params.length > 0 && params.params[0] > maxVal) {
+          params.params[0] = maxVal;
+        }
+        return false;
+      })
+    );
+  };
+
+  registerClampCsi('b', () => term.cols * term.rows);
+  registerClampCsi('I', () => term.cols);
+  registerClampCsi('Z', () => term.cols);
+  registerClampCsi('L', () => term.rows);
+  registerClampCsi('M', () => term.rows);
+  registerClampCsi('S', () => term.rows);
+  registerClampCsi('T', () => term.rows);
+
+  return disposables;
+}
+
 class TerminalManager {
   constructor(elem, setTitle, onBell) {
     this.term = new Terminal({
@@ -42,7 +85,10 @@ class TerminalManager {
     this.term.open(elem);
     this.fitAddon.fit();
 
+    const workaroundDisposables = applyXtermWorkarounds(this.term, workarounds);
+
     this.disposables = [
+      ...workaroundDisposables,
       this.term.onTitleChange(setTitle),
       this.term.onBell(onBell),
       this.term.onSelectionChange(() => {
@@ -177,7 +223,8 @@ export class TabManager {
     this.screens[b.id] = { e, b };
     this.screens[b.id].title = 'sshterm';
 
-    const setTitle = title => {
+    const setTitle = rawTitle => {
+      const title = sanitizeTitle(rawTitle) || 'sshterm';
       this.screens[b.id].title = title;
       this.screens[b.id].b.title = title;
       document.querySelector('head title').textContent = title;
@@ -231,15 +278,35 @@ export class TabManager {
   }
 
   _showMessage(element, text) {
-    const msg = document.createElement('div');
-    msg.style = 'position: absolute; bottom: 0; right: 0; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black;';
-    msg.textContent = text;
-    element.appendChild(msg);
-    setTimeout(() => element.removeChild(msg), 3000);
+    const safeText = sanitizeTitle(text);
+    let msg = element._toastMsg;
+    if (!msg || msg.parentNode !== element) {
+      msg = document.createElement('div');
+      msg.className = 'sshterm-toast';
+      msg.style = 'position: absolute; bottom: 0; right: 0; max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; padding: 0.5rem; background-color: white; color: black; font-family: monospace; border: solid 1px black; z-index: 10;';
+      element.appendChild(msg);
+      element._toastMsg = msg;
+    }
+    msg.textContent = safeText;
+    if (element._toastTimer) {
+      clearTimeout(element._toastTimer);
+    }
+    element._toastTimer = setTimeout(() => {
+      if (msg.parentNode === element) {
+        element.removeChild(msg);
+      }
+      element._toastMsg = null;
+      element._toastTimer = null;
+    }, 3000);
   }
 }
 
 window.sshApp = {};
+if (isTest()) {
+  window.sshApp.workarounds = workarounds;
+  window.sshApp.applyXtermWorkarounds = applyXtermWorkarounds;
+  window.sshApp.Terminal = Terminal;
+}
 window.sshApp.exited = null;
 window.sshApp.ready = new Promise(resolve => {
   window.sshApp.sshIsReady = () => {

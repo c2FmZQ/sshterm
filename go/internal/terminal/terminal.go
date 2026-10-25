@@ -315,6 +315,25 @@ func (t *Terminal) Clear() {
 	t.tw.xt.Call("clear")
 }
 
+// ResetSessionState resets terminal modes/colors that may have been altered by
+// a remote session and drains any pending asynchronous query responses from the
+// input buffer before returning to the local prompt.
+func (t *Terminal) ResetSessionState() {
+	_, _ = t.tw.Write([]byte(
+		"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l" +
+			"\x1b[?47l\x1b[!p" +
+			"\x1b]104\x07\x1b]110\x07\x1b]111\x07\x1b]112\x07",
+	))
+	for {
+		select {
+		case <-t.tw.dataCh:
+		default:
+			t.tw.r = nil
+			return
+		}
+	}
+}
+
 func (t *Terminal) Rows() int {
 	return t.tw.xt.Get("rows").Int()
 }

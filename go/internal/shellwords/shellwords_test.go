@@ -71,6 +71,9 @@ func TestSimple(t *testing.T) {
 		{`foo*[a-b]?`, []string{`foo*[a-b]?`}, []string{`foo*[a-b]?`}},
 		{`foo*[a-b]\?`, []string{`foo*[a-b]?`}, []string{`foo*[a-b]\?`}},
 		{`"foo*[a-b]?"`, []string{`foo*[a-b]?`}, []string{`"foo*[a-b]?"`}},
+		{`foo\`, []string{`foo\`}, []string{`foo\`}},
+		{`\`, []string{`\`}, []string{`\`}},
+		{`ls \`, []string{`ls`, `\`}, []string{`ls`, `\`}},
 	}
 
 	for _, testcase := range testcases {

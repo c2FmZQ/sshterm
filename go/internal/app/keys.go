@@ -821,9 +821,28 @@ type dynSigner struct {
 	key *key
 }
 
+var _ ssh.MultiAlgorithmSigner = (*dynSigner)(nil)
+
 func (s *dynSigner) PublicKey() ssh.PublicKey {
 	if cert := s.key.Certificate(); cert != nil {
 		return cert
 	}
 	return s.Signer.PublicKey()
+}
+
+func (s *dynSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
+	if as, ok := s.Signer.(ssh.AlgorithmSigner); ok {
+		return as.SignWithAlgorithm(rand, data, algorithm)
+	}
+	if algorithm == "" || algorithm == s.Signer.PublicKey().Type() {
+		return s.Signer.Sign(rand, data)
+	}
+	return nil, fmt.Errorf("ssh: unsupported signature algorithm %q", algorithm)
+}
+
+func (s *dynSigner) Algorithms() []string {
+	if mas, ok := s.Signer.(ssh.MultiAlgorithmSigner); ok {
+		return mas.Algorithms()
+	}
+	return []string{s.Signer.PublicKey().Type()}
 }
