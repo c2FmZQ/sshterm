@@ -36,6 +36,7 @@ import (
 
 type trackingTermIO struct {
 	in            *bytes.Reader
+	eofWithData   bool
 	zeroReadCalls atomic.Int32
 }
 
@@ -46,7 +47,11 @@ func (t *trackingTermIO) Read(p []byte) (int, error) {
 		}
 		return 0, nil
 	}
-	return t.in.Read(p)
+	n, err := t.in.Read(p)
+	if t.eofWithData && err == nil && t.in.Len() == 0 {
+		err = io.EOF
+	}
+	return n, err
 }
 
 func (t *trackingTermIO) Write(p []byte) (int, error) {
@@ -78,6 +83,24 @@ func TestTermEscapeGuard(t *testing.T) {
 		}
 		if tio.zeroReadCalls.Load() != 0 {
 			t.Fatalf("unexpected 0-byte Read calls: %d", tio.zeroReadCalls.Load())
+		}
+		if line != "hello" {
+			t.Fatalf("ReadLine() = %q, want %q", line, "hello")
+		}
+	})
+
+	t.Run("SimultaneousDataAndEOF", func(t *testing.T) {
+		// 256-byte input where injected chunk terminators expand outBuf past
+		// 256 bytes while the underlying reader returns (256, io.EOF).
+		eofInput := "\x1b[" + strings.Repeat("0", 247) + "mhello\n"
+		tio := &trackingTermIO{
+			in:          bytes.NewReader([]byte(eofInput)),
+			eofWithData: true,
+		}
+		vt := term.NewTerminal(WrapTermReadWriter(tio), "> ")
+		line, err := vt.ReadLine()
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("ReadLine: %v", err)
 		}
 		if line != "hello" {
 			t.Fatalf("ReadLine() = %q, want %q", line, "hello")

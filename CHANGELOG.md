@@ -5,9 +5,8 @@
 ### :lock: Security fixes
 
 * Align `go/go.mod` (`go 1.27.3`) and `go/build.sh` (`GOTOOLCHAIN`) with `.goversion` so local builds do not fall back to Go 1.26.0, and remove stale `docroot/xterm.js` from the embedded server docroot.
-* Harden SFTP client (`github.com/pkg/sftp`) against malicious or malformed server responses:
-  * Validate incoming SFTP packet framing and field bounds before `pkg/sftp` unmarshals them, and add panic recovery to SFTP background goroutines (`sftp get`, drag-and-drop uploads, `Getwd`, and tab completion).
-  * Reject `SSH_FXP_READDIR` filenames that contain `/` or resolve to `.` or `..` after `path.Base`, and use `Lstat` in recursive `rm -R` (`RemoveAll`) so symbolic links to directories are not followed.
+* Upgrade `github.com/pkg/sftp` to `v1.13.12` (fixing truncated packet unmarshaling panics and `Client.RemoveAll` directory symlink traversal) and harden the SFTP client against remaining malicious or malformed server responses:
+  * Reject `SSH_FXP_READDIR` filenames that contain `/` or resolve to `.` or `..` after `path.Base`, and add panic recovery to SFTP background goroutines (`sftp get`, drag-and-drop uploads, `Getwd`, and tab completion).
   * Reject 0-byte `SSH_FXP_DATA` packets (preventing an infinite read loop) and bound the number of entries accumulated in `ReadDirContext`.
 * Harden SSH client and forwarded agent (`golang.org/x/crypto/ssh`):
   * Bound concurrent `"auth-agent@openssh.com"` channels, cap incoming agent request frames to 256 KiB before allocation, and reject disallowed request types (such as `SSH2_AGENTC_ADD_IDENTITY`) before `agent.ServeAgent` parses attacker-supplied keys.

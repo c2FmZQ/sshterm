@@ -21,9 +21,8 @@ This package and the `workarounds` object in [`docroot/ssh.mjs`](../../../docroo
 
 | Flag / Workaround | Dependency | Vulnerability Remediated | Call Site(s) |
 | :--- | :--- | :--- | :--- |
-| `EnableSFTPPacketGuard` | `github.com/pkg/sftp@v1.13.11` | Out-of-bounds slice panics in `unmarshalStatus`, `RealPath`, `ReadLink`, `ReadDirContext`, `opendir`, `open`, `readChunkAt`, and `readAt` on truncated/malformed packets | [`go/internal/app/sftp.go`](../app/sftp.go) |
-| `EnableSFTPPathAndRemoveGuard` | `github.com/pkg/sftp@v1.13.11` | `ReadDirContext` path-sanitization bypass (`"/.."` -> `".."` via `path.Base`) and `Client.RemoveAll` following directory symlinks via `Stat` | [`go/internal/app/sftp.go`](../app/sftp.go) |
-| `EnableSFTPResourceGuard` | `github.com/pkg/sftp@v1.13.11` | Infinite `SSH_FXP_READ` loop on 0-byte `SSH_FXP_DATA` packets and unbounded `ReadDirContext` entry accumulation | [`go/internal/app/sftp.go`](../app/sftp.go) |
+| `EnableSFTPPathAndRemoveGuard` | `github.com/pkg/sftp@v1.13.12` | `ReadDirContext` path-sanitization bypass (`"/.."` -> `".."` via `path.Base`) | [`go/internal/app/sftp.go`](../app/sftp.go) |
+| `EnableSFTPResourceGuard` | `github.com/pkg/sftp@v1.13.12` | Infinite `SSH_FXP_READ` loop on 0-byte `SSH_FXP_DATA` packets and unbounded `ReadDirContext` entry accumulation | [`go/internal/app/sftp.go`](../app/sftp.go) |
 | `EnableSSHAgentGuard` | `golang.org/x/crypto@v0.58.0` (`ssh/agent`) | Unbounded concurrent `"auth-agent@openssh.com"` channels, 16 MiB unread pre-allocation per channel in `ServeAgent`, and CPU exhaustion in `parseRSAKey` on disallowed `AddIdentity` requests | [`go/internal/app/ssh.go`](../app/ssh.go) |
 | `EnableRSASHA2` | `golang.org/x/crypto@v0.58.0` (`ssh`, `ssh/agent`) | Downgrade to deprecated SHA-1 (`ssh-rsa`) when `dynSigner` omits `ssh.MultiAlgorithmSigner` or `forwardedAgent`/`keyRing` omits `agent.ExtendedAgent` | [`go/internal/app/keys.go`](../app/keys.go), [`go/internal/app/agent.go`](../app/agent.go) |
 | `EnableSSHSessionExitGuard` | `golang.org/x/crypto@v0.58.0` (`ssh`) | Multiplexer (`mux.loop()`) and `(*Session).Wait()` deadlock when a server sends a malformed `"exit-status"` or `"exit-signal"` request followed by >16 channel requests | [`go/internal/app/ssh.go`](../app/ssh.go) |

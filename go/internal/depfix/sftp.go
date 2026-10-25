@@ -29,7 +29,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path"
 	"strings"
 	"sync"
@@ -39,17 +38,15 @@ import (
 )
 
 const (
-	sshFxpInit          = 1
-	sshFxpVersion       = 2
-	sshFxpClose         = 4
-	sshFxpOpendir       = 11
-	sshFxpReaddir       = 12
-	sshFxpStatus        = 101
-	sshFxpHandle        = 102
-	sshFxpData          = 103
-	sshFxpName          = 104
-	sshFxpAttrs         = 105
-	sshFxpExtendedReply = 201
+	sshFxpInit    = 1
+	sshFxpVersion = 2
+	sshFxpClose   = 4
+	sshFxpOpendir = 11
+	sshFxpReaddir = 12
+	sshFxpStatus  = 101
+	sshFxpHandle  = 102
+	sshFxpData    = 103
+	sshFxpName    = 104
 
 	sshFileXferAttrSize        = 0x00000001
 	sshFileXferAttrUIDGID      = 0x00000002
@@ -72,16 +69,10 @@ var (
 	ErrTooManySFTPEntries  = errors.New("sftp: directory listing exceeds maximum entry limit")
 )
 
-// NewSFTPClient creates a new *sftp.Client over conn with packet and resource
+// NewSFTPClient creates a new *sftp.Client over conn with path and resource
 // guards applied when enabled.
 func NewSFTPClient(conn *ssh.Client, opts ...sftp.ClientOption) (*sftp.Client, error) {
-	// Disable concurrent reads by default when packet/resource guards are
-	// enabled so sftp.File.Read does not spawn unrecovered background
-	// worker goroutines on large reads.
-	if EnableSFTPPacketGuard {
-		opts = append([]sftp.ClientOption{sftp.UseConcurrentReads(false)}, opts...)
-	}
-	if !EnableSFTPPacketGuard && !EnableSFTPPathAndRemoveGuard && !EnableSFTPResourceGuard {
+	if !EnableSFTPPathAndRemoveGuard && !EnableSFTPResourceGuard {
 		return sftp.NewClient(conn, opts...)
 	}
 	s, err := conn.NewSession()
@@ -111,13 +102,10 @@ func NewSFTPClient(conn *ssh.Client, opts ...sftp.ClientOption) (*sftp.Client, e
 	return client, nil
 }
 
-// NewSFTPClientPipe creates a new *sftp.Client over rd and wr with packet and
+// NewSFTPClientPipe creates a new *sftp.Client over rd and wr with path and
 // resource guards applied when enabled.
 func NewSFTPClientPipe(rd io.Reader, wr io.WriteCloser, opts ...sftp.ClientOption) (*sftp.Client, error) {
-	if EnableSFTPPacketGuard {
-		opts = append([]sftp.ClientOption{sftp.UseConcurrentReads(false)}, opts...)
-	}
-	if !EnableSFTPPacketGuard && !EnableSFTPPathAndRemoveGuard && !EnableSFTPResourceGuard {
+	if !EnableSFTPPathAndRemoveGuard && !EnableSFTPResourceGuard {
 		return sftp.NewClientPipe(rd, wr, opts...)
 	}
 	sc := newSFTPSafeConn(rd, wr)
@@ -253,30 +241,7 @@ func (c *sftpSafeConn) addReaddirEntries(n int) error {
 }
 
 func (c *sftpSafeConn) validatePacket(pktType byte, data []byte) error {
-	if pktType == sshFxpVersion {
-		if !EnableSFTPPacketGuard {
-			return nil
-		}
-		if len(data) < 4 {
-			return fmt.Errorf("%w: truncated SSH_FXP_VERSION", ErrMalformedSFTPPacket)
-		}
-		rest := data[4:]
-		for len(rest) > 0 {
-			var err error
-			if _, rest, err = readStringSafe(rest); err != nil {
-				return err
-			}
-			if _, rest, err = readStringSafe(rest); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
 	if len(data) < 4 {
-		if EnableSFTPPacketGuard {
-			return fmt.Errorf("%w: packet shorter than 4-byte request id", ErrMalformedSFTPPacket)
-		}
 		return nil
 	}
 	sid := binary.BigEndian.Uint32(data[:4])
@@ -285,121 +250,64 @@ func (c *sftpSafeConn) validatePacket(pktType byte, data []byte) error {
 	switch pktType {
 	case sshFxpStatus:
 		c.isReaddirSID(sid, true)
-		if !EnableSFTPPacketGuard {
-			return nil
-		}
-		// unmarshalStatus calls unmarshalUint32(data) for code without bounds checks.
-		if len(rest) < 4 {
-			return fmt.Errorf("%w: truncated SSH_FXP_STATUS", ErrMalformedSFTPPacket)
-		}
-		rest = rest[4:]
-		if len(rest) > 0 {
-			var err error
-			if _, rest, err = readStringSafe(rest); err != nil {
-				return err
-			}
-			if len(rest) > 0 {
-				if _, _, err = readStringSafe(rest); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-
-	case sshFxpHandle:
-		if !EnableSFTPPacketGuard {
-			return nil
-		}
-		if _, _, err := readStringSafe(rest); err != nil {
-			return fmt.Errorf("%w: invalid SSH_FXP_HANDLE", ErrMalformedSFTPPacket)
-		}
 		return nil
 
 	case sshFxpData:
-		if !EnableSFTPPacketGuard && !EnableSFTPResourceGuard {
+		if !EnableSFTPResourceGuard {
 			return nil
 		}
 		d, _, err := readStringSafe(rest)
 		if err != nil {
-			if EnableSFTPPacketGuard {
-				return fmt.Errorf("%w: invalid SSH_FXP_DATA", ErrMalformedSFTPPacket)
-			}
 			return nil
 		}
-		if EnableSFTPResourceGuard && len(d) == 0 {
+		if len(d) == 0 {
 			return ErrZeroLengthSFTPData
 		}
 		return nil
 
 	case sshFxpName:
 		isReaddir := c.isReaddirSID(sid, true)
-		if !EnableSFTPPacketGuard && !EnableSFTPPathAndRemoveGuard && !EnableSFTPResourceGuard {
+		if !isReaddir || (!EnableSFTPPathAndRemoveGuard && !EnableSFTPResourceGuard) {
 			return nil
 		}
 		if len(rest) < 4 {
-			if EnableSFTPPacketGuard {
-				return fmt.Errorf("%w: truncated SSH_FXP_NAME count", ErrMalformedSFTPPacket)
-			}
 			return nil
 		}
 		count := binary.BigEndian.Uint32(rest[:4])
 		rest = rest[4:]
-		if EnableSFTPPacketGuard && count == 0 {
+		if EnableSFTPResourceGuard && count == 0 {
 			return fmt.Errorf("%w: zero count in SSH_FXP_NAME", ErrMalformedSFTPPacket)
 		}
 		// Each entry requires at least 12 bytes (filename len + longname len + attr flags).
 		if count > uint32(len(rest)/12) {
-			if EnableSFTPPacketGuard {
-				return fmt.Errorf("%w: SSH_FXP_NAME count %d exceeds payload", ErrMalformedSFTPPacket, count)
-			}
 			return nil
 		}
-		if isReaddir && EnableSFTPResourceGuard {
+		if EnableSFTPResourceGuard {
 			if err := c.addReaddirEntries(int(count)); err != nil {
 				return err
 			}
 		}
+		if !EnableSFTPPathAndRemoveGuard {
+			return nil
+		}
 		for i := uint32(0); i < count; i++ {
 			filename, r, err := readStringSafe(rest)
 			if err != nil {
-				if EnableSFTPPacketGuard {
-					return err
-				}
 				return nil
 			}
-			if isReaddir && EnableSFTPPathAndRemoveGuard {
-				if err := validateReaddirFilename(filename); err != nil {
-					return err
-				}
+			if err := validateReaddirFilename(filename); err != nil {
+				return err
 			}
 			_, r, err = readStringSafe(r)
 			if err != nil {
-				if EnableSFTPPacketGuard {
-					return err
-				}
 				return nil
 			}
 			r, err = skipAttrsSafe(r)
 			if err != nil {
-				if EnableSFTPPacketGuard {
-					return err
-				}
 				return nil
 			}
 			rest = r
 		}
-		return nil
-
-	case sshFxpAttrs:
-		if !EnableSFTPPacketGuard {
-			return nil
-		}
-		if _, err := skipAttrsSafe(rest); err != nil {
-			return err
-		}
-		return nil
-
-	case sshFxpExtendedReply:
 		return nil
 
 	default:
@@ -483,40 +391,4 @@ func skipAttrsSafe(b []byte) ([]byte, error) {
 		}
 	}
 	return b, nil
-}
-
-// RemoveAll recursively removes p on client. When EnableSFTPPathAndRemoveGuard
-// is true, it uses Lstat instead of Stat so symbolic links to directories are
-// removed as links rather than followed into the target directory.
-func RemoveAll(client *sftp.Client, p string) error {
-	if !EnableSFTPPathAndRemoveGuard {
-		return client.RemoveAll(p)
-	}
-	info, err := client.Lstat(p)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	if !info.IsDir() {
-		return client.Remove(p)
-	}
-	entries, err := client.ReadDir(p)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if err := validateReaddirFilename(name); err != nil {
-			return err
-		}
-		if name == "." || name == ".." {
-			continue
-		}
-		if err := RemoveAll(client, path.Join(p, name)); err != nil {
-			return err
-		}
-	}
-	return client.RemoveDirectory(p)
 }

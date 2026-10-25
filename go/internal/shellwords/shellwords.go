@@ -157,6 +157,7 @@ func Parse(line string, opts ...Option) ([]string, []string) {
 
 	if escaped {
 		buf += "\\"
+		got = argSingle
 	}
 
 	if got != argNo {

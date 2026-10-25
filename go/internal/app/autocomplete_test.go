@@ -134,11 +134,27 @@ func TestAutoCompleteTrailingBackslash(t *testing.T) {
 	ac := &autoCompleter{
 		cmds: []*cli.App{
 			{Name: `al\pha`},
+			{
+				Name: `\cmd`,
+				Commands: []*cli.Command{
+					{Name: `\sub`},
+				},
+			},
 		},
 	}
 
 	nl, np, _, ok := ac.autoComplete(`al\`, 3, '\t')
 	if !ok || nl != `"al\\pha" ` || np != len(nl) {
 		t.Fatalf("autoComplete(\"al\\\\\", 3, '\\t') = %q, %d, %v; want %q, %d, true", nl, np, ok, `"al\\pha" `, len(`"al\\pha" `))
+	}
+
+	nl, np, _, ok = ac.autoComplete(`\`, 1, '\t')
+	if !ok || nl != `"\\cmd" ` || np != len(nl) {
+		t.Fatalf("autoComplete(\"\\\\\", 1, '\\t') = %q, %d, %v; want %q, %d, true", nl, np, ok, `"\\cmd" `, len(`"\\cmd" `))
+	}
+
+	nl, np, _, ok = ac.autoComplete(`"\\cmd" \`, 9, '\t')
+	if !ok || nl != `"\\cmd" "\\sub" ` || np != len(nl) {
+		t.Fatalf("autoComplete(\"\\\"\\\\\\\\cmd\\\" \\\\\", 9, '\\t') = %q, %d, %v; want %q, %d, true", nl, np, ok, `"\\cmd" "\\sub" `, len(`"\\cmd" "\\sub" `))
 	}
 }

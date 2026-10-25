@@ -157,30 +157,6 @@ func TestSFTPPacketGuard(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name+"/VulnerabilityWithoutRemediation", func(t *testing.T) {
-			WithDisabled(&EnableSFTPPacketGuard, func() {
-				WithDisabled(&EnableSFTPPathAndRemoveGuard, func() {
-					WithDisabled(&EnableSFTPResourceGuard, func() {
-						client := runMockSFTPSession(t, func(pktType byte, sid uint32, wr io.Writer) {
-							tc.respond(sid, wr)
-						})
-						panicked := false
-						func() {
-							defer func() {
-								if r := recover(); r != nil {
-									panicked = true
-								}
-							}()
-							_ = tc.invoke(client)
-						}()
-						if !panicked {
-							t.Fatalf("expected github.com/pkg/sftp to panic on %s when EnableSFTPPacketGuard is disabled; if fixed upstream, remove EnableSFTPPacketGuard", tc.name)
-						}
-					})
-				})
-			})
-		})
-
 		t.Run(tc.name+"/RemediationEnabled", func(t *testing.T) {
 			client := runMockSFTPSession(t, func(pktType byte, sid uint32, wr io.Writer) {
 				tc.respond(sid, wr)
@@ -189,13 +165,13 @@ func TestSFTPPacketGuard(t *testing.T) {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						t.Fatalf("unexpected panic with EnableSFTPPacketGuard enabled: %v", r)
+						t.Fatalf("unexpected panic: %v", r)
 					}
 				}()
 				err = tc.invoke(client)
 			}()
 			if err == nil {
-				t.Fatalf("expected error on %s with EnableSFTPPacketGuard enabled, got nil", tc.name)
+				t.Fatalf("expected error on %s, got nil", tc.name)
 			}
 		})
 	}
@@ -265,7 +241,7 @@ func TestSFTPPathAndRemoveGuard(t *testing.T) {
 		}
 	})
 
-	// 2. Verify RemoveAll symlink following against a real local sftp.Server.
+	// 2. Regression test: RemoveAll symlink handling against a real local sftp.Server.
 	setupSymlinkTree := func(t *testing.T) (string, string, string, *sftp.Client) {
 		t.Helper()
 		tmpDir := t.TempDir()
@@ -304,19 +280,9 @@ func TestSFTPPathAndRemoveGuard(t *testing.T) {
 		return linkPath, secretFile, targetDir, client
 	}
 
-	t.Run("RemoveAllSymlink/VulnerabilityWithoutRemediation", func(t *testing.T) {
-		WithDisabled(&EnableSFTPPathAndRemoveGuard, func() {
-			linkPath, secretFile, _, client := setupSymlinkTree(t)
-			_ = RemoveAll(client, linkPath)
-			if _, err := os.Stat(secretFile); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("expected pkg/sftp Client.RemoveAll to follow symlink and delete %s; if fixed upstream, remove RemoveAll wrapper", secretFile)
-			}
-		})
-	})
-
 	t.Run("RemoveAllSymlink/RemediationEnabled", func(t *testing.T) {
 		linkPath, secretFile, _, client := setupSymlinkTree(t)
-		if err := RemoveAll(client, linkPath); err != nil {
+		if err := client.RemoveAll(linkPath); err != nil {
 			t.Fatalf("RemoveAll: %v", err)
 		}
 		if _, err := os.Lstat(linkPath); !errors.Is(err, os.ErrNotExist) {

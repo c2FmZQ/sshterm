@@ -312,7 +312,7 @@ func (a *App) runSFTP(ctx context.Context, target, keyName, jumpHosts string) (e
 				for _, dir := range args {
 					var err error
 					if ctx.Bool("R") {
-						err = depfix.RemoveAll(client, joinPath(cwd, dir))
+						err = client.RemoveAll(joinPath(cwd, dir))
 					} else {
 						err = client.Remove(joinPath(cwd, dir))
 					}

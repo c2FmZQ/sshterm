@@ -27,27 +27,18 @@
 package depfix
 
 var (
-	// EnableSFTPPacketGuard validates incoming SFTP packet frames before
-	// github.com/pkg/sftp (v1.13.11) unmarshals them with unchecked slice
-	// bounds in unmarshalStatus, RealPath, ReadLink, ReadDirContext,
-	// opendir, open, readChunkAt, and readAt.
-	// Remove when github.com/pkg/sftp replaces unmarshalUint32 and
-	// unmarshalString with safe bounds-checked variants across client.go
-	// and packet.go.
-	EnableSFTPPacketGuard = true
-
 	// EnableSFTPPathAndRemoveGuard rejects SSH_FXP_READDIR filenames that
-	// contain '/' or resolve to '.' or '..' after path.Base, and uses Lstat
-	// instead of Stat in RemoveAll so directory symlinks are not followed.
-	// Remove when github.com/pkg/sftp validates ReadDirContext filenames
-	// and switches Client.RemoveAll to Lstat.
+	// contain '/' or resolve to '.' or '..' after path.Base.
+	// Remove when github.com/pkg/sftp (v1.13.12) validates ReadDirContext
+	// filenames before passing them to path.Base.
 	EnableSFTPPathAndRemoveGuard = true
 
 	// EnableSFTPResourceGuard rejects 0-byte SSH_FXP_DATA packets (which
-	// cause an infinite read loop in File.readChunkAt) and caps cumulative
+	// cause an infinite read loop in File.readChunkAt), 0-count
+	// SSH_FXP_NAME responses to SSH_FXP_READDIR, and caps cumulative
 	// SSH_FXP_READDIR entries per directory listing.
-	// Remove when github.com/pkg/sftp handles 0-byte SSH_FXP_DATA and
-	// bounds ReadDirContext.
+	// Remove when github.com/pkg/sftp (v1.13.12) handles 0-byte
+	// SSH_FXP_DATA and bounds ReadDirContext.
 	EnableSFTPResourceGuard = true
 
 	// EnableSSHAgentGuard bounds concurrent "auth-agent@openssh.com"
