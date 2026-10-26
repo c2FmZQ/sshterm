@@ -103,7 +103,11 @@ func TestXtermWorkarounds(t *testing.T) {
 				"csiLoopGuard": false,
 			})
 			defer cleanup()
-			writeTerm(t, term, "a")
+			// Use a 5-code-unit combined character cell so n.length * 2147483647 * 4
+			// (40 GiB) exceeds V8's 32 GiB TypedArray limit in Chrome 157+ and
+			// immediately throws RangeError instead of allocating 8 GiB and looping
+			// 2.1B times.
+			writeTerm(t, term, "a\u0300\u0301\u0302\u0303")
 
 			paramsArr := js.Global().Get("Int32Array").New(1)
 			paramsArr.SetIndex(0, 2147483647)

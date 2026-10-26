@@ -1,5 +1,14 @@
 # SSH Term Release Notes
 
+## next
+
+### :wrench: Misc
+
+* Update go dependencies:
+  * upgraded github.com/chromedp/cdproto v0.0.0-20250803210736-d308e07a266d => v0.158.5
+  * upgraded github.com/chromedp/chromedp v0.14.2 => v0.21.0
+  * upgraded github.com/go-json-experiment/json v0.0.0-20250725192818-e39067aee2d2 => v0.0.0-20260820222146-c27c302e5fc3
+
 ## v0.11.6
 
 ### :lock: Security fixes

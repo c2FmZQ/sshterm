@@ -38,6 +38,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"iter"
 	"log"
 	"math/big"
 	"net"
@@ -48,10 +49,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chromedp/cdproto"
-	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/webauthn"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/remote"
 	"github.com/gorilla/websocket"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -244,9 +244,11 @@ func TestSSHTerm(t *testing.T) {
 	t.Run("WASM App Tests", func(t *testing.T) {
 		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Minute)
 		defer cancel()
-		ctx, cancel = chromedp.NewRemoteAllocator(ctx, *withChromeDP)
+		ctx, cancel = remote.NewAllocator(ctx, *withChromeDP)
 		defer cancel()
 
+		var eventWG sync.WaitGroup
+		defer eventWG.Wait()
 		ctx, cancel = chromedp.NewContext(ctx,
 			//chromedp.WithDebugf(t.Logf),
 			chromedp.WithErrorf(t.Logf),
@@ -254,67 +256,77 @@ func TestSSHTerm(t *testing.T) {
 		)
 		defer cancel()
 
-		chromedp.ListenTarget(ctx, func(ev any) {
-			switch ev := ev.(type) {
-			case *cdproto.Message:
-			case *runtime.EventConsoleAPICalled:
-				//t.Logf("* console.%s call:", ev.Type)
-				//for _, arg := range ev.Args {
-				//	t.Logf("   %s - %s", arg.Type, arg.Value)
-				//}
-			case *runtime.EventExceptionThrown:
-				t.Logf("Exception: * %s", ev.ExceptionDetails.Error())
-			case *webauthn.EventCredentialAdded, *webauthn.EventCredentialAsserted, *webauthn.EventCredentialDeleted, *webauthn.EventCredentialUpdated:
-				t.Logf("WebAuthn event: %#v", ev)
-			default:
-				//t.Logf("Target event: %#v", ev)
+		listenEvents(&eventWG, chromedp.Console(ctx), func(m chromedp.ConsoleMessage) {
+			if m.IsException() {
+				t.Logf("Exception: * %s", m.Text)
 			}
 		})
+		listenEvents(&eventWG, chromedp.Events(ctx, webauthn.CredentialAdded), func(ev webauthn.EventCredentialAdded) {
+			t.Logf("WebAuthn event: %#v", ev)
+		})
+		listenEvents(&eventWG, chromedp.Events(ctx, webauthn.CredentialAsserted), func(ev webauthn.EventCredentialAsserted) {
+			t.Logf("WebAuthn event: %#v", ev)
+		})
+		listenEvents(&eventWG, chromedp.Events(ctx, webauthn.CredentialDeleted), func(ev webauthn.EventCredentialDeleted) {
+			t.Logf("WebAuthn event: %#v", ev)
+		})
+		listenEvents(&eventWG, chromedp.Events(ctx, webauthn.CredentialUpdated), func(ev webauthn.EventCredentialUpdated) {
+			t.Logf("WebAuthn event: %#v", ev)
+		})
 
-		if err := chromedp.Run(ctx, webauthn.Enable().WithEnableUI(false)); err != nil {
+		if _, err := chromedp.Call(ctx, webauthn.Enable, webauthn.EnableParams{EnableUI: new(false)}); err != nil {
 			t.Fatalf("webauthn.Enable(): %v", err)
 		}
 
-		var authenticatorID webauthn.AuthenticatorID
-		if err := chromedp.Run(ctx,
-			chromedp.ActionFunc(func(ctx context.Context) error {
-				authID, err := webauthn.AddVirtualAuthenticator(&webauthn.VirtualAuthenticatorOptions{
-					Protocol:                    webauthn.AuthenticatorProtocolCtap2,
-					Ctap2version:                webauthn.Ctap2versionCtap21,
-					Transport:                   webauthn.AuthenticatorTransportInternal,
-					HasResidentKey:              true,
-					HasUserVerification:         true,
-					AutomaticPresenceSimulation: true,
-					IsUserVerified:              true,
-				}).Do(ctx)
-				authenticatorID = authID
-				return err
-			}),
-		); err != nil {
+		authRes, err := chromedp.Call(ctx, webauthn.AddVirtualAuthenticator, webauthn.AddVirtualAuthenticatorParams{
+			Options: &webauthn.VirtualAuthenticatorOptions{
+				Protocol:                    webauthn.AuthenticatorProtocolCtap2,
+				Ctap2version:                webauthn.Ctap2versionCtap21,
+				Transport:                   webauthn.AuthenticatorTransportInternal,
+				HasResidentKey:              true,
+				HasUserVerification:         true,
+				AutomaticPresenceSimulation: true,
+				IsUserVerified:              true,
+			},
+		})
+		if err != nil {
 			t.Fatalf("webauthn.AddVirtualAuthenticator(): %v", err)
 		}
+		authenticatorID := authRes.AuthenticatorID
 		t.Logf("AddVirtualAuthenticator: %q", authenticatorID)
 
-		if err := chromedp.Run(ctx,
-			webauthn.ClearCredentials(authenticatorID),
-			webauthn.SetAutomaticPresenceSimulation(authenticatorID, true),
-			chromedp.ActionFunc(func(ctx context.Context) error {
-				creds, err := webauthn.GetCredentials(authenticatorID).Do(ctx)
-				t.Logf("Credentials: %v", creds)
-				return err
-			}),
-		); err != nil {
+		if _, err := chromedp.Call(ctx, webauthn.ClearCredentials, webauthn.ClearCredentialsParams{
+			AuthenticatorID: authenticatorID,
+		}); err != nil {
+			t.Fatalf("webauthn.ClearCredentials(): %v", err)
+		}
+		if _, err := chromedp.Call(ctx, webauthn.SetAutomaticPresenceSimulation, webauthn.SetAutomaticPresenceSimulationParams{
+			AuthenticatorID: authenticatorID,
+			Enabled:         true,
+		}); err != nil {
 			t.Fatalf("webauthn.SetAutomaticPresenceSimulation(): %v", err)
 		}
+		credsRes, err := chromedp.Call(ctx, webauthn.GetCredentials, webauthn.GetCredentialsParams{
+			AuthenticatorID: authenticatorID,
+		})
+		if err != nil {
+			t.Fatalf("webauthn.GetCredentials(): %v", err)
+		}
+		t.Logf("Credentials: %v", credsRes.Credentials)
 
-		var res, output string
-		if err := chromedp.Run(ctx,
+		if err := chromedp.Do(ctx,
 			chromedp.Navigate("https://devtest.local:8443/tests.html"),
 			chromedp.WaitVisible("#done"),
-			chromedp.Evaluate(`window.sshApp.exited`, &res),
-			chromedp.Evaluate(`window.sshApp.term.selectAll(), window.sshApp.term.getSelection()`, &output),
 		); err != nil {
-			t.Logf("chromedp.Run: %v", err)
+			t.Logf("chromedp.Do: %v", err)
+		}
+		res, err := chromedp.Run(ctx, chromedp.Evaluate[string](`window.sshApp.exited`))
+		if err != nil {
+			t.Logf("chromedp.Run(exited): %v", err)
+		}
+		output, err := chromedp.Run(ctx, chromedp.Evaluate[string](`window.sshApp.term.selectAll(), window.sshApp.term.getSelection()`))
+		if err != nil {
+			t.Logf("chromedp.Run(output): %v", err)
 		}
 		t.Log(output)
 		t.Log(res)
@@ -322,6 +334,19 @@ func TestSSHTerm(t *testing.T) {
 			t.FailNow()
 		}
 	})
+}
+
+func listenEvents[E any](wg *sync.WaitGroup, seq iter.Seq2[E, error], fn func(E)) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for ev, err := range seq {
+			if err != nil {
+				return
+			}
+			fn(ev)
+		}
+	}()
 }
 
 var _ net.Conn = (*netConn)(nil)
