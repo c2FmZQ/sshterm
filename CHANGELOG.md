@@ -1,9 +1,10 @@
 # SSH Term Release Notes
 
-## next
+## v0.11.7
 
 ### :wrench: Misc
 
+* Disable multipathtcp
 * Update go dependencies:
   * upgraded github.com/chromedp/cdproto v0.0.0-20250803210736-d308e07a266d => v0.158.5
   * upgraded github.com/chromedp/chromedp v0.14.2 => v0.21.0

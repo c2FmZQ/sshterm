@@ -2,6 +2,8 @@ module github.com/c2FmZQ/sshterm
 
 go 1.27.3
 
+godebug multipathtcp=0
+
 require (
 	github.com/chromedp/cdproto v0.158.5
 	github.com/chromedp/chromedp v0.21.0
