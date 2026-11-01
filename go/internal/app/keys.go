@@ -390,6 +390,7 @@ func (a *App) keysCommand() *cli.App {
 						if privPEM, err = sk.MarshalPrivate(pp); err != nil {
 							return err
 						}
+						key.Public = sk.Marshal()
 					} else {
 						priv, err := key.PrivateKey(a.term.ReadPassword)
 						if err != nil {

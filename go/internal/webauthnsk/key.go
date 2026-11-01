@@ -200,7 +200,7 @@ func (k *Key) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	}
 
 	return &ssh.Signature{
-		Format: k.Type(),
+		Format: webauthnSignatureFormat,
 		Blob:   ssh.Marshal(sig),
 		Rest: ssh.Marshal(struct {
 			Flags      byte

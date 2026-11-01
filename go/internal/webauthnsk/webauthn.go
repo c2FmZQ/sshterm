@@ -381,7 +381,10 @@ func RecoverPublicKey(authData1, clientDataJSON1, sig1Bytes, authData2, clientDa
 	return pk, nil
 }
 
-const ecdsa256KeyType = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
+const (
+	ecdsa256KeyType         = ssh.KeyAlgoSKECDSA256
+	webauthnSignatureFormat = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
+)
 
 type Key struct {
 	typ    string
@@ -490,7 +493,7 @@ func UnmarshalPublic(pub []byte) (*Key, error) {
 	if err := ssh.Unmarshal(pub, &data); err != nil {
 		return nil, fmt.Errorf("Unmarshal: %w", err)
 	}
-	if data.Name != ecdsa256KeyType || data.ID != "nistp256" {
+	if (data.Name != ecdsa256KeyType && data.Name != webauthnSignatureFormat) || data.ID != "nistp256" {
 		return nil, fmt.Errorf("unexpected key type %q", data.Name)
 	}
 	x, y := elliptic.Unmarshal(elliptic.P256(), data.Key)
@@ -498,7 +501,7 @@ func UnmarshalPublic(pub []byte) (*Key, error) {
 		return nil, errors.New("invalid public key")
 	}
 	return &Key{
-		typ:  data.Name,
+		typ:  ecdsa256KeyType,
 		rpID: []byte(data.Application),
 		pubKey: &ecdsa.PublicKey{
 			Curve: elliptic.P256(),
@@ -581,7 +584,73 @@ func (k *Key) Marshal() []byte {
 }
 
 func (k *Key) Verify(data []byte, sig *ssh.Signature) error {
-	return errors.New("verify not implemented")
+	var ecSig struct {
+		R, S *big.Int
+	}
+	if err := ssh.Unmarshal(sig.Blob, &ecSig); err != nil {
+		return err
+	}
+	appHash := sha256.Sum256(k.rpID)
+	var signed cryptobyte.Builder
+	signed.AddBytes(appHash[:])
+
+	switch sig.Format {
+	case ecdsa256KeyType:
+		var extra struct {
+			Flags   byte
+			Counter uint32
+		}
+		if err := ssh.Unmarshal(sig.Rest, &extra); err != nil {
+			return err
+		}
+		dataHash := sha256.Sum256(data)
+		signed.AddUint8(extra.Flags)
+		signed.AddUint32(extra.Counter)
+		signed.AddBytes(dataHash[:])
+
+	case webauthnSignatureFormat:
+		var extra struct {
+			Flags      byte
+			Counter    uint32
+			Origin     string
+			ClientData string
+			Extensions string
+		}
+		if err := ssh.Unmarshal(sig.Rest, &extra); err != nil {
+			return err
+		}
+		if (extra.Flags & 0x40) != 0 {
+			return errors.New("ssh: unexpected attested credential data flag in assertion")
+		}
+		if ((extra.Flags & 0x80) != 0) != (len(extra.Extensions) != 0) {
+			return errors.New("ssh: extension data flag does not match extensions length")
+		}
+		cd, err := verifyClientData([]byte(extra.ClientData), "webauthn.get", data)
+		if err != nil {
+			return err
+		}
+		if cd.Origin == "" || cd.Origin != extra.Origin {
+			return errors.New("ssh: invalid client data origin")
+		}
+		clientDataHash := sha256.Sum256([]byte(extra.ClientData))
+		signed.AddUint8(extra.Flags)
+		signed.AddUint32(extra.Counter)
+		signed.AddBytes([]byte(extra.Extensions))
+		signed.AddBytes(clientDataHash[:])
+
+	default:
+		return fmt.Errorf("ssh: signature type %s for key type %s", sig.Format, k.Type())
+	}
+
+	msg, err := signed.Bytes()
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256(msg)
+	if !ecdsa.Verify(k.pubKey, hash[:], ecSig.R, ecSig.S) {
+		return errors.New("ssh: signature did not verify")
+	}
+	return nil
 }
 
 func (k *Key) PublicKey() ssh.PublicKey {

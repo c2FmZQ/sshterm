@@ -28,6 +28,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
@@ -41,6 +42,7 @@ import (
 
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/pbkdf2"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestRecoverPublicKey(t *testing.T) {
@@ -344,6 +346,28 @@ func TestKeyMarshalUnmarshal(t *testing.T) {
 		t.Errorf("Unmarshal(legacy v1) mismatch: got %+v, want %+v", gotV1, orig)
 	}
 
+	// Backward compatibility: a legacy v2 encrypted key whose pubBytes used
+	// "webauthn-sk-ecdsa-sha2-nistp256@openssh.com" as the public key type
+	// still unmarshals (preserving AAD verification) and normalizes its Type()
+	// to "sk-ecdsa-sha2-nistp256@openssh.com".
+	legacyKey := &Key{
+		typ:    webauthnSignatureFormat,
+		id:     orig.id,
+		rpID:   orig.rpID,
+		pubKey: orig.pubKey,
+	}
+	legacyBlock, err := legacyKey.MarshalPrivate(passphrase)
+	if err != nil {
+		t.Fatalf("legacyKey.MarshalPrivate: %v", err)
+	}
+	gotLegacy, err := Unmarshal(pem.EncodeToMemory(legacyBlock), "test", rp)
+	if err != nil {
+		t.Fatalf("Unmarshal(legacy v2 key type): %v", err)
+	}
+	if gotLegacy.Type() != ecdsa256KeyType || !bytes.Equal(gotLegacy.rpID, orig.rpID) || !bytes.Equal(gotLegacy.id, orig.id) {
+		t.Errorf("Unmarshal(legacy v2 key type) mismatch: got %+v, want %+v", gotLegacy, orig)
+	}
+
 	// Iteration count below minIter or above maxIter must be rejected
 	iterOffset := 1 + 2 + pubLen + 2 + 16
 	for _, badIter := range []uint32{0, 1, 999, maxIter + 1} {
@@ -353,5 +377,151 @@ func TestKeyMarshalUnmarshal(t *testing.T) {
 		if _, err := Unmarshal(badPEM, "test", rp); err == nil {
 			t.Errorf("Unmarshal with numIter=%d succeeded; want error", badIter)
 		}
+	}
+}
+
+func TestCertificateSigning(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	key := &Key{
+		typ:    ecdsa256KeyType,
+		id:     []byte("credential-id-12345"),
+		rpID:   []byte("example.com"),
+		pubKey: &priv.PublicKey,
+	}
+
+	// Marshal as authorized_keys line and parse with standard golang.org/x/crypto/ssh.
+	authKey := ssh.MarshalAuthorizedKey(key)
+	parsedPub, _, _, _, err := ssh.ParseAuthorizedKey(authKey)
+	if err != nil {
+		t.Fatalf("ssh.ParseAuthorizedKey: %v", err)
+	}
+	if !bytes.Equal(parsedPub.Marshal(), key.Marshal()) {
+		t.Fatalf("parsed public key bytes do not match key.Marshal()")
+	}
+
+	// Sign an SSH user certificate for the WebAuthn public key.
+	_, caPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey: %v", err)
+	}
+	caSigner, err := ssh.NewSignerFromKey(caPriv)
+	if err != nil {
+		t.Fatalf("ssh.NewSignerFromKey: %v", err)
+	}
+	cert := &ssh.Certificate{
+		Key:             parsedPub,
+		Serial:          1,
+		CertType:        ssh.UserCert,
+		KeyId:           "testuser",
+		ValidPrincipals: []string{"testuser"},
+		ValidBefore:     ssh.CertTimeInfinity,
+	}
+	if err := cert.SignCert(rand.Reader, caSigner); err != nil {
+		t.Fatalf("cert.SignCert: %v", err)
+	}
+	if got, want := cert.Type(), ssh.CertAlgoSKECDSA256v01; got != want {
+		t.Errorf("cert.Type() = %q, want %q", got, want)
+	}
+
+	// Verify the marshaled certificate parses back and matches key.Marshal().
+	parsedCertKey, _, _, _, err := ssh.ParseAuthorizedKey(ssh.MarshalAuthorizedKey(cert))
+	if err != nil {
+		t.Fatalf("ssh.ParseAuthorizedKey(cert): %v", err)
+	}
+	parsedCert, ok := parsedCertKey.(*ssh.Certificate)
+	if !ok {
+		t.Fatalf("parsed key is %T, want *ssh.Certificate", parsedCertKey)
+	}
+	if !bytes.Equal(parsedCert.Key.Marshal(), key.Marshal()) {
+		t.Errorf("parsedCert.Key.Marshal() does not match key.Marshal()")
+	}
+}
+
+func TestKeyVerify(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	key := &Key{
+		typ:    ecdsa256KeyType,
+		id:     []byte("credential-id-12345"),
+		rpID:   []byte("example.com"),
+		pubKey: &priv.PublicKey,
+	}
+	data := []byte("ssh-session-data-to-sign")
+	appHash := sha256.Sum256(key.rpID)
+	flags := byte(0x05)
+	counter := uint32(42)
+
+	// 1. Verify webauthn-sk-ecdsa-sha2-nistp256@openssh.com signature.
+	origin := "https://example.com"
+	clientData := fmt.Sprintf(`{"type":"webauthn.get","challenge":%q,"origin":%q}`,
+		base64.RawURLEncoding.EncodeToString(data), origin)
+	cdHash := sha256.Sum256([]byte(clientData))
+
+	var webauthnSigned cryptobyte.Builder
+	webauthnSigned.AddBytes(appHash[:])
+	webauthnSigned.AddUint8(flags)
+	webauthnSigned.AddUint32(counter)
+	webauthnSigned.AddBytes(cdHash[:])
+	webauthnHash := sha256.Sum256(webauthnSigned.BytesOrPanic())
+	r, s, err := ecdsa.Sign(rand.Reader, priv, webauthnHash[:])
+	if err != nil {
+		t.Fatalf("ecdsa.Sign: %v", err)
+	}
+	webauthnSig := &ssh.Signature{
+		Format: webauthnSignatureFormat,
+		Blob:   ssh.Marshal(struct{ R, S *big.Int }{r, s}),
+		Rest: ssh.Marshal(struct {
+			Flags      byte
+			Counter    uint32
+			Origin     string
+			ClientData string
+			Extensions string
+		}{
+			Flags:      flags,
+			Counter:    counter,
+			Origin:     origin,
+			ClientData: clientData,
+		}),
+	}
+	if err := key.Verify(data, webauthnSig); err != nil {
+		t.Errorf("key.Verify(webauthnSig) failed: %v", err)
+	}
+	if err := key.Verify([]byte("wrong-data"), webauthnSig); err == nil {
+		t.Error("key.Verify(wrong-data) succeeded; want error")
+	}
+
+	// 2. Verify sk-ecdsa-sha2-nistp256@openssh.com signature.
+	dataHash := sha256.Sum256(data)
+	var skSigned cryptobyte.Builder
+	skSigned.AddBytes(appHash[:])
+	skSigned.AddUint8(flags)
+	skSigned.AddUint32(counter)
+	skSigned.AddBytes(dataHash[:])
+	skHash := sha256.Sum256(skSigned.BytesOrPanic())
+	r2, s2, err := ecdsa.Sign(rand.Reader, priv, skHash[:])
+	if err != nil {
+		t.Fatalf("ecdsa.Sign: %v", err)
+	}
+	skSig := &ssh.Signature{
+		Format: ecdsa256KeyType,
+		Blob:   ssh.Marshal(struct{ R, S *big.Int }{r2, s2}),
+		Rest: ssh.Marshal(struct {
+			Flags   byte
+			Counter uint32
+		}{
+			Flags:   flags,
+			Counter: counter,
+		}),
+	}
+	if err := key.Verify(data, skSig); err != nil {
+		t.Errorf("key.Verify(skSig) failed: %v", err)
+	}
+	if err := key.Verify([]byte("wrong-data"), skSig); err == nil {
+		t.Error("key.Verify(wrong-data) succeeded; want error")
 	}
 }
