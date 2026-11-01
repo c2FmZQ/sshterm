@@ -210,6 +210,9 @@ func TestRecoverPublicKeyRejectsTamperedAuthData(t *testing.T) {
 func TestVerifyClientData(t *testing.T) {
 	challenge := []byte("0123456789abcdef")
 	encoded := base64.RawURLEncoding.EncodeToString(challenge)
+	// Mutate the last character's unused padding bits so standard RawURLEncoding
+	// would decode it to the same bytes, but Strict() rejects it.
+	nonCanonical := encoded[:len(encoded)-1] + "h"
 
 	for _, tc := range []struct {
 		name    string
@@ -217,6 +220,9 @@ func TestVerifyClientData(t *testing.T) {
 		wantErr bool
 	}{
 		{"ok", `{"type":"webauthn.get","challenge":"` + encoded + `"}`, false},
+		{"ok crossOrigin false", `{"type":"webauthn.get","challenge":"` + encoded + `","crossOrigin":false}`, false},
+		{"crossOrigin true", `{"type":"webauthn.get","challenge":"` + encoded + `","crossOrigin":true}`, true},
+		{"non-canonical base64url", `{"type":"webauthn.get","challenge":"` + nonCanonical + `"}`, true},
 		{"wrong type", `{"type":"webauthn.create","challenge":"` + encoded + `"}`, true},
 		{"wrong challenge", `{"type":"webauthn.get","challenge":"` + base64.RawURLEncoding.EncodeToString([]byte("nope")) + `"}`, true},
 		{"missing challenge", `{"type":"webauthn.get"}`, true},
@@ -229,6 +235,52 @@ func TestVerifyClientData(t *testing.T) {
 				t.Errorf("verifyClientData() error = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestParseAuthenticatorData(t *testing.T) {
+	rpHash := sha256.Sum256([]byte("example.com"))
+	makeAuthData := func(flags byte, counter uint32, tail []byte) []byte {
+		var b cryptobyte.Builder
+		b.AddBytes(rpHash[:])
+		b.AddUint8(flags)
+		b.AddUint32(counter)
+		b.AddBytes(tail)
+		return b.BytesOrPanic()
+	}
+
+	// Valid minimal authenticatorData (UP=1)
+	var ad authenticatorData
+	if err := parseAuthenticatorData(makeAuthData(0x01, 7, nil), &ad); err != nil {
+		t.Fatalf("parseAuthenticatorData(minimal) failed: %v", err)
+	}
+	if !ad.UserPresence || ad.SignCount != 7 || len(ad.Extensions) != 0 {
+		t.Errorf("unexpected parsed authenticatorData: %+v", ad)
+	}
+
+	// Trailing bytes without ED/AT flags must be rejected
+	if err := parseAuthenticatorData(makeAuthData(0x01, 7, []byte{0x00}), &ad); err == nil {
+		t.Error("parseAuthenticatorData with trailing bytes succeeded; want error")
+	}
+
+	// Valid CBOR extension map {1: true} -> 0xa1 0x01 0xf5
+	cborExt := []byte{0xa1, 0x01, 0xf5}
+	var adExt authenticatorData
+	if err := parseAuthenticatorData(makeAuthData(0x81, 8, cborExt), &adExt); err != nil {
+		t.Fatalf("parseAuthenticatorData(with extensions) failed: %v", err)
+	}
+	if !adExt.ExtensionData || !bytes.Equal(adExt.Extensions, cborExt) {
+		t.Errorf("parseAuthenticatorData extensions = %x, want %x", adExt.Extensions, cborExt)
+	}
+
+	// ED flag set but no extension bytes
+	if err := parseAuthenticatorData(makeAuthData(0x81, 8, nil), &adExt); err == nil {
+		t.Error("parseAuthenticatorData(ED=1, empty) succeeded; want error")
+	}
+
+	// ED flag set with trailing bytes after CBOR object
+	if err := parseAuthenticatorData(makeAuthData(0x81, 8, append(append([]byte(nil), cborExt...), 0x00)), &adExt); err == nil {
+		t.Error("parseAuthenticatorData(ED=1, trailing bytes) succeeded; want error")
 	}
 }
 
@@ -378,6 +430,20 @@ func TestKeyMarshalUnmarshal(t *testing.T) {
 			t.Errorf("Unmarshal with numIter=%d succeeded; want error", badIter)
 		}
 	}
+
+	// Encrypted key with nil passphrase callback must return an error, not panic
+	if _, err := Unmarshal(pem.EncodeToMemory(block), "test", nil); err == nil {
+		t.Error("Unmarshal(encrypted, nil rp) succeeded; want error")
+	}
+
+	// Trailing bytes after privBytes in outer binary container must be rejected
+	trailingPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  block.Type,
+		Bytes: append(append([]byte(nil), block.Bytes...), 0x00),
+	})
+	if _, err := Unmarshal(trailingPEM, "test", rp); err == nil {
+		t.Error("Unmarshal with trailing container bytes succeeded; want error")
+	}
 }
 
 func TestCertificateSigning(t *testing.T) {
@@ -523,5 +589,139 @@ func TestKeyVerify(t *testing.T) {
 	}
 	if err := key.Verify([]byte("wrong-data"), skSig); err == nil {
 		t.Error("key.Verify(wrong-data) succeeded; want error")
+	}
+
+	// 3. Verify WebAuthn signature with extensions (flags 0x85) succeeds.
+	extBytes := string([]byte{0xa1, 0x01, 0xf5})
+	var extSigned cryptobyte.Builder
+	extSigned.AddBytes(appHash[:])
+	extSigned.AddUint8(0x85)
+	extSigned.AddUint32(counter)
+	extSigned.AddBytes([]byte(extBytes))
+	extSigned.AddBytes(cdHash[:])
+	extHash := sha256.Sum256(extSigned.BytesOrPanic())
+	rExt, sExt, err := ecdsa.Sign(rand.Reader, priv, extHash[:])
+	if err != nil {
+		t.Fatalf("ecdsa.Sign: %v", err)
+	}
+	extSig := &ssh.Signature{
+		Format: webauthnSignatureFormat,
+		Blob:   ssh.Marshal(struct{ R, S *big.Int }{rExt, sExt}),
+		Rest: ssh.Marshal(struct {
+			Flags      byte
+			Counter    uint32
+			Origin     string
+			ClientData string
+			Extensions string
+		}{
+			Flags:      0x85,
+			Counter:    counter,
+			Origin:     origin,
+			ClientData: clientData,
+			Extensions: extBytes,
+		}),
+	}
+	if err := key.Verify(data, extSig); err != nil {
+		t.Errorf("key.Verify(extSig) failed: %v", err)
+	}
+
+	// 4. Negative cases for WebAuthn & SK signature flags, origin, and clientData.
+	signWebAuthn := func(f byte, orig, cd, ext string) *ssh.Signature {
+		h := sha256.Sum256([]byte(cd))
+		var b cryptobyte.Builder
+		b.AddBytes(appHash[:])
+		b.AddUint8(f)
+		b.AddUint32(counter)
+		b.AddBytes([]byte(ext))
+		b.AddBytes(h[:])
+		digest := sha256.Sum256(b.BytesOrPanic())
+		rr, ss, err := ecdsa.Sign(rand.Reader, priv, digest[:])
+		if err != nil {
+			t.Fatalf("ecdsa.Sign: %v", err)
+		}
+		return &ssh.Signature{
+			Format: webauthnSignatureFormat,
+			Blob:   ssh.Marshal(struct{ R, S *big.Int }{rr, ss}),
+			Rest: ssh.Marshal(struct {
+				Flags      byte
+				Counter    uint32
+				Origin     string
+				ClientData string
+				Extensions string
+			}{
+				Flags:      f,
+				Counter:    counter,
+				Origin:     orig,
+				ClientData: cd,
+				Extensions: ext,
+			}),
+		}
+	}
+
+	b64Chall := base64.RawURLEncoding.EncodeToString(data)
+	for _, tc := range []struct {
+		name string
+		sig  *ssh.Signature
+	}{
+		{
+			name: "webauthn missing UP flag",
+			sig:  signWebAuthn(0x04, origin, clientData, ""),
+		},
+		{
+			name: "webauthn AT flag set",
+			sig:  signWebAuthn(0x41, origin, clientData, ""),
+		},
+		{
+			name: "webauthn ED flag set with empty extensions",
+			sig:  signWebAuthn(0x81, origin, clientData, ""),
+		},
+		{
+			name: "webauthn ED flag clear with non-empty extensions",
+			sig:  signWebAuthn(0x01, origin, clientData, extBytes),
+		},
+		{
+			name: "webauthn invalid origin scheme",
+			sig:  signWebAuthn(0x01, "ftp://example.com", fmt.Sprintf(`{"type":"webauthn.get","challenge":%q,"origin":"ftp://example.com"}`, b64Chall), ""),
+		},
+		{
+			name: "webauthn crossOrigin true",
+			sig:  signWebAuthn(0x01, origin, fmt.Sprintf(`{"type":"webauthn.get","challenge":%q,"origin":%q,"crossOrigin":true}`, b64Chall, origin), ""),
+		},
+		{
+			name: "webauthn reordered clientData fields",
+			sig:  signWebAuthn(0x01, origin, fmt.Sprintf(`{"origin":%q,"type":"webauthn.get","challenge":%q}`, origin, b64Chall), ""),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := key.Verify(data, tc.sig); err == nil {
+				t.Errorf("key.Verify(%s) succeeded; want error", tc.name)
+			}
+		})
+	}
+
+	// SK signature missing UP flag (0x00) must also fail
+	var skNoUP cryptobyte.Builder
+	skNoUP.AddBytes(appHash[:])
+	skNoUP.AddUint8(0x00)
+	skNoUP.AddUint32(counter)
+	skNoUP.AddBytes(dataHash[:])
+	skNoUPHash := sha256.Sum256(skNoUP.BytesOrPanic())
+	rNoUP, sNoUP, err := ecdsa.Sign(rand.Reader, priv, skNoUPHash[:])
+	if err != nil {
+		t.Fatalf("ecdsa.Sign: %v", err)
+	}
+	skNoUPSig := &ssh.Signature{
+		Format: ecdsa256KeyType,
+		Blob:   ssh.Marshal(struct{ R, S *big.Int }{rNoUP, sNoUP}),
+		Rest: ssh.Marshal(struct {
+			Flags   byte
+			Counter uint32
+		}{
+			Flags:   0x00,
+			Counter: counter,
+		}),
+	}
+	if err := key.Verify(data, skNoUPSig); err == nil {
+		t.Error("key.Verify(sk missing UP flag) succeeded; want error")
 	}
 }

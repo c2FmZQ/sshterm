@@ -187,6 +187,9 @@ func (k *Key) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	if err := parseAuthenticatorData(resp.AuthenticatorData, &ad); err != nil {
 		return nil, fmt.Errorf("ParseAuthenticatorData: %w", err)
 	}
+	if !ad.UserPresence || ad.AttestedCredentialData {
+		return nil, errors.New("invalid authenticatorData flags in assertion")
+	}
 	cd, err := verifyClientData(resp.ClientDataJSON, "webauthn.get", data)
 	if err != nil {
 		return nil, err
@@ -195,8 +198,16 @@ func (k *Key) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	var sig struct {
 		R, S *big.Int
 	}
-	if _, err := asn1.Unmarshal(resp.Signature, &sig); err != nil {
+	rest, err := asn1.Unmarshal(resp.Signature, &sig)
+	if err != nil {
 		return nil, fmt.Errorf("signature: %w", err)
+	}
+	if len(rest) != 0 {
+		return nil, errors.New("signature: unexpected trailing bytes")
+	}
+	n := k.pubKey.Curve.Params().N
+	if sig.R == nil || sig.S == nil || sig.R.Sign() <= 0 || sig.R.Cmp(n) >= 0 || sig.S.Sign() <= 0 || sig.S.Cmp(n) >= 0 {
+		return nil, errors.New("signature: value out of range")
 	}
 
 	return &ssh.Signature{
@@ -213,6 +224,7 @@ func (k *Key) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 			Counter:    ad.SignCount,
 			Origin:     cd.Origin,
 			ClientData: string(resp.ClientDataJSON),
+			Extensions: string(ad.Extensions),
 		}),
 	}, nil
 }

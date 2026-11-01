@@ -53,21 +53,18 @@ This causes four distinct failures in `golang.org/x/crypto/ssh`:
 
 ```go
 	switch out.Format {
-	case KeyAlgoSKECDSA256, KeyAlgoSKED25519:
+	case KeyAlgoSKECDSA256, CertAlgoSKECDSA256v01, KeyAlgoSKED25519, CertAlgoSKED25519v01:
 		out.Rest = in
-		return out, nil, true
+		return out, nil, ok
 	}
 
-	if len(in) > 0 {
-		return nil, nil, false
-	}
+	return out, in, ok
 ```
 
-Because `"webauthn-sk-ecdsa-sha2-nistp256@openssh.com"` is missing from the `switch`, `parseSignatureBody` sees the trailing `flags || counter || origin || clientData || extensions` bytes in `in` and fails (`return nil, nil, false`).
+Because `"webauthn-sk-ecdsa-sha2-nistp256@openssh.com"` is missing from the `switch`, `parseSignatureBody` returns the trailing `flags || counter || origin || clientData || extensions` bytes as `trailing` to `parseSignature`, which rejects the signature (`if !ok || len(trailing) > 0`).
 
 As a result:
 - `ssh.Server` cannot parse `SSH_MSG_USERAUTH_REQUEST` packets containing a `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` signature.
-- `ssh/agent` client (`agentClient.Sign`) cannot parse `SSH_AGENT_SIGN_RESPONSE` packets containing a `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` signature.
 - `ssh.ParsePublicKey` / `ssh.ParseAuthorizedKey` cannot parse a certificate whose CA signature (`cert.Signature`) uses `webauthn-sk-ecdsa-sha2-nistp256@openssh.com`.
 
 ### 2. Signature Verification Fails (`ssh/keys.go`: `(*skECDSAPublicKey).Verify`)
@@ -80,43 +77,33 @@ func (k *skECDSAPublicKey) Verify(data []byte, sig *Signature) error {
 		return fmt.Errorf("ssh: signature type %s for key type %s", sig.Format, k.Type())
 	}
 	...
-	var skSig struct {
-		Flags   byte
-		Counter uint32
-	}
-	if err := Unmarshal(sig.Rest, &skSig); err != nil {
+	var skf skFields
+	if err := Unmarshal(sig.Rest, &skf); err != nil {
 		return err
 	}
 ```
 
-Even if `parseSignatureBody` allowed the signature through, `(*skECDSAPublicKey).Verify` would fail on both `sig.Format != k.Type()` and `Unmarshal(sig.Rest, &skSig)`.
+Even if `parseSignatureBody` allowed the signature through, `(*skECDSAPublicKey).Verify` would fail on both `sig.Format != k.Type()` and `Unmarshal(sig.Rest, &skf)`.
 
 ### 3. Server Algorithm Compatibility Checks Reject WebAuthn Signatures (`ssh/common.go` & `ssh/server.go`)
 
-In `ssh/server.go`, `ServerConn.userAuth` validates the algorithm name in `SSH_MSG_USERAUTH_REQUEST` and compares the key algorithm to the signature format via `isAlgoCompatible`:
+In `ssh/server.go`, `connection.serverAuthenticate` validates the algorithm name in `SSH_MSG_USERAUTH_REQUEST` and compares the selected algorithm to the signature format via `isAlgoCompatible`:
 
 ```go
-func isAlgoCompatible(keyAlgo, sigAlgo string) bool {
-	if keyAlgo == sigAlgo {
+func isAlgoCompatible(algo, sigFormat string) bool {
+	if isRSA(algo) && isRSA(sigFormat) {
 		return true
 	}
-	if underlyingAlgo(keyAlgo) == KeyAlgoRSA && isRSASigAlgo(sigAlgo) {
-		return true
-	}
-	if certKeyAlgo, ok := certKeyAlgoNames[keyAlgo]; ok {
-		return isAlgoCompatible(certKeyAlgo, sigAlgo)
-	}
-	return false
+	// Standard case: the underlying algorithm must match the signature format.
+	return underlyingAlgo(algo) == sigFormat
 }
 ```
 
-When a client authenticates with an `sk-ecdsa-sha2-nistp256@openssh.com` public key or an `sk-ecdsa-sha2-nistp256-cert-v01@openssh.com` certificate and produces a signature with `sig.Format == "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"`, `isAlgoCompatible(pubKey.Type(), sig.Format)` returns `false`, causing `ssh.Server` to reject the authentication attempt with:
+When a client authenticates with an `sk-ecdsa-sha2-nistp256@openssh.com` public key or an `sk-ecdsa-sha2-nistp256-cert-v01@openssh.com` certificate and produces a signature with `sig.Format == "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"`, `serverAuthenticate` rejects the authentication attempt in three places:
 
-```text
-ssh:avas: key type "sk-ecdsa-sha2-nistp256@openssh.com" not compatible with signature type "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
-```
-
-Additionally, if an OpenSSH client sends `Algoname: "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"` in `SSH_MSG_USERAUTH_REQUEST`, `ServerConn` rejects it unless `"webauthn-sk-ecdsa-sha2-nistp256@openssh.com"` is included in `supportedPubKeyAuthAlgos` (`ssh/common.go`).
+1. `!slices.Contains(config.PublicKeyAuthAlgorithms, sig.Format)` fails because `SigAlgoWebAuthnSKECDSA256` is not in `supportedPubKeyAuthAlgos` / `defaultPubKeyAuthAlgos`.
+2. `isAlgoCompatible(algo, sig.Format)` returns `false` because `underlyingAlgo(algo)` is `KeyAlgoSKECDSA256` while `sig.Format` is `"webauthn-sk-ecdsa-sha2-nistp256@openssh.com"`.
+3. If a client sets `algo = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"` in `SSH_MSG_USERAUTH_REQUEST` for a plain `sk-ecdsa-sha2-nistp256@openssh.com` public key, `!slices.Contains(algorithmsForKeyFormat(pubKey.Type()), algo)` also fails.
 
 ### 4. Public Key Parsing Rejects the `webauthn-sk-*` Alias (`ssh/keys.go`: `parsePubKey`)
 
@@ -134,22 +121,67 @@ Add the algorithm constant:
 const SigAlgoWebAuthnSKECDSA256 = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
 ```
 
-Include `SigAlgoWebAuthnSKECDSA256` in `supportedPubKeyAuthAlgos` and map it to `KeyAlgoSKECDSA256` in `underlyingAlgo`:
+Include `SigAlgoWebAuthnSKECDSA256` in `supportedPubKeyAuthAlgos`, `defaultPubKeyAuthAlgos`, `hashFunc`, `algorithmsForKeyFormat`, and `keyFormatForAlgorithm`:
 
 ```go
-func underlyingAlgo(algo string) string {
-	if caAlgo, ok := certKeyAlgoNames[algo]; ok {
-		algo = caAlgo
+	supportedPubKeyAuthAlgos = []string{
+		KeyAlgoED25519,
+		KeyAlgoSKED25519,
+		KeyAlgoSKECDSA256,
+		SigAlgoWebAuthnSKECDSA256,
+		KeyAlgoECDSA256,
+		KeyAlgoECDSA384,
+		KeyAlgoECDSA521,
+		KeyAlgoRSASHA256,
+		KeyAlgoRSASHA512,
 	}
-	switch algo {
-	case KeyAlgoRSASHA256, KeyAlgoRSASHA512:
-		return KeyAlgoRSA
-	case SigAlgoWebAuthnSKECDSA256:
-		return KeyAlgoSKECDSA256
+
+	defaultPubKeyAuthAlgos = []string{
+		KeyAlgoED25519,
+		KeyAlgoSKED25519,
+		KeyAlgoSKECDSA256,
+		SigAlgoWebAuthnSKECDSA256,
+		KeyAlgoECDSA256,
+		KeyAlgoECDSA384,
+		KeyAlgoECDSA521,
+		KeyAlgoRSASHA256,
+		KeyAlgoRSASHA512,
+		KeyAlgoRSA,
+		InsecureKeyAlgoDSA,
+	}
+```
+
+```go
+func hashFunc(format string) (crypto.Hash, error) {
+	switch format {
+	case KeyAlgoRSASHA256, KeyAlgoECDSA256, KeyAlgoSKED25519, KeyAlgoSKECDSA256, SigAlgoWebAuthnSKECDSA256:
+		return crypto.SHA256, nil
+	...
+```
+
+```go
+func algorithmsForKeyFormat(keyFormat string) []string {
+	switch keyFormat {
+	case KeyAlgoRSA:
+		return []string{KeyAlgoRSASHA256, KeyAlgoRSASHA512, KeyAlgoRSA}
+	case CertAlgoRSAv01:
+		return []string{CertAlgoRSASHA256v01, CertAlgoRSASHA512v01, CertAlgoRSAv01}
+	case KeyAlgoSKECDSA256:
+		return []string{KeyAlgoSKECDSA256, SigAlgoWebAuthnSKECDSA256}
 	default:
-		return algo
+		return []string{keyFormat}
 	}
 }
+
+func keyFormatForAlgorithm(sigAlgo string) string {
+	switch sigAlgo {
+	case KeyAlgoRSA, KeyAlgoRSASHA256, KeyAlgoRSASHA512:
+		return KeyAlgoRSA
+	case CertAlgoRSAv01, CertAlgoRSASHA256v01, CertAlgoRSASHA512v01:
+		return CertAlgoRSAv01
+	case KeyAlgoSKECDSA256, SigAlgoWebAuthnSKECDSA256:
+		return KeyAlgoSKECDSA256
+	...
 ```
 
 ### 2. Preserve `sig.Rest` When Unmarshaling WebAuthn Signatures (`ssh/certs.go`)
@@ -158,9 +190,9 @@ In `parseSignatureBody`:
 
 ```go
 	switch out.Format {
-	case KeyAlgoSKECDSA256, SigAlgoWebAuthnSKECDSA256, KeyAlgoSKED25519:
+	case KeyAlgoSKECDSA256, SigAlgoWebAuthnSKECDSA256, CertAlgoSKECDSA256v01, KeyAlgoSKED25519, CertAlgoSKED25519v01:
 		out.Rest = in
-		return out, nil, true
+		return out, nil, ok
 	}
 ```
 
@@ -169,33 +201,35 @@ In `parseSignatureBody`:
 In `isAlgoCompatible`:
 
 ```go
-func isAlgoCompatible(keyAlgo, sigAlgo string) bool {
-	if keyAlgo == sigAlgo {
+func isAlgoCompatible(algo, sigFormat string) bool {
+	if isRSA(algo) && isRSA(sigFormat) {
 		return true
 	}
-	if underlyingAlgo(keyAlgo) == KeyAlgoRSA && isRSASigAlgo(sigAlgo) {
+	if (underlyingAlgo(algo) == KeyAlgoSKECDSA256 || algo == SigAlgoWebAuthnSKECDSA256) &&
+		(sigFormat == KeyAlgoSKECDSA256 || sigFormat == SigAlgoWebAuthnSKECDSA256) {
 		return true
 	}
-	if underlyingAlgo(keyAlgo) == KeyAlgoSKECDSA256 &&
-		(sigAlgo == KeyAlgoSKECDSA256 || sigAlgo == SigAlgoWebAuthnSKECDSA256) {
-		return true
-	}
-	if certKeyAlgo, ok := certKeyAlgoNames[keyAlgo]; ok {
-		return isAlgoCompatible(certKeyAlgo, sigAlgo)
-	}
-	return false
+	// Standard case: the underlying algorithm must match the signature format.
+	return underlyingAlgo(algo) == sigFormat
 }
 ```
 
 ### 4. Support WebAuthn Verification in `(*skECDSAPublicKey).Verify` (`ssh/keys.go`)
 
-Update `(*skECDSAPublicKey).Verify` to handle `sig.Format == SigAlgoWebAuthnSKECDSA256` per OpenSSH's `PROTOCOL.u2f` and `ssh-ecdsa-sk.c` (`webauthn_check_prepare_hash`):
+Update `(*skECDSAPublicKey).Verify` to handle `sig.Format == SigAlgoWebAuthnSKECDSA256` per OpenSSH's `PROTOCOL.u2f` and `ssh-ecdsa-sk.c` (`webauthn_check_prepare_hash`), while preserving `flagUserPresence` enforcement:
 
 ```go
 func (k *skECDSAPublicKey) Verify(data []byte, sig *Signature) error {
 	if sig.Format != KeyAlgoSKECDSA256 && sig.Format != SigAlgoWebAuthnSKECDSA256 {
 		return fmt.Errorf("ssh: signature type %s for key type %s", sig.Format, k.Type())
 	}
+	hash, err := hashFunc(sig.Format)
+	if err != nil {
+		return err
+	}
+	h := hash.New()
+	h.Write([]byte(k.application))
+	appDigest := h.Sum(nil)
 
 	var ecSig struct {
 		R *big.Int
@@ -205,32 +239,22 @@ func (k *skECDSAPublicKey) Verify(data []byte, sig *Signature) error {
 		return err
 	}
 
-	h := ecHash(k.Curve)
-	n := h.New()
-	n.Write([]byte(k.application))
-	appDigest := n.Sum(nil)
-
-	blob := h.New()
-	blob.Write(appDigest)
+	var flags byte
+	var counter uint32
+	var extensions []byte
+	var messageDigest []byte
 
 	switch sig.Format {
 	case KeyAlgoSKECDSA256:
-		var skSig struct {
-			Flags   byte
-			Counter uint32
-		}
-		if err := Unmarshal(sig.Rest, &skSig); err != nil {
+		var skf skFields
+		if err := Unmarshal(sig.Rest, &skf); err != nil {
 			return err
 		}
-		n.Reset()
-		n.Write(data)
-		dataDigest := n.Sum(nil)
-
-		var buf [5]byte
-		buf[0] = skSig.Flags
-		binary.BigEndian.PutUint32(buf[1:], skSig.Counter)
-		blob.Write(buf[:])
-		blob.Write(dataDigest)
+		flags = skf.Flags
+		counter = skf.Counter
+		h.Reset()
+		h.Write(data)
+		messageDigest = h.Sum(nil)
 
 	case SigAlgoWebAuthnSKECDSA256:
 		var waSig struct {
@@ -246,19 +270,39 @@ func (k *skECDSAPublicKey) Verify(data []byte, sig *Signature) error {
 		if err := verifyWebAuthnClientData(waSig.Flags, waSig.Origin, waSig.ClientData, waSig.Extensions, data); err != nil {
 			return err
 		}
-		n.Reset()
-		n.Write([]byte(waSig.ClientData))
-		clientDataDigest := n.Sum(nil)
-
-		var buf [5]byte
-		buf[0] = waSig.Flags
-		binary.BigEndian.PutUint32(buf[1:], waSig.Counter)
-		blob.Write(buf[:])
-		blob.Write([]byte(waSig.Extensions))
-		blob.Write(clientDataDigest)
+		flags = waSig.Flags
+		counter = waSig.Counter
+		extensions = []byte(waSig.Extensions)
+		h.Reset()
+		h.Write([]byte(waSig.ClientData))
+		messageDigest = h.Sum(nil)
 	}
 
-	if ecdsa.Verify(&k.PublicKey, blob.Sum(nil), ecSig.R, ecSig.S) {
+	if flags&flagUserPresence == 0 && !k.noTouchRequired {
+		return errSKMissingUserPresence
+	}
+
+	blob := struct {
+		ApplicationDigest []byte `ssh:"rest"`
+		Flags             byte
+		Counter           uint32
+		Extensions        []byte `ssh:"rest"`
+		MessageDigest     []byte `ssh:"rest"`
+	}{
+		appDigest,
+		flags,
+		counter,
+		extensions,
+		messageDigest,
+	}
+
+	original := Marshal(blob)
+
+	h.Reset()
+	h.Write(original)
+	digest := h.Sum(nil)
+
+	if ecdsa.Verify((*ecdsa.PublicKey)(&k.PublicKey), digest, ecSig.R, ecSig.S) {
 		return nil
 	}
 	return errors.New("ssh: signature did not verify")
@@ -268,10 +312,8 @@ func (k *skECDSAPublicKey) Verify(data []byte, sig *Signature) error {
 Where `verifyWebAuthnClientData` validates (matching OpenSSH's `webauthn_check_prepare_hash`):
 1. `(flags & 0x40) == 0` (the WebAuthn `AT` / AttestedCredentialData flag must not be set in an assertion).
 2. `((flags & 0x80) != 0) == (len(extensions) != 0)` (the WebAuthn `ED` / ExtensionData flag must match whether `extensions` is non-empty).
-3. `clientData` is a valid WebAuthn `clientDataJSON` object with:
-   - `"type": "webauthn.get"`
-   - `"challenge"` equal to `base64.RawURLEncoding.EncodeToString(data)`
-   - `"origin"` non-empty and equal to `origin`.
+3. `origin` starts with `"https://"` or `"http://"` and contains no `"` characters.
+4. `clientData` begins with `{"type":"webauthn.get","challenge":"<base64url(data)>","origin":"<origin>"` followed immediately by `}` or `,`, and is a valid JSON object in which `"crossOrigin"` is not `true`.
 
 ### 5. (Optional) Accept `SigAlgoWebAuthnSKECDSA256` in `parsePubKey` (`ssh/keys.go`)
 
@@ -281,6 +323,8 @@ For compatibility with keys exported with the `webauthn-sk-ecdsa-sha2-nistp256@o
 	case KeyAlgoSKECDSA256, SigAlgoWebAuthnSKECDSA256:
 		return parseSKECDSAPubKey(in)
 ```
+
+(Note: if `ParseAuthorizedKey` and `ParseKnownHosts` should also accept text lines whose first field is `"webauthn-sk-ecdsa-sha2-nistp256@openssh.com"`, their `pubKey.Type() != algo` check should compare `pubKey.Type() != keyFormatForAlgorithm(algo)`.)
 
 ---
 
