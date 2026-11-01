@@ -282,6 +282,11 @@ func TestParseAuthenticatorData(t *testing.T) {
 	if err := parseAuthenticatorData(makeAuthData(0x81, 8, append(append([]byte(nil), cborExt...), 0x00)), &adExt); err == nil {
 		t.Error("parseAuthenticatorData(ED=1, trailing bytes) succeeded; want error")
 	}
+
+	// ED flag set with non-map CBOR item (e.g., integer 1 -> 0x01) must be rejected
+	if err := parseAuthenticatorData(makeAuthData(0x81, 8, []byte{0x01}), &adExt); err == nil {
+		t.Error("parseAuthenticatorData(ED=1, non-map CBOR) succeeded; want error")
+	}
 }
 
 func TestIsPrintableASCII(t *testing.T) {

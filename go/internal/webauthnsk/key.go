@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/asn1"
 	"errors"
 	"fmt"
@@ -81,6 +82,14 @@ func Create(name string, resident bool) (*Key, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ParseAttestationObject: %w", err)
 	}
+	rpID := []byte(jsutil.Hostname())
+	rpHash := sha256.Sum256(rpID)
+	if !bytes.Equal(att.AuthData.RPIDHash, rpHash[:]) {
+		return nil, errors.New("ParseAttestationObject: rpIdHash mismatch")
+	}
+	if !att.AuthData.UserPresence {
+		return nil, errors.New("ParseAttestationObject: missing user presence flag")
+	}
 	ac := att.AuthData.AttestedCredentials
 	if ac == nil {
 		return nil, errors.New("ParseAttestationObject: no attested credentials")
@@ -97,7 +106,7 @@ func Create(name string, resident bool) (*Key, error) {
 		typ:    ecdsa256KeyType,
 		id:     ac.ID,
 		pubKey: ecpk,
-		rpID:   []byte(jsutil.Hostname()),
+		rpID:   rpID,
 	}, nil
 }
 
@@ -186,6 +195,10 @@ func (k *Key) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	var ad authenticatorData
 	if err := parseAuthenticatorData(resp.AuthenticatorData, &ad); err != nil {
 		return nil, fmt.Errorf("ParseAuthenticatorData: %w", err)
+	}
+	rpHash := sha256.Sum256(k.rpID)
+	if !bytes.Equal(ad.RPIDHash, rpHash[:]) {
+		return nil, fmt.Errorf("rpIdHash mismatch (key application %q does not match current origin)", k.rpID)
 	}
 	if !ad.UserPresence || ad.AttestedCredentialData {
 		return nil, errors.New("invalid authenticatorData flags in assertion")

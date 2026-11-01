@@ -188,6 +188,9 @@ func parseAuthenticatorData(raw []byte, ad *authenticatorData) error {
 		if raw, err = cbor.UnmarshalFirst(raw, &coseKey); err != nil {
 			return err
 		}
+		if len(coseKey) == 0 || coseKey[0]>>5 != 5 {
+			return errors.New("invalid COSEKey CBOR type")
+		}
 		ad.AttestedCredentials.COSEKey = []byte(coseKey)
 	}
 	if ad.ExtensionData {
@@ -198,6 +201,9 @@ func parseAuthenticatorData(raw []byte, ad *authenticatorData) error {
 		var err error
 		if raw, err = cbor.UnmarshalFirst(raw, &ext); err != nil {
 			return err
+		}
+		if len(ext) == 0 || ext[0]>>5 != 5 {
+			return errors.New("invalid extensions CBOR type")
 		}
 		ad.Extensions = []byte(ext)
 	}

@@ -317,14 +317,20 @@ Where `verifyWebAuthnClientData` validates (matching OpenSSH's `webauthn_check_p
 
 ### 5. (Optional) Accept `SigAlgoWebAuthnSKECDSA256` in `parsePubKey` (`ssh/keys.go`)
 
-For compatibility with keys exported with the `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` key type prefix (matching `ssh-keygen`), allow `SigAlgoWebAuthnSKECDSA256` in `parsePubKey` as an alias for `parseSKECDSAPubKey`:
+With Section 1's `keyFormatForAlgorithm` change in place, [`parsePubKey`](file:///home/robin/go/pkg/mod/golang.org/x/crypto@v0.58.0/ssh/keys.go#L102-L105) already returns a clear diagnostic error if handed a legacy public key blob labeled `"webauthn-sk-ecdsa-sha2-nistp256@openssh.com"`:
+
+```text
+ssh: signature algorithm "webauthn-sk-ecdsa-sha2-nistp256@openssh.com" isn't a key format; key is malformed and should be re-encoded with type "sk-ecdsa-sha2-nistp256@openssh.com"
+```
+
+If compatibility with legacy keys exported with the `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` key type prefix is also desired (matching `ssh-keygen`), `parsePubKey` can accept `SigAlgoWebAuthnSKECDSA256` as an alias for `parseSKECDSA`:
 
 ```go
 	case KeyAlgoSKECDSA256, SigAlgoWebAuthnSKECDSA256:
-		return parseSKECDSAPubKey(in)
+		return parseSKECDSA(in)
 ```
 
-(Note: if `ParseAuthorizedKey` and `ParseKnownHosts` should also accept text lines whose first field is `"webauthn-sk-ecdsa-sha2-nistp256@openssh.com"`, their `pubKey.Type() != algo` check should compare `pubKey.Type() != keyFormatForAlgorithm(algo)`.)
+(If `ParseAuthorizedKey` and `ParseKnownHosts` should also accept text lines whose first field is `"webauthn-sk-ecdsa-sha2-nistp256@openssh.com"`, their `pubKey.Type() != algo` check can additionally allow `algo == SigAlgoWebAuthnSKECDSA256 && pubKey.Type() == KeyAlgoSKECDSA256`.)
 
 ---
 
