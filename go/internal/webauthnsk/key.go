@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/asn1"
 	"errors"
 	"fmt"
@@ -81,6 +82,14 @@ func Create(name string, resident bool) (*Key, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ParseAttestationObject: %w", err)
 	}
+	rpID := []byte(jsutil.Hostname())
+	rpHash := sha256.Sum256(rpID)
+	if !bytes.Equal(att.AuthData.RPIDHash, rpHash[:]) {
+		return nil, errors.New("ParseAttestationObject: rpIdHash mismatch")
+	}
+	if !att.AuthData.UserPresence {
+		return nil, errors.New("ParseAttestationObject: missing user presence flag")
+	}
 	ac := att.AuthData.AttestedCredentials
 	if ac == nil {
 		return nil, errors.New("ParseAttestationObject: no attested credentials")
@@ -97,7 +106,7 @@ func Create(name string, resident bool) (*Key, error) {
 		typ:    ecdsa256KeyType,
 		id:     ac.ID,
 		pubKey: ecpk,
-		rpID:   []byte(jsutil.Hostname()),
+		rpID:   rpID,
 	}, nil
 }
 
@@ -187,6 +196,13 @@ func (k *Key) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	if err := parseAuthenticatorData(resp.AuthenticatorData, &ad); err != nil {
 		return nil, fmt.Errorf("ParseAuthenticatorData: %w", err)
 	}
+	rpHash := sha256.Sum256(k.rpID)
+	if !bytes.Equal(ad.RPIDHash, rpHash[:]) {
+		return nil, fmt.Errorf("rpIdHash mismatch (key application %q does not match current origin)", k.rpID)
+	}
+	if !ad.UserPresence || ad.AttestedCredentialData {
+		return nil, errors.New("invalid authenticatorData flags in assertion")
+	}
 	cd, err := verifyClientData(resp.ClientDataJSON, "webauthn.get", data)
 	if err != nil {
 		return nil, err
@@ -195,12 +211,20 @@ func (k *Key) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	var sig struct {
 		R, S *big.Int
 	}
-	if _, err := asn1.Unmarshal(resp.Signature, &sig); err != nil {
+	rest, err := asn1.Unmarshal(resp.Signature, &sig)
+	if err != nil {
 		return nil, fmt.Errorf("signature: %w", err)
+	}
+	if len(rest) != 0 {
+		return nil, errors.New("signature: unexpected trailing bytes")
+	}
+	n := k.pubKey.Curve.Params().N
+	if sig.R == nil || sig.S == nil || sig.R.Sign() <= 0 || sig.R.Cmp(n) >= 0 || sig.S.Sign() <= 0 || sig.S.Cmp(n) >= 0 {
+		return nil, errors.New("signature: value out of range")
 	}
 
 	return &ssh.Signature{
-		Format: k.Type(),
+		Format: webauthnSignatureFormat,
 		Blob:   ssh.Marshal(sig),
 		Rest: ssh.Marshal(struct {
 			Flags      byte
@@ -213,6 +237,7 @@ func (k *Key) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 			Counter:    ad.SignCount,
 			Origin:     cd.Origin,
 			ClientData: string(resp.ClientDataJSON),
+			Extensions: string(ad.Extensions),
 		}),
 	}, nil
 }

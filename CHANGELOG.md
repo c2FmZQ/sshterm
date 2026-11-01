@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :wrench: Bug fixes
+
+* Use `sk-ecdsa-sha2-nistp256@openssh.com` as the public key type for WebAuthn (`ecdsa-sk`) keys while keeping `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` as the signature format, enabling SSH certificate signing, certificate import, and agent forwarding for WebAuthn keys while preserving backward compatibility with existing stored keys.
+
 ## v0.11.7
 
 ### :wrench: Misc

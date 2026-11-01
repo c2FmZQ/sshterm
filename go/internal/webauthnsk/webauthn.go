@@ -40,6 +40,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
 	cbor "github.com/fxamacker/cbor/v2"
 	"golang.org/x/crypto/cryptobyte"
@@ -53,9 +54,10 @@ var errTooShort = errors.New("too short")
 
 // ClientData is a decoded ClientDataJSON object.
 type clientData struct {
-	Type      string `json:"type"`
-	Challenge string `json:"challenge"`
-	Origin    string `json:"origin"`
+	Type        string `json:"type"`
+	Challenge   string `json:"challenge"`
+	Origin      string `json:"origin"`
+	CrossOrigin bool   `json:"crossOrigin"`
 }
 
 // Attestation. https://w3c.github.io/webauthn/#sctn-attestation
@@ -80,6 +82,7 @@ type authenticatorData struct {
 	ExtensionData          bool                 `json:"ed"`
 	SignCount              uint32               `json:"signCount"`
 	AttestedCredentials    *attestedCredentials `json:"attestedCredentialData"`
+	Extensions             []byte               `json:"extensions,omitempty"`
 }
 
 // AttestedCredentials. https://w3c.github.io/webauthn/#sctn-attested-credential-data
@@ -185,10 +188,27 @@ func parseAuthenticatorData(raw []byte, ad *authenticatorData) error {
 		if raw, err = cbor.UnmarshalFirst(raw, &coseKey); err != nil {
 			return err
 		}
+		if len(coseKey) == 0 || coseKey[0]>>5 != 5 {
+			return errors.New("invalid COSEKey CBOR type")
+		}
 		ad.AttestedCredentials.COSEKey = []byte(coseKey)
 	}
 	if ad.ExtensionData {
-		// Parse extensions
+		if len(raw) == 0 {
+			return errTooShort
+		}
+		var ext cbor.RawMessage
+		var err error
+		if raw, err = cbor.UnmarshalFirst(raw, &ext); err != nil {
+			return err
+		}
+		if len(ext) == 0 || ext[0]>>5 != 5 {
+			return errors.New("invalid extensions CBOR type")
+		}
+		ad.Extensions = []byte(ext)
+	}
+	if len(raw) != 0 {
+		return errors.New("unexpected trailing bytes in authenticatorData")
 	}
 	return nil
 }
@@ -210,7 +230,10 @@ func verifyClientData(js []byte, wantType string, wantChallenge []byte) (*client
 	if cd.Type != wantType {
 		return nil, fmt.Errorf("unexpected client data type %q", cd.Type)
 	}
-	challenge, err := base64.RawURLEncoding.DecodeString(cd.Challenge)
+	if cd.CrossOrigin {
+		return nil, errors.New("cross-origin client data not allowed")
+	}
+	challenge, err := base64.RawURLEncoding.Strict().DecodeString(cd.Challenge)
 	if err != nil {
 		return nil, fmt.Errorf("invalid client data challenge: %w", err)
 	}
@@ -381,7 +404,10 @@ func RecoverPublicKey(authData1, clientDataJSON1, sig1Bytes, authData2, clientDa
 	return pk, nil
 }
 
-const ecdsa256KeyType = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
+const (
+	ecdsa256KeyType         = ssh.KeyAlgoSKECDSA256
+	webauthnSignatureFormat = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
+)
 
 type Key struct {
 	typ    string
@@ -428,7 +454,7 @@ func Unmarshal(priv []byte, name string, rp func(string) (string, error)) (*Key,
 	}
 
 	var privBytes cryptobyte.String
-	if !str.ReadUint16LengthPrefixed(&privBytes) {
+	if !str.ReadUint16LengthPrefixed(&privBytes) || !str.Empty() {
 		return nil, errTooShort
 	}
 
@@ -447,6 +473,9 @@ func Unmarshal(priv []byte, name string, rp func(string) (string, error)) (*Key,
 		}
 		if numIter < minIter || numIter > maxIter {
 			return nil, fmt.Errorf("invalid iteration count %d", numIter)
+		}
+		if rp == nil {
+			return nil, errors.New("passphrase required")
 		}
 		passphrase, err := rp("Enter the passphrase for " + name + ": ")
 		if err != nil {
@@ -490,7 +519,7 @@ func UnmarshalPublic(pub []byte) (*Key, error) {
 	if err := ssh.Unmarshal(pub, &data); err != nil {
 		return nil, fmt.Errorf("Unmarshal: %w", err)
 	}
-	if data.Name != ecdsa256KeyType || data.ID != "nistp256" {
+	if (data.Name != ecdsa256KeyType && data.Name != webauthnSignatureFormat) || data.ID != "nistp256" {
 		return nil, fmt.Errorf("unexpected key type %q", data.Name)
 	}
 	x, y := elliptic.Unmarshal(elliptic.P256(), data.Key)
@@ -498,7 +527,7 @@ func UnmarshalPublic(pub []byte) (*Key, error) {
 		return nil, errors.New("invalid public key")
 	}
 	return &Key{
-		typ:  data.Name,
+		typ:  ecdsa256KeyType,
 		rpID: []byte(data.Application),
 		pubKey: &ecdsa.PublicKey{
 			Curve: elliptic.P256(),
@@ -581,7 +610,88 @@ func (k *Key) Marshal() []byte {
 }
 
 func (k *Key) Verify(data []byte, sig *ssh.Signature) error {
-	return errors.New("verify not implemented")
+	var ecSig struct {
+		R, S *big.Int
+	}
+	if err := ssh.Unmarshal(sig.Blob, &ecSig); err != nil {
+		return err
+	}
+	appHash := sha256.Sum256(k.rpID)
+	var signed cryptobyte.Builder
+	signed.AddBytes(appHash[:])
+
+	switch sig.Format {
+	case ecdsa256KeyType:
+		var extra struct {
+			Flags   byte
+			Counter uint32
+		}
+		if err := ssh.Unmarshal(sig.Rest, &extra); err != nil {
+			return err
+		}
+		if (extra.Flags & 0x01) == 0 {
+			return errors.New("ssh: missing user presence flag")
+		}
+		dataHash := sha256.Sum256(data)
+		signed.AddUint8(extra.Flags)
+		signed.AddUint32(extra.Counter)
+		signed.AddBytes(dataHash[:])
+
+	case webauthnSignatureFormat:
+		var extra struct {
+			Flags      byte
+			Counter    uint32
+			Origin     string
+			ClientData string
+			Extensions string
+		}
+		if err := ssh.Unmarshal(sig.Rest, &extra); err != nil {
+			return err
+		}
+		if (extra.Flags & 0x01) == 0 {
+			return errors.New("ssh: missing user presence flag")
+		}
+		if (extra.Flags & 0x40) != 0 {
+			return errors.New("ssh: unexpected attested credential data flag in assertion")
+		}
+		if ((extra.Flags & 0x80) != 0) != (len(extra.Extensions) != 0) {
+			return errors.New("ssh: extension data flag does not match extensions length")
+		}
+		if (!strings.HasPrefix(extra.Origin, "https://") && !strings.HasPrefix(extra.Origin, "http://")) || strings.IndexByte(extra.Origin, '"') != -1 {
+			return errors.New("ssh: invalid origin")
+		}
+		expectedPrefix := fmt.Sprintf(`{"type":"webauthn.get","challenge":"%s","origin":"%s"`,
+			base64.RawURLEncoding.EncodeToString(data), extra.Origin)
+		if len(extra.ClientData) <= len(expectedPrefix) || !strings.HasPrefix(extra.ClientData, expectedPrefix) ||
+			(extra.ClientData[len(expectedPrefix)] != '}' && extra.ClientData[len(expectedPrefix)] != ',') {
+			return errors.New("ssh: clientData does not match expected WebAuthn format")
+		}
+		cd, err := verifyClientData([]byte(extra.ClientData), "webauthn.get", data)
+		if err != nil {
+			return err
+		}
+		if cd.Origin != extra.Origin {
+			return errors.New("ssh: invalid client data origin")
+		}
+		clientDataHash := sha256.Sum256([]byte(extra.ClientData))
+		signed.AddUint8(extra.Flags)
+		signed.AddUint32(extra.Counter)
+		signed.AddBytes([]byte(extra.Extensions))
+		signed.AddBytes(clientDataHash[:])
+
+	default:
+		return fmt.Errorf("ssh: signature type %s for key type %s", sig.Format, k.Type())
+	}
+
+	msg, err := signed.Bytes()
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256(msg)
+	if !ecdsa.Verify(k.pubKey, hash[:], ecSig.R, ecSig.S) {
+		return errors.New("ssh: signature did not verify")
+	}
+	return nil
 }
 
 func (k *Key) PublicKey() ssh.PublicKey {
