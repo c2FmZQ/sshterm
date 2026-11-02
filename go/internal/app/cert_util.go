@@ -41,7 +41,7 @@ func stripPortAndBrackets(addr string) string {
 	if h, _, err := net.SplitHostPort(addr); err == nil {
 		return h
 	}
-	if strings.HasPrefix(addr, "[") && strings.HasSuffix(addr, "]") {
+	if strings.HasPrefix(addr, "[") && strings.HasSuffix(addr, "]") && strings.Contains(addr, ":") {
 		return addr[1 : len(addr)-1]
 	}
 	return addr

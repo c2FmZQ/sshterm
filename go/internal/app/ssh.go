@@ -210,6 +210,12 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 	if !ok {
 		return nil, fmt.Errorf("invalid target %q", target)
 	}
+	if strings.HasPrefix(hostname, "[") && strings.HasSuffix(hostname, "]") && strings.Contains(hostname, ":") {
+		hostname = hostname[1 : len(hostname)-1]
+	}
+	if hostname == "" {
+		return nil, fmt.Errorf("invalid target %q", target)
+	}
 	jumpHosts = strings.TrimSpace(jumpHosts)
 	if jumpHosts == "" {
 		if _, exists := a.data.Endpoints[hostname]; !exists {
@@ -233,7 +239,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 				u = username
 				h = jh
 			}
-			if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+			if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") && strings.Contains(h, ":") {
 				h = h[1 : len(h)-1]
 			}
 			if h == "" {
@@ -241,12 +247,6 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 			}
 			hops = append(hops, userhost{u, h})
 		}
-	}
-	if strings.HasPrefix(hostname, "[") && strings.HasSuffix(hostname, "]") {
-		hostname = hostname[1 : len(hostname)-1]
-	}
-	if hostname == "" {
-		return nil, fmt.Errorf("invalid target %q", target)
 	}
 	hops = append(hops, userhost{username, hostname})
 

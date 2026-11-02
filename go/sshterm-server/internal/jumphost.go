@@ -604,11 +604,19 @@ func checkSourceAddress(sourceAddrs string, remoteAddr net.Addr) bool {
 	if remoteAddr == nil || strings.TrimSpace(sourceAddrs) == "" {
 		return false
 	}
-	host, _, err := net.SplitHostPort(remoteAddr.String())
-	if err != nil {
-		host = remoteAddr.String()
+	var remoteIP net.IP
+	if tcpAddr, ok := remoteAddr.(*net.TCPAddr); ok {
+		remoteIP = tcpAddr.IP
+	} else {
+		host, _, err := net.SplitHostPort(remoteAddr.String())
+		if err != nil {
+			host = remoteAddr.String()
+		}
+		if h, _, ok := strings.Cut(host, "%"); ok {
+			host = h
+		}
+		remoteIP = net.ParseIP(host)
 	}
-	remoteIP := net.ParseIP(host)
 	if remoteIP == nil {
 		return false
 	}

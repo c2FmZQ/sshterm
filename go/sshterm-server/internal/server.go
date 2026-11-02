@@ -87,7 +87,7 @@ func isValidEndpointName(name string) bool {
 	if name == "" || name == "." || name == ".." || strings.EqualFold(name, "none") {
 		return false
 	}
-	return !strings.ContainsAny(name, ":,@/\\ \t\r\n")
+	return !strings.ContainsAny(name, ":,@[]/\\ \t\r\n")
 }
 
 // ParseEndpoint parses an endpoint specification in the form "name=host[:port]".
@@ -123,7 +123,7 @@ func normalizeHostPort(addr string) (string, error) {
 	if err != nil {
 		// If splitting failed, assume port 22 was omitted.
 		h := addr
-		if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") && strings.Contains(h, ":") {
 			h = h[1 : len(h)-1]
 		}
 		if h == "" {
@@ -137,6 +137,9 @@ func normalizeHostPort(addr string) (string, error) {
 	}
 	if host == "" {
 		return "", errors.New("host cannot be empty")
+	}
+	if strings.ContainsAny(host, "[]") {
+		return "", fmt.Errorf("invalid host %q", host)
 	}
 	p, err := strconv.Atoi(port)
 	if err != nil || p < 1 || p > 65535 {
@@ -268,6 +271,9 @@ func buildConfigJSON(configFile string, endpoints []Endpoint, jh *jumpHost) ([]b
 		for _, ep := range cfg.Endpoints {
 			if !isValidEndpointName(ep.Name) {
 				return nil, nil, fmt.Errorf("invalid endpoint name %q in config file", ep.Name)
+			}
+			if jh != nil && ep.Name == DefaultJumpEndpointName {
+				return nil, nil, fmt.Errorf("endpoint name %q is reserved when --authorized-keys is set", ep.Name)
 			}
 		}
 	}

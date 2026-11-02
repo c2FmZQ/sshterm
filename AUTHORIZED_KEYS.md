@@ -61,10 +61,10 @@ All option values (`principals="..."`, `permitopen="..."`) must be enclosed in d
 | Hostname with any port | `permitopen="app-?.staging.internal:*"` | Any port (`1`–`65535`) | `app-1.staging.internal`, `app-a.staging.internal`, etc. on any port |
 | Any host on port 22 | `permitopen="*:22"` or `permitopen="*"` | Port `22` | Any hostname, IPv4, or IPv6 address on port `22` |
 | Any host, any port | `permitopen="*:*"` | Any port (`1`–`65535`) | Any hostname, IPv4, or IPv6 address on any port |
-| IPv4 address | `permitopen="192.168.1.10:22"` or `permitopen="192.168.1.10"` | Port `22` | Literal IPv4 `192.168.1.10` on port `22` |
-| IPv4 CIDR | `permitopen="10.0.0.0/8:22"` or `permitopen="10.0.0.0/8"` | Port `22` | Any literal IPv4 in `10.0.0.0/8` on port `22` |
-| IPv6 address | `permitopen="[2001:db8::1]:2222"`, `permitopen="[2001:db8::1]"`, or `permitopen="2001:db8::1"` | `2222` / default `22` | Literal IPv6 `2001:db8::1` |
-| IPv6 CIDR | `permitopen="[2001:db8::/32]:*"`, `permitopen="[2001:db8::/32]"`, or `permitopen="2001:db8::/32"` | Any port / default `22` | Any literal IPv6 in `2001:db8::/32` |
+| IPv4 address | `permitopen="192.168.1.10:22"` or `permitopen="192.168.1.10"` | Port `22` | `192.168.1.10` (or a hostname resolving to it) on port `22` |
+| IPv4 CIDR | `permitopen="10.0.0.0/8:22"` or `permitopen="10.0.0.0/8"` | Port `22` | Any IPv4 in `10.0.0.0/8` (or a hostname resolving into it) on port `22` |
+| IPv6 address | `permitopen="[2001:db8::1]:2222"`, `permitopen="[2001:db8::1]"`, or `permitopen="2001:db8::1"` | `2222` / default `22` | `2001:db8::1` (or a hostname resolving to it) |
+| IPv6 CIDR | `permitopen="[2001:db8::/32]:*"`, `permitopen="[2001:db8::/32]"`, or `permitopen="2001:db8::/32"` | Any port / default `22` | Any IPv6 in `2001:db8::/32` (or a hostname resolving into it) |
 
 > **Notes on Hostnames, Wildcards, and Certificates:**
 > - **No IP Wildcards:** IP wildcard patterns such as `10.0.0.*:22` are rejected at startup. Always use CIDR notation (e.g., `10.0.0.0/24:22`) for IP address ranges.
@@ -96,7 +96,7 @@ permitopen="web.internal.example.com:22,db.internal.example.com:2222" ecdsa-sha2
 
 ### 2. IPv4 and IPv6 Addresses and CIDR Subnets
 
-When users connect to target hosts by IP address (e.g., `ssh admin@10.10.1.50` or `ssh admin@[2001:db8::dead:beef]`), use IP or CIDR `permitopen` rules. Both unbracketed (`2001:db8::1`, `2001:db8::/32`) and bracketed (`[2001:db8::1]`, `[2001:db8::/32]`) IPv6 forms without a port default to port `22`; use brackets (`[ipv6]:port` or `[ipv6/prefix]:port`) when specifying an explicit port or port wildcard `*`:
+You can restrict access by IP address or CIDR subnet—matching both literal IP targets (e.g., `ssh admin@10.10.1.50` or `ssh admin@[2001:db8::dead:beef]`) and hostnames that resolve into those subnets. Both unbracketed (`2001:db8::1`, `2001:db8::/32`) and bracketed (`[2001:db8::1]`, `[2001:db8::/32]`) IPv6 forms without a port default to port `22`; use brackets (`[ipv6]:port` or `[ipv6/prefix]:port`) when specifying an explicit port or port wildcard `*`:
 
 ```text
 # Allow port 22 across the 10.0.0.0/8 private network and any port on 192.168.50.10

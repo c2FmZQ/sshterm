@@ -35,7 +35,7 @@ import (
 )
 
 func (a *App) addEndpoint(name, url, hostname string) error {
-	if name == "" || strings.ContainsAny(name, ":,@") || strings.EqualFold(name, "none") {
+	if name == "" || strings.ContainsAny(name, ":,@[]") || strings.EqualFold(name, "none") {
 		return errors.New("invalid endpoint name")
 	}
 	a.data.Endpoints[name] = &endpoint{Name: name, URL: url, Hostname: hostname}
