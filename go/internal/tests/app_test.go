@@ -631,12 +631,14 @@ func TestJumpHosts(t *testing.T) {
 		{Type: "password\n", Expect: "exec: direct-hello"},
 		{Wait: time.Second, Type: "\n\n"},
 
-		// "-J none" bypasses the default jump host.
+		// "-J none" and "--jump-hosts=none" (with tab completion) bypass the default jump host.
 		{Type: "ssh -J none testuser@baz hello\n", Expect: `unknown endpoint "baz"`},
 		{Expect: prompt},
+		{Type: "ssh --jump-hosts=no\ttestuser@baz hello\n", Expect: `unknown endpoint "baz"`},
+		{Expect: prompt},
 
-		// Clearing default jump-hosts with "set jump-hosts none".
-		{Type: "set jump-hosts none\n", Expect: "Default jump hosts: <none>"},
+		// Clearing default jump-hosts with "set jump-hosts none" (with tab completion).
+		{Type: "set jump-hosts no\t\n", Expect: "Default jump hosts: <none>"},
 		{Expect: prompt},
 		{Type: "ssh testuser@baz hello\n", Expect: `unknown endpoint "baz"`},
 		{Expect: prompt},
@@ -647,10 +649,6 @@ func TestJumpHosts(t *testing.T) {
 		{Type: "set jump-hosts foo,\n", Expect: "invalid jump-hosts"},
 		{Expect: prompt},
 		{Type: "ssh -J , testuser@foo hello\n", Expect: `invalid jump host in ","`},
-		{Expect: prompt},
-
-		// Tab completion for --jump-hosts= includes "none".
-		{Type: "ssh --jump-hosts=no\t\x03\n", Expect: `--jump-hosts=none`},
 
 		{Expect: prompt},
 		{Type: "exit\n"},
