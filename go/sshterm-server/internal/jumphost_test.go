@@ -356,6 +356,21 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	srv.jumpHost.lookupIP = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		switch host {
+		case "resolved.example.com":
+			return []net.IPAddr{
+				{IP: net.ParseIP("10.0.0.99")},
+				{IP: net.ParseIP("127.0.0.1")},
+			}, nil
+		case "forbidden.example.com":
+			return []net.IPAddr{
+				{IP: net.ParseIP("10.0.0.99")},
+			}, nil
+		default:
+			return nil, fmt.Errorf("unknown host %q", host)
+		}
+	}
 	jumpHostPub := srv.jumpHost.signer.PublicKey()
 
 	ts := httptest.NewServer(srv.Handler())
@@ -393,15 +408,15 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 	}
 
 	// Disallowed destination host or port is rejected.
-	for _, badDest := range []string{"forbidden.example.com:22", "internal.example.com:2222", "10.0.0.1:2222"} {
+	for _, badDest := range []string{"forbidden.example.com:22", "forbidden.example.com:2222", "internal.example.com:2222", "10.0.0.1:2222", "resolved.example.com:22"} {
 		if c, err := jumpClient.Dial("tcp", badDest); err == nil {
 			c.Close()
 			t.Errorf("expected Dial(%q) to be rejected", badDest)
 		}
 	}
 
-	// Permitted hostname ("internal.example.com:22") and CIDR ("127.0.0.1:2222") succeed end-to-end.
-	for _, goodDest := range []string{"internal.example.com:22", "127.0.0.1:2222"} {
+	// Permitted hostname ("internal.example.com:22"), literal CIDR ("127.0.0.1:2222"), and hostname resolving into CIDR ("resolved.example.com:2222" -> dials "127.0.0.1:2222") succeed end-to-end.
+	for _, goodDest := range []string{"internal.example.com:22", "127.0.0.1:2222", "resolved.example.com:2222"} {
 		tunConn, err := jumpClient.Dial("tcp", goodDest)
 		if err != nil {
 			t.Fatalf("jumpClient.Dial(%q): %v", goodDest, err)
@@ -445,6 +460,13 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 			ValidBefore:     validBefore,
 			Permissions: ssh.Permissions{
 				CriticalOptions: critOpts,
+				Extensions: map[string]string{
+					"permit-X11-forwarding":   "",
+					"permit-agent-forwarding": "",
+					"permit-port-forwarding":  "",
+					"permit-pty":              "",
+					"permit-user-rc":          "",
+				},
 			},
 		}
 		if err := cert.SignCert(rand.Reader, caSigner); err != nil {
@@ -494,8 +516,8 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 		}
 	}
 
-	// 4c. Unmatched principal (user@other.org), expired cert, future cert, force-command cert, malformed source-address cert all fail auth.
-	noPortFwdCert := func() ssh.Signer {
+	// 4c. Unmatched principal (user@other.org), expired cert, future cert, force-command cert, malformed source-address cert, and certs without permit-port-forwarding (including empty extensions) all fail auth.
+	mintCertWithExts := func(exts map[string]string) ssh.Signer {
 		uPub, uSigner, _ := generateTestSSHKey(t)
 		cert := &ssh.Certificate{
 			Key:             uPub,
@@ -505,7 +527,7 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 			ValidAfter:      now - 60,
 			ValidBefore:     now + 600,
 			Permissions: ssh.Permissions{
-				Extensions: map[string]string{"permit-pty": ""},
+				Extensions: exts,
 			},
 		}
 		if err := cert.SignCert(rand.Reader, caSigner); err != nil {
@@ -516,7 +538,7 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 			t.Fatal(err)
 		}
 		return cs
-	}()
+	}
 
 	badCerts := []ssh.Signer{
 		mintCert(nil, now-60, now+600, nil),
@@ -528,7 +550,9 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"source-address": "::/0"}),
 		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"source-address": "bad-entry,127.0.0.0/8"}),
 		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"source-address": "127.0.0.0/8,"}),
-		noPortFwdCert,
+		mintCertWithExts(nil),
+		mintCertWithExts(map[string]string{"permit-pty": ""}),
+		mintCertWithExts(map[string]string{"permit-port-forwarding": "nonempty"}),
 	}
 	for i, badSigner := range badCerts {
 		if c, err := dialJumpSSHClient(t, wsJumpURL, "root", jumpHostPub, ssh.PublicKeys(badSigner)); err == nil {
@@ -655,6 +679,9 @@ func TestValidateUserCertRejectsSHA1RSA(t *testing.T) {
 		Key:         uPub,
 		CertType:    ssh.UserCert,
 		ValidBefore: ssh.CertTimeInfinity,
+		Permissions: ssh.Permissions{
+			Extensions: map[string]string{"permit-port-forwarding": ""},
+		},
 	}
 	if err := cert.SignCert(rand.Reader, &fixedAlgoTestSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSA}); err != nil {
 		t.Fatal(err)

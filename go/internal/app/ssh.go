@@ -202,8 +202,7 @@ func ensureHostPort(addr string) string {
 	if _, _, err := net.SplitHostPort(addr); err == nil {
 		return addr
 	}
-	h := strings.TrimPrefix(strings.TrimSuffix(addr, "]"), "[")
-	return net.JoinHostPort(h, "22")
+	return net.JoinHostPort(stripPortAndBrackets(addr), "22")
 }
 
 func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) (*ssh.Client, error) {

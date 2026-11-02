@@ -122,7 +122,10 @@ func normalizeHostPort(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		// If splitting failed, assume port 22 was omitted.
-		h := strings.TrimPrefix(strings.TrimSuffix(addr, "]"), "[")
+		h := addr
+		if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+			h = h[1 : len(h)-1]
+		}
 		if h == "" {
 			return "", errors.New("host cannot be empty")
 		}

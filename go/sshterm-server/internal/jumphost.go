@@ -69,6 +69,7 @@ type jumpHost struct {
 	signer      ssh.Signer
 	rules       []authRule
 	dialContext func(ctx context.Context, network, address string) (net.Conn, error)
+	lookupIP    func(ctx context.Context, host string) ([]net.IPAddr, error)
 	logger      *log.Logger
 }
 
@@ -136,6 +137,7 @@ func newJumpHost(authorizedKeysFile, hostKeyFile string, dialContext func(ctx co
 		signer:      signer,
 		rules:       rules,
 		dialContext: dialContext,
+		lookupIP:    net.DefaultResolver.LookupIPAddr,
 		logger:      logger,
 	}, nil
 }
@@ -573,10 +575,8 @@ func validateUserCert(cert *ssh.Certificate, remoteAddr net.Addr) error {
 		}
 		return fmt.Errorf("certificate has unsupported critical option %q", k)
 	}
-	if len(cert.Extensions) > 0 {
-		if _, ok := cert.Extensions["permit-port-forwarding"]; !ok {
-			return errors.New("certificate does not permit port forwarding")
-		}
+	if v, ok := cert.Extensions["permit-port-forwarding"]; !ok || v != "" {
+		return errors.New("certificate does not permit port forwarding")
 	}
 	if cert.Signature == nil || cert.SignatureKey == nil || cert.Signature.Format == ssh.KeyAlgoRSA || cert.Signature.Format == ssh.KeyAlgoDSA {
 		return errors.New("certificate signature algorithm is not supported")
@@ -654,7 +654,7 @@ func (j *jumpHost) rulesForPermissions(perms *ssh.Permissions) []permitOpenRule 
 	return out
 }
 
-func (j *jumpHost) authorizeDestination(rules []permitOpenRule, destHost string, destPort uint32) (string, bool) {
+func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenRule, destHost string, destPort uint32) (string, bool) {
 	if destPort < 1 || destPort > 65535 {
 		return "", false
 	}
@@ -697,6 +697,7 @@ func (j *jumpHost) authorizeDestination(rules []permitOpenRule, destHost string,
 	if !isValidDestHostname(lowerHost) {
 		return "", false
 	}
+	hasIPRule := false
 	for _, r := range rules {
 		if r.port != 0 && r.port != port {
 			continue
@@ -707,6 +708,34 @@ func (j *jumpHost) authorizeDestination(rules []permitOpenRule, destHost string,
 		if r.hostPattern != "" {
 			if matched, err := path.Match(r.hostPattern, lowerHost); err == nil && matched {
 				return net.JoinHostPort(lowerHost, portStr), true
+			}
+		}
+		if r.ip != nil || r.cidr != nil {
+			hasIPRule = true
+		}
+	}
+	if !hasIPRule || j.lookupIP == nil {
+		return "", false
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	addrs, err := j.lookupIP(lookupCtx, lowerHost)
+	cancel()
+	if err != nil {
+		return "", false
+	}
+	for _, addr := range addrs {
+		if addr.IP == nil {
+			continue
+		}
+		for _, r := range rules {
+			if r.port != 0 && r.port != port {
+				continue
+			}
+			if r.ip != nil && r.ip.Equal(addr.IP) {
+				return net.JoinHostPort(addr.IP.String(), portStr), true
+			}
+			if r.cidr != nil && cidrContainsIP(r.cidr, addr.IP) {
+				return net.JoinHostPort(addr.IP.String(), portStr), true
 			}
 		}
 	}
@@ -797,7 +826,7 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, sconn ssh.Conn, newCha
 		return
 	}
 
-	targetAddr, ok := j.authorizeDestination(allowedRules, payload.DestHost, payload.DestPort)
+	targetAddr, ok := j.authorizeDestination(ctx, allowedRules, payload.DestHost, payload.DestPort)
 	if !ok {
 		j.logger.Printf("jump host denied %q -> %q:%d", authID, payload.DestHost, payload.DestPort)
 		_ = newChan.Reject(ssh.Prohibited, "destination not permitted")
