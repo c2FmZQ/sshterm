@@ -677,3 +677,43 @@ func (s *fixedAlgoTestSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature,
 func (s *fixedAlgoTestSigner) SignWithAlgorithm(rand io.Reader, data []byte, _ string) (*ssh.Signature, error) {
 	return s.AlgorithmSigner.SignWithAlgorithm(rand, data, s.algo)
 }
+
+func TestAuthorizedKeysDocExamples(t *testing.T) {
+	docBytes, err := os.ReadFile("../../../AUTHORIZED_KEYS.md")
+	if err != nil {
+		t.Fatalf("ReadFile(AUTHORIZED_KEYS.md): %v", err)
+	}
+	content := string(docBytes)
+	const startFence = "```text\n"
+	const endFence = "\n```"
+	var blockCount int
+	for {
+		idx := strings.Index(content, startFence)
+		if idx == -1 {
+			break
+		}
+		content = content[idx+len(startFence):]
+		endIdx := strings.Index(content, endFence)
+		if endIdx == -1 {
+			t.Fatal("unclosed ```text code block in AUTHORIZED_KEYS.md")
+		}
+		block := content[:endIdx]
+		content = content[endIdx+len(endFence):]
+		blockCount++
+
+		rules, err := parseAuthorizedKeys([]byte(block))
+		if err != nil {
+			t.Errorf("AUTHORIZED_KEYS.md block #%d failed to parse: %v\nBlock:\n%s", blockCount, err, block)
+		} else if len(rules) == 0 {
+			t.Errorf("AUTHORIZED_KEYS.md block #%d parsed 0 rules", blockCount)
+		}
+		for i, r := range rules {
+			if len(r.permitOpen) == 0 {
+				t.Errorf("AUTHORIZED_KEYS.md block #%d rule #%d has empty permitOpen", blockCount, i+1)
+			}
+		}
+	}
+	if blockCount != 4 {
+		t.Errorf("parsed %d ```text blocks from AUTHORIZED_KEYS.md, want 4", blockCount)
+	}
+}
