@@ -40,6 +40,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -749,4 +750,104 @@ func TestAuthorizedKeysDocExamples(t *testing.T) {
 	if blockCount != 4 {
 		t.Errorf("parsed %d ```text blocks from AUTHORIZED_KEYS.md, want 4", blockCount)
 	}
+}
+
+func TestJumpHostAuthorizedKeysReload(t *testing.T) {
+	_, key1Signer, key1Line := generateTestSSHKey(t)
+	_, key2Signer, key2Line := generateTestSSHKey(t)
+
+	akFile := filepath.Join(t.TempDir(), "authorized_keys")
+
+	// 1. Error during initial load is fatal.
+	if err := os.WriteFile(akFile, []byte("invalid-option "+key1Line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Options{AuthorizedKeysFile: akFile}); err == nil {
+		t.Fatal("expected New to fail when initial authorized_keys file is invalid")
+	}
+
+	// 2. Initial valid load with key1 permitted to host1.example.com:22.
+	if err := os.WriteFile(akFile, []byte(`permitopen="host1.example.com:22" `+key1Line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var logBuf bytes.Buffer
+	var logMu sync.Mutex
+	srv, err := New(Options{
+		AuthorizedKeysFile: akFile,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			c1, c2 := net.Pipe()
+			_ = c2.Close()
+			return c1, nil
+		},
+		Logger: log.New(writerFunc(func(p []byte) (int, error) {
+			logMu.Lock()
+			defer logMu.Unlock()
+			return logBuf.Write(p)
+		}), "", 0),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	jumpHostPub := srv.jumpHost.signer.PublicKey()
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	wsJumpURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/_ws/" + DefaultJumpEndpointName
+
+	// key1 succeeds, key2 is rejected.
+	c1, err := dialJumpSSHClient(t, wsJumpURL, "user", jumpHostPub, ssh.PublicKeys(key1Signer))
+	if err != nil {
+		t.Fatalf("dialJumpSSHClient(key1): %v", err)
+	}
+	if ch, err := c1.Dial("tcp", "host1.example.com:22"); err != nil {
+		t.Fatalf("key1 Dial(host1.example.com:22): %v", err)
+	} else {
+		ch.Close()
+	}
+	c1.Close()
+
+	if _, err := dialJumpSSHClient(t, wsJumpURL, "user", jumpHostPub, ssh.PublicKeys(key2Signer)); err == nil {
+		t.Fatal("expected key2 to be rejected before reload")
+	}
+
+	// 3. Update authorized_keys to authorize key2 (for host2.example.com:22) and remove key1.
+	if err := os.WriteFile(akFile, []byte(`permitopen="host2.example.com:22" `+key2Line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dialJumpSSHClient(t, wsJumpURL, "user", jumpHostPub, ssh.PublicKeys(key1Signer)); err == nil {
+		t.Fatal("expected key1 to be rejected after reload")
+	}
+	c2, err := dialJumpSSHClient(t, wsJumpURL, "user", jumpHostPub, ssh.PublicKeys(key2Signer))
+	if err != nil {
+		t.Fatalf("dialJumpSSHClient(key2) after reload: %v", err)
+	}
+	if ch, err := c2.Dial("tcp", "host2.example.com:22"); err != nil {
+		t.Fatalf("key2 Dial(host2.example.com:22): %v", err)
+	} else {
+		ch.Close()
+	}
+	c2.Close()
+
+	// 4. Write invalid syntax to authorized_keys -> logs error and keeps old version (key2 still works).
+	if err := os.WriteFile(akFile, []byte("bad-option "+key1Line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c2AfterBad, err := dialJumpSSHClient(t, wsJumpURL, "user", jumpHostPub, ssh.PublicKeys(key2Signer))
+	if err != nil {
+		t.Fatalf("expected key2 to remain authorized after failed reload, got: %v", err)
+	}
+	c2AfterBad.Close()
+
+	logMu.Lock()
+	logs := logBuf.String()
+	logMu.Unlock()
+	if !strings.Contains(logs, "error reloading authorized_keys") {
+		t.Errorf("expected reload error in logs, got: %q", logs)
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) {
+	return f(p)
 }

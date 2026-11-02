@@ -66,11 +66,15 @@ var jumpPubKeyAuthAlgorithms = []string{
 }
 
 type jumpHost struct {
-	signer      ssh.Signer
-	rules       []authRule
-	dialContext func(ctx context.Context, network, address string) (net.Conn, error)
-	lookupIP    func(ctx context.Context, host string) ([]net.IPAddr, error)
-	logger      *log.Logger
+	signer             ssh.Signer
+	authorizedKeysFile string
+	dialContext        func(ctx context.Context, network, address string) (net.Conn, error)
+	lookupIP           func(ctx context.Context, host string) ([]net.IPAddr, error)
+	logger             *log.Logger
+
+	mu        sync.Mutex
+	lastBytes []byte
+	rules     []authRule
 }
 
 type authRule struct {
@@ -134,12 +138,43 @@ func newJumpHost(authorizedKeysFile, hostKeyFile string, dialContext func(ctx co
 	}
 
 	return &jumpHost{
-		signer:      signer,
-		rules:       rules,
-		dialContext: dialContext,
-		lookupIP:    net.DefaultResolver.LookupIPAddr,
-		logger:      logger,
+		signer:             signer,
+		authorizedKeysFile: authorizedKeysFile,
+		dialContext:        dialContext,
+		lookupIP:           net.DefaultResolver.LookupIPAddr,
+		logger:             logger,
+		lastBytes:          akBytes,
+		rules:              rules,
 	}, nil
+}
+
+func (j *jumpHost) getRules() []authRule {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	akBytes, err := os.ReadFile(j.authorizedKeysFile)
+	if err != nil {
+		if j.logger != nil {
+			j.logger.Printf("error reading authorized_keys file %q: %v", j.authorizedKeysFile, err)
+		}
+		return j.rules
+	}
+	if bytes.Equal(akBytes, j.lastBytes) {
+		return j.rules
+	}
+	j.lastBytes = akBytes
+	rules, err := parseAuthorizedKeys(akBytes)
+	if err != nil {
+		if j.logger != nil {
+			j.logger.Printf("error reloading authorized_keys file %q: %v", j.authorizedKeysFile, err)
+		}
+		return j.rules
+	}
+	j.rules = rules
+	if j.logger != nil {
+		j.logger.Printf("reloaded authorized_keys file %q (%d rules)", j.authorizedKeysFile, len(rules))
+	}
+	return j.rules
 }
 
 func (j *jumpHost) publicKeyAuthorizedFormat() string {
@@ -470,14 +505,14 @@ func isValidDestHostname(h string) bool {
 	return lastLabel[0] >= 'a' && lastLabel[0] <= 'z'
 }
 
-func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
+func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey, rules []authRule) ([]permitOpenRule, string, error) {
 	if cert, ok := pubKey.(*ssh.Certificate); ok {
 		if cert.SignatureKey == nil {
-			return nil, errors.New("certificate missing signature key")
+			return nil, "", errors.New("certificate missing signature key")
 		}
 		caBytes := cert.SignatureKey.Marshal()
-		var matchedIndices []string
-		for idx, rule := range j.rules {
+		var allowedRules []permitOpenRule
+		for _, rule := range rules {
 			if !rule.isCA || !bytes.Equal(rule.keyBytes, caBytes) {
 				continue
 			}
@@ -487,52 +522,35 @@ func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*s
 			if len(rule.permitOpen) == 0 {
 				continue
 			}
-			matchedIndices = append(matchedIndices, strconv.Itoa(idx))
+			allowedRules = append(allowedRules, rule.permitOpen...)
 		}
-		if len(matchedIndices) == 0 {
-			return nil, errors.New("certificate not authorized")
+		if len(allowedRules) == 0 {
+			return nil, "", errors.New("certificate not authorized")
 		}
 		if err := validateUserCert(cert, conn.RemoteAddr()); err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		return &ssh.Permissions{
-			Extensions: map[string]string{
-				"jump-rules": strings.Join(matchedIndices, ","),
-				"auth-id":    fmt.Sprintf("cert:%s", cert.KeyId),
-			},
-		}, nil
+		return allowedRules, fmt.Sprintf("cert:%s", cert.KeyId), nil
 	}
 
 	if pubKey.Type() == ssh.KeyAlgoDSA {
-		return nil, errors.New("DSA keys are not supported")
+		return nil, "", errors.New("DSA keys are not supported")
 	}
 	keyBytes := pubKey.Marshal()
-	var matchedIndices []string
-	for idx, rule := range j.rules {
+	var allowedRules []permitOpenRule
+	for _, rule := range rules {
 		if rule.isCA || !bytes.Equal(rule.keyBytes, keyBytes) {
 			continue
 		}
 		if len(rule.permitOpen) == 0 {
 			continue
 		}
-		matchedIndices = append(matchedIndices, strconv.Itoa(idx))
+		allowedRules = append(allowedRules, rule.permitOpen...)
 	}
-	if len(matchedIndices) == 0 {
-		return nil, errors.New("public key not authorized")
+	if len(allowedRules) == 0 {
+		return nil, "", errors.New("public key not authorized")
 	}
-	return &ssh.Permissions{
-		Extensions: map[string]string{
-			"jump-rules": strings.Join(matchedIndices, ","),
-			"auth-id":    fmt.Sprintf("key:%s", ssh.FingerprintSHA256(pubKey)),
-		},
-	}, nil
-}
-
-func (j *jumpHost) verifyPublicKey(conn ssh.ConnMetadata, pubKey ssh.PublicKey, _ *ssh.Permissions, sigFormat string) (*ssh.Permissions, error) {
-	if sigFormat == ssh.KeyAlgoRSA || sigFormat == ssh.KeyAlgoDSA {
-		return nil, fmt.Errorf("signature algorithm %q is not supported", sigFormat)
-	}
-	return j.authenticate(conn, pubKey)
+	return allowedRules, fmt.Sprintf("key:%s", ssh.FingerprintSHA256(pubKey)), nil
 }
 
 func matchPrincipals(patterns, certPrincipals []string) bool {
@@ -643,25 +661,6 @@ func checkSourceAddress(sourceAddrs string, remoteAddr net.Addr) bool {
 	return matched
 }
 
-func (j *jumpHost) rulesForPermissions(perms *ssh.Permissions) []permitOpenRule {
-	if perms == nil || perms.Extensions == nil {
-		return nil
-	}
-	indicesStr := perms.Extensions["jump-rules"]
-	if indicesStr == "" {
-		return nil
-	}
-	var out []permitOpenRule
-	for _, s := range strings.Split(indicesStr, ",") {
-		idx, err := strconv.Atoi(s)
-		if err != nil || idx < 0 || idx >= len(j.rules) {
-			continue
-		}
-		out = append(out, j.rules[idx].permitOpen...)
-	}
-	return out
-}
-
 func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenRule, destHost string, destPort uint32) (string, bool) {
 	if destPort < 1 || destPort > 65535 {
 		return "", false
@@ -754,10 +753,25 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 	conn := newJumpWSConn(wsConn)
 	defer conn.Close()
 
+	rules := j.getRules()
+	var (
+		allowedRules []permitOpenRule
+		authID       string
+	)
 	sshCfg := &ssh.ServerConfig{
-		PublicKeyCallback:         j.authenticate,
-		VerifiedPublicKeyCallback: j.verifyPublicKey,
-		PublicKeyAuthAlgorithms:   jumpPubKeyAuthAlgorithms,
+		PublicKeyCallback: func(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
+			_, _, err := j.authenticate(conn, pubKey, rules)
+			return nil, err
+		},
+		VerifiedPublicKeyCallback: func(conn ssh.ConnMetadata, pubKey ssh.PublicKey, _ *ssh.Permissions, sigFormat string) (*ssh.Permissions, error) {
+			if sigFormat == ssh.KeyAlgoRSA || sigFormat == ssh.KeyAlgoDSA {
+				return nil, fmt.Errorf("signature algorithm %q is not supported", sigFormat)
+			}
+			var err error
+			allowedRules, authID, err = j.authenticate(conn, pubKey, rules)
+			return nil, err
+		},
+		PublicKeyAuthAlgorithms: jumpPubKeyAuthAlgorithms,
 	}
 	sshCfg.AddHostKey(j.signer)
 
@@ -770,12 +784,6 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 		return
 	}
 	defer sconn.Close()
-
-	allowedRules := j.rulesForPermissions(sconn.Permissions)
-	var authID string
-	if sconn.Permissions != nil {
-		authID = sconn.Permissions.Extensions["auth-id"]
-	}
 
 	var wg sync.WaitGroup
 	defer wg.Wait()
