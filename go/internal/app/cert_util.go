@@ -56,7 +56,7 @@ func checkCertificate(cert *ssh.Certificate, certType uint32) error {
 	if cert.ValidAfter > now {
 		errs = append(errs, fmt.Errorf("certificate is not yet valid"))
 	}
-	if cert.ValidBefore != ssh.CertTimeInfinity && (now > cert.ValidBefore || cert.ValidBefore < cert.ValidAfter) {
+	if cert.ValidBefore != ssh.CertTimeInfinity && (now >= cert.ValidBefore || cert.ValidBefore < cert.ValidAfter) {
 		errs = append(errs, fmt.Errorf("certificate is expired"))
 	}
 	if certType == ssh.HostCert && len(cert.CriticalOptions) > 0 {

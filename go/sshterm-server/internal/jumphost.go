@@ -890,7 +890,9 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 		defer wg.Done()
 		for req := range reqs {
 			if req.WantReply {
-				_ = req.Reply(req.Type == "keepalive@openssh.com", nil)
+				withWriteTimeout(sconn, func() {
+					_ = req.Reply(req.Type == "keepalive@openssh.com", nil)
+				})
 			}
 		}
 	}()
@@ -898,13 +900,13 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 	sem := make(chan struct{}, maxJumpChannelsPerConn)
 	for newChan := range chans {
 		if newChan.ChannelType() != "direct-tcpip" {
-			_ = newChan.Reject(ssh.Prohibited, "only direct-tcpip is permitted")
+			rejectChannel(sconn, newChan, ssh.Prohibited, "only direct-tcpip is permitted")
 			continue
 		}
 		select {
 		case sem <- struct{}{}:
 		default:
-			_ = newChan.Reject(ssh.ResourceShortage, "too many concurrent channels")
+			rejectChannel(sconn, newChan, ssh.ResourceShortage, "too many concurrent channels")
 			continue
 		}
 		wg.Add(1)
@@ -914,6 +916,20 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 			j.handleDirectTCPIP(reqCtx, sconn, nc, allowedRules, authID)
 		}(newChan)
 	}
+}
+
+func withWriteTimeout(sconn io.Closer, fn func()) {
+	timer := time.AfterFunc(writeWait, func() {
+		_ = sconn.Close()
+	})
+	defer timer.Stop()
+	fn()
+}
+
+func rejectChannel(sconn io.Closer, newChan ssh.NewChannel, reason ssh.RejectionReason, message string) {
+	withWriteTimeout(sconn, func() {
+		_ = newChan.Reject(reason, message)
+	})
 }
 
 type sshChanDeadlineWriter struct {
@@ -935,14 +951,14 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, sconn ssh.Conn, newCha
 		OriginPort uint32
 	}
 	if err := ssh.Unmarshal(newChan.ExtraData(), &payload); err != nil {
-		_ = newChan.Reject(ssh.ConnectionFailed, "invalid direct-tcpip payload")
+		rejectChannel(sconn, newChan, ssh.ConnectionFailed, "invalid direct-tcpip payload")
 		return
 	}
 
 	targetAddr, ok := j.authorizeDestination(ctx, allowedRules, payload.DestHost, payload.DestPort)
 	if !ok {
 		j.logger.Printf("jump host denied %q -> %q:%d", authID, payload.DestHost, payload.DestPort)
-		_ = newChan.Reject(ssh.Prohibited, "destination not permitted")
+		rejectChannel(sconn, newChan, ssh.Prohibited, "destination not permitted")
 		return
 	}
 
@@ -951,31 +967,46 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, sconn ssh.Conn, newCha
 	cancel()
 	if err != nil {
 		j.logger.Printf("jump host dial %q:%d (%s) failed: %v", payload.DestHost, payload.DestPort, targetAddr, err)
-		_ = newChan.Reject(ssh.ConnectionFailed, "upstream connection failed")
+		rejectChannel(sconn, newChan, ssh.ConnectionFailed, "upstream connection failed")
 		return
 	}
 	defer tcpConn.Close()
 
-	ch, chReqs, err := newChan.Accept()
+	var (
+		ch     ssh.Channel
+		chReqs <-chan *ssh.Request
+	)
+	withWriteTimeout(sconn, func() {
+		ch, chReqs, err = newChan.Accept()
+	})
 	if err != nil {
 		return
 	}
-	defer ch.Close()
-	go ssh.DiscardRequests(chReqs)
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	var closeOnce sync.Once
 	var teardownTimer *time.Timer
 	closeBoth := func() {
 		closeOnce.Do(func() {
-			_ = ch.Close()
-			_ = tcpConn.Close()
 			teardownTimer = time.AfterFunc(writeWait, func() {
 				_ = sconn.Close()
 			})
+			_ = tcpConn.Close()
+			_ = ch.Close()
 		})
 	}
+
+	go func() {
+		defer wg.Done()
+		for req := range chReqs {
+			if req.WantReply {
+				withWriteTimeout(sconn, func() {
+					_ = req.Reply(false, nil)
+				})
+			}
+		}
+	}()
 
 	go func() {
 		defer wg.Done()
@@ -989,8 +1020,8 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, sconn ssh.Conn, newCha
 		_, _ = io.Copy(&sshChanDeadlineWriter{
 			ch: ch,
 			onTimeout: func() {
-				closeBoth()
 				_ = sconn.Close()
+				closeBoth()
 			},
 		}, tcpConn)
 	}()
