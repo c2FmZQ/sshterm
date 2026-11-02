@@ -227,15 +227,27 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 		for _, jh := range strings.Split(jumpHosts, ",") {
 			jh = strings.TrimSpace(jh)
 			if jh == "" {
-				continue
+				return nil, fmt.Errorf("invalid jump host in %q", jumpHosts)
 			}
 			u, h, ok := parseUserHost(jh)
 			if !ok {
 				u = username
 				h = jh
 			}
+			if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+				h = h[1 : len(h)-1]
+			}
+			if h == "" {
+				return nil, fmt.Errorf("invalid jump host in %q", jumpHosts)
+			}
 			hops = append(hops, userhost{u, h})
 		}
+	}
+	if strings.HasPrefix(hostname, "[") && strings.HasSuffix(hostname, "]") {
+		hostname = hostname[1 : len(hostname)-1]
+	}
+	if hostname == "" {
+		return nil, fmt.Errorf("invalid target %q", target)
 	}
 	hops = append(hops, userhost{username, hostname})
 
@@ -443,10 +455,7 @@ func (a *App) hostCertificateCallback(hostname string, ep *endpoint, cert *ssh.C
 		return nil
 	}
 	if ans == "3" && canTrustCA {
-		trustHost := certHostname
-		if h, _, err := net.SplitHostPort(trustHost); err == nil {
-			trustHost = h
-		}
+		trustHost := stripPortAndBrackets(certHostname)
 		if caExists {
 			ca.Hostnames = append(ca.Hostnames, trustHost)
 			return a.saveAuthorities(true)

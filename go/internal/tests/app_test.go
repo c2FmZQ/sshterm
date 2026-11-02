@@ -639,6 +639,18 @@ func TestJumpHosts(t *testing.T) {
 		{Type: "set jump-hosts none\n", Expect: "Default jump hosts: <none>"},
 		{Expect: prompt},
 		{Type: "ssh testuser@baz hello\n", Expect: `unknown endpoint "baz"`},
+		{Expect: prompt},
+
+		// Empty jump-host segments are rejected.
+		{Type: "set jump-hosts ,\n", Expect: "invalid jump-hosts"},
+		{Expect: prompt},
+		{Type: "set jump-hosts foo,\n", Expect: "invalid jump-hosts"},
+		{Expect: prompt},
+		{Type: "ssh -J , testuser@foo hello\n", Expect: `invalid jump host in ","`},
+		{Expect: prompt},
+
+		// Tab completion for --jump-hosts= includes "none".
+		{Type: "ssh --jump-hosts=no\t\x03\n", Expect: `--jump-hosts=none`},
 
 		{Expect: prompt},
 		{Type: "exit\n"},

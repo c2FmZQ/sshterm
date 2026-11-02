@@ -26,6 +26,7 @@
 package app
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/urfave/cli/v2"
@@ -87,6 +88,16 @@ func (a *App) setCommand() *cli.App {
 						v := strings.TrimSpace(ctx.Args().Get(0))
 						if strings.EqualFold(v, "none") {
 							v = ""
+						} else if v != "" {
+							var parts []string
+							for _, p := range strings.Split(v, ",") {
+								p = strings.TrimSpace(p)
+								if p == "" {
+									return errors.New("invalid jump-hosts")
+								}
+								parts = append(parts, p)
+							}
+							v = strings.Join(parts, ",")
 						}
 						a.data.Params["jumpHosts"] = v
 						if err := a.saveParams(true); err != nil {

@@ -145,6 +145,8 @@ func TestCheckHostCertPrincipal(t *testing.T) {
 		{principals: []string{"bar.example.com"}, hostname: "foo.example.com:22", expectErr: true},
 		{principals: []string{"*.example.com"}, hostname: "foo.example.com", expectErr: true},
 		{principals: []string{"foo.example.com"}, hostname: "FOO.example.com", expectErr: true},
+		{principals: []string{"2001:db8::1"}, hostname: "[2001:db8::1]"},
+		{principals: []string{"2001:db8::1"}, hostname: "[2001:db8::1]:2222"},
 	} {
 		cert := &ssh.Certificate{CertType: ssh.HostCert, ValidPrincipals: tc.principals}
 		if err := checkHostCertPrincipal(cert, tc.hostname); (err != nil) != tc.expectErr {
@@ -164,6 +166,9 @@ func TestMatchHostnames(t *testing.T) {
 		{patterns: []string{"*.example.com"}, names: []string{"bar.example.com:22"}, want: true},
 		{patterns: []string{"*.dev.example.com"}, names: []string{"prod.example.com"}, want: false},
 		{patterns: []string{"*.dev.example.com"}, names: []string{"prod.example.com:2222"}, want: false},
+		{patterns: []string{"*"}, names: []string{"[2001:db8::1]"}, want: true},
+		{patterns: []string{"2001:db8::*"}, names: []string{"[2001:db8::1]"}, want: true},
+		{patterns: []string{"2001:db8::*"}, names: []string{"[2001:db8::1]:2222"}, want: true},
 		{patterns: nil, names: []string{"foo.example.com"}, want: false},
 	} {
 		if got := matchHostnames(tc.patterns, tc.names...); got != tc.want {

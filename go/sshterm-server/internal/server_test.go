@@ -167,6 +167,13 @@ func TestNewValidation(t *testing.T) {
 	if _, err := New(Options{ConfigFile: filepath.Join(t.TempDir(), "nonexistent.json")}); err == nil {
 		t.Error("expected error for nonexistent config file")
 	}
+	badEpCfg := filepath.Join(t.TempDir(), "bad-ep.json")
+	if err := os.WriteFile(badEpCfg, []byte(`{"endpoints":[{"name":"none","url":"./ws"}]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := New(Options{ConfigFile: badEpCfg}); err == nil {
+		t.Error("expected error for reserved endpoint name 'none' in config file")
+	}
 }
 
 func TestEmbeddedStaticFilesAndHeaders(t *testing.T) {

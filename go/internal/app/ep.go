@@ -35,6 +35,9 @@ import (
 )
 
 func (a *App) addEndpoint(name, url, hostname string) error {
+	if name == "" || strings.ContainsAny(name, ":,@") || strings.EqualFold(name, "none") {
+		return errors.New("invalid endpoint name")
+	}
 	a.data.Endpoints[name] = &endpoint{Name: name, URL: url, Hostname: hostname}
 	return nil
 }
@@ -101,9 +104,6 @@ func (a *App) epCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
-					if strings.ContainsAny(name, ":,@") || strings.EqualFold(name, "none") {
-						return errors.New("invalid endpoint name")
-					}
 					url := ctx.Args().Get(1)
 					if err := a.addEndpoint(name, url, ctx.String("hostname")); err != nil {
 						return err

@@ -769,10 +769,18 @@ func (a *App) autoCompleteWords(args []string) []string {
 	}
 	if strings.HasPrefix(last, "--jump-hosts=") {
 		var words []string
+		if w := "--jump-hosts=none"; strings.HasPrefix(w, last) {
+			words = append(words, w)
+		}
+		prefix := "--jump-hosts="
+		h := strings.TrimPrefix(last, "--jump-hosts=")
+		if u, rest, ok := parseUserHost(h); ok {
+			prefix += u + "@"
+			h = rest
+		}
 		for _, ep := range a.data.Endpoints {
-			w := "--jump-hosts=" + ep.Name
-			if strings.HasPrefix(w, last) {
-				words = append(words, w)
+			if strings.HasPrefix(ep.Name, h) {
+				words = append(words, prefix+ep.Name)
 			}
 		}
 		return words

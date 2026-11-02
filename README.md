@@ -169,10 +169,11 @@ Here is an example with explanations of the fields:
     *   `resident`: If `true`, request a discoverable (resident) credential on the security key. Only valid with type `ecdsa-sk`.
 *   `autoConnect`: Automatically connect to a specified host on startup.
     *   `username`: The user to connect as.
-    *   `hostname`: The host to connect to (must match an endpoint name).
+    *   `hostname`: The host to connect to (must match an endpoint name unless jump hosts are configured).
     *   `identity`: The name of the key to use for authentication.
     *   `command`: An optional command to run on the remote server.
     *   `forwardAgent`: If `true`, enables agent forwarding for the session.
+    *   `jumpHosts`: Optional comma-separated jump host(s) for the connection (or `"none"` to bypass the default `jumpHosts`).
 
 ### Deployment Security
 

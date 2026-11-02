@@ -262,23 +262,38 @@ func buildConfigJSON(configFile string, endpoints []Endpoint, jh *jumpHost) ([]b
 		if err := json.Unmarshal(b, &cfg); err != nil {
 			return nil, nil, fmt.Errorf("parsing config file: %w", err)
 		}
+		for _, ep := range cfg.Endpoints {
+			if !isValidEndpointName(ep.Name) {
+				return nil, nil, fmt.Errorf("invalid endpoint name %q in config file", ep.Name)
+			}
+		}
 	}
 
 	upsertEndpoint := func(name, wsURL string) {
-		for i := range cfg.Endpoints {
-			if cfg.Endpoints[i].Name == name {
-				cfg.Endpoints[i].URL = wsURL
-				return
+		updated := false
+		out := cfg.Endpoints[:0]
+		for _, ep := range cfg.Endpoints {
+			if ep.Name == name {
+				if !updated {
+					ep.URL = wsURL
+					out = append(out, ep)
+					updated = true
+				}
+				continue
 			}
+			out = append(out, ep)
 		}
-		cfg.Endpoints = append(cfg.Endpoints, struct {
-			Name     string `json:"name"`
-			URL      string `json:"url"`
-			Hostname string `json:"hostname,omitempty"`
-		}{
-			Name: name,
-			URL:  wsURL,
-		})
+		cfg.Endpoints = out
+		if !updated {
+			cfg.Endpoints = append(cfg.Endpoints, struct {
+				Name     string `json:"name"`
+				URL      string `json:"url"`
+				Hostname string `json:"hostname,omitempty"`
+			}{
+				Name: name,
+				URL:  wsURL,
+			})
+		}
 	}
 
 	epMap := make(map[string]string, len(endpoints))
@@ -295,13 +310,19 @@ func buildConfigJSON(configFile string, endpoints []Endpoint, jh *jumpHost) ([]b
 		upsertEndpoint(DefaultJumpEndpointName, "./_ws/"+DefaultJumpEndpointName)
 		pubKey := jh.publicKeyAuthorizedFormat()
 		updatedHost := false
-		for i := range cfg.Hosts {
-			if cfg.Hosts[i].Name == DefaultJumpEndpointName {
-				cfg.Hosts[i].Key = pubKey
-				updatedHost = true
-				break
+		outHosts := cfg.Hosts[:0]
+		for _, h := range cfg.Hosts {
+			if h.Name == DefaultJumpEndpointName {
+				if !updatedHost {
+					h.Key = pubKey
+					outHosts = append(outHosts, h)
+					updatedHost = true
+				}
+				continue
 			}
+			outHosts = append(outHosts, h)
 		}
+		cfg.Hosts = outHosts
 		if !updatedHost {
 			cfg.Hosts = append(cfg.Hosts, struct {
 				Name string `json:"name"`
