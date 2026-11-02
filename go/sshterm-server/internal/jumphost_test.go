@@ -112,21 +112,21 @@ permitopen="host.example.com:22",permitopen="none" %s cleared-key
 	invalidCases := []string{
 		"not-a-valid-key",
 		fmt.Sprintf(`unknown-opt="foo" %s`, key1),
-		fmt.Sprintf(`principals="foo@example.com" %s`, key1),             // principals without cert-authority
-		fmt.Sprintf(`cert-authority,permitopen="*:22" %s`, caKey),        // cert-authority without principals
-		fmt.Sprintf(`cert-authority,principals="" %s`, caKey),            // empty principals
-		fmt.Sprintf(`cert-authority,principals="a,,b" %s`, caKey),        // empty entry in principals
-		fmt.Sprintf(`cert-authority="val" %s`, caKey),                    // cert-authority with value
+		fmt.Sprintf(`principals="foo@example.com" %s`, key1),                    // principals without cert-authority
+		fmt.Sprintf(`cert-authority,permitopen="*:22" %s`, caKey),               // cert-authority without principals
+		fmt.Sprintf(`cert-authority,principals="" %s`, caKey),                   // empty principals
+		fmt.Sprintf(`cert-authority,principals="a,,b" %s`, caKey),               // empty entry in principals
+		fmt.Sprintf(`cert-authority="val" %s`, caKey),                           // cert-authority with value
 		fmt.Sprintf(`cert-authority,principals="a"permitopen="none" %s`, caKey), // missing comma / unescaped internal quotes
-		fmt.Sprintf(`permitopen=host.example.com:22 %s`, key1),           // unquoted option value
-		fmt.Sprintf(`permitopen="" %s`, key1),                            // empty permitopen
-		fmt.Sprintf(`permitopen="none,host.example.com:22" %s`, key1),    // none combined with other entry
-		fmt.Sprintf(`permitopen="10.0.0.*:22" %s`, key1),                 // IP wildcard instead of CIDR
-		fmt.Sprintf(`permitopen="192.168.*.*:22" %s`, key1),              // IP wildcard instead of CIDR
-		fmt.Sprintf(`permitopen="host.123:22" %s`, key1),                 // numeric TLD
-		fmt.Sprintf(`permitopen="127.0.0.0x1:22" %s`, key1),              // hex IPv4 TLD
-		fmt.Sprintf(`permitopen="[host.example.com]:22" %s`, key1),       // bracketed non-IPv6
-		fmt.Sprintf(`permitopen="[127.0.0.1]:22" %s`, key1),              // bracketed IPv4
+		fmt.Sprintf(`permitopen=host.example.com:22 %s`, key1),                  // unquoted option value
+		fmt.Sprintf(`permitopen="" %s`, key1),                                   // empty permitopen
+		fmt.Sprintf(`permitopen="none,host.example.com:22" %s`, key1),           // none combined with other entry
+		fmt.Sprintf(`permitopen="10.0.0.*:22" %s`, key1),                        // IP wildcard instead of CIDR
+		fmt.Sprintf(`permitopen="192.168.*.*:22" %s`, key1),                     // IP wildcard instead of CIDR
+		fmt.Sprintf(`permitopen="host.123:22" %s`, key1),                        // numeric TLD
+		fmt.Sprintf(`permitopen="127.0.0.0x1:22" %s`, key1),                     // hex IPv4 TLD
+		fmt.Sprintf(`permitopen="[host.example.com]:22" %s`, key1),              // bracketed non-IPv6
+		fmt.Sprintf(`permitopen="[127.0.0.1]:22" %s`, key1),                     // bracketed IPv4
 		fmt.Sprintf(`permitopen %s`, key1),
 		fmt.Sprintf(`permitopen=":22" %s`, key1),
 		fmt.Sprintf(`permitopen="host:" %s`, key1),
