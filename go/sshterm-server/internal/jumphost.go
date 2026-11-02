@@ -34,6 +34,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path"
 	"strconv"
@@ -48,6 +49,22 @@ import (
 // DefaultJumpEndpointName is the endpoint and host name used in config.json
 // when the built-in jump host is enabled.
 const DefaultJumpEndpointName = "jump"
+
+const (
+	maxJumpChannelsPerConn = 32
+	maxWSMessageSize       = 64 * 1024
+)
+
+var jumpPubKeyAuthAlgorithms = []string{
+	ssh.KeyAlgoED25519,
+	ssh.KeyAlgoSKED25519,
+	ssh.KeyAlgoSKECDSA256,
+	ssh.KeyAlgoECDSA256,
+	ssh.KeyAlgoECDSA384,
+	ssh.KeyAlgoECDSA521,
+	ssh.KeyAlgoRSASHA256,
+	ssh.KeyAlgoRSASHA512,
+}
 
 type jumpHost struct {
 	signer      ssh.Signer
@@ -91,6 +108,17 @@ func newJumpHost(authorizedKeysFile, hostKeyFile string, dialContext func(ctx co
 		if err != nil {
 			return nil, fmt.Errorf("parsing host key file: %w", err)
 		}
+		if signer.PublicKey().Type() == ssh.KeyAlgoDSA {
+			return nil, errors.New("DSA host keys are not supported")
+		}
+		if signer.PublicKey().Type() == ssh.KeyAlgoRSA {
+			if mas, ok := signer.(ssh.MultiAlgorithmSigner); ok {
+				signer, err = ssh.NewSignerWithAlgorithms(mas, []string{ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256})
+				if err != nil {
+					return nil, fmt.Errorf("restricting RSA host key algorithms: %w", err)
+				}
+			}
+		}
 	} else {
 		_, priv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
@@ -99,6 +127,9 @@ func newJumpHost(authorizedKeysFile, hostKeyFile string, dialContext func(ctx co
 		signer, err = ssh.NewSignerFromKey(priv)
 		if err != nil {
 			return nil, fmt.Errorf("creating jump host signer: %w", err)
+		}
+		if logger != nil {
+			logger.Printf("warning: --host-key not specified; generated ephemeral jump host key (%s)", ssh.FingerprintSHA256(signer.PublicKey()))
 		}
 	}
 
@@ -137,6 +168,13 @@ func parseAuthorizedKeys(content []byte) ([]authRule, error) {
 }
 
 func parseAuthRule(lineNum int, pubKey ssh.PublicKey, opts []string) (authRule, error) {
+	if _, isCert := pubKey.(*ssh.Certificate); isCert {
+		return authRule{}, fmt.Errorf("authorized_keys line %d: certificate cannot be used as an authorized key; use cert-authority with a CA public key", lineNum)
+	}
+	if pubKey.Type() == ssh.KeyAlgoDSA {
+		return authRule{}, fmt.Errorf("authorized_keys line %d: DSA keys are not supported", lineNum)
+	}
+
 	var (
 		isCA             bool
 		noPortForwarding bool
@@ -170,7 +208,7 @@ func parseAuthRule(lineNum int, pubKey ssh.PublicKey, opts []string) (authRule, 
 			for _, p := range strings.Split(v, ",") {
 				p = strings.TrimSpace(p)
 				if p == "" {
-					continue
+					return authRule{}, fmt.Errorf("authorized_keys line %d: empty principal in principals option", lineNum)
 				}
 				if _, err := path.Match(p, "test"); err != nil {
 					return authRule{}, fmt.Errorf("authorized_keys line %d: invalid principal pattern %q: %w", lineNum, p, err)
@@ -186,20 +224,29 @@ func parseAuthRule(lineNum int, pubKey ssh.PublicKey, opts []string) (authRule, 
 			if !hasVal {
 				return authRule{}, fmt.Errorf("authorized_keys line %d: option %q requires a value", lineNum, k)
 			}
-			for _, entry := range strings.Split(v, ",") {
+			parts := strings.Split(v, ",")
+			if len(parts) == 1 && strings.EqualFold(strings.TrimSpace(parts[0]), "none") {
+				permitOpen = nil
+				break
+			}
+			var count int
+			for _, entry := range parts {
 				entry = strings.TrimSpace(entry)
 				if entry == "" {
-					continue
+					return authRule{}, fmt.Errorf("authorized_keys line %d: empty permitopen specification", lineNum)
 				}
 				if strings.EqualFold(entry, "none") {
-					permitOpen = nil
-					continue
+					return authRule{}, fmt.Errorf("authorized_keys line %d: permitopen=\"none\" cannot be combined with other entries in the same option", lineNum)
 				}
 				po, err := parsePermitOpen(entry)
 				if err != nil {
 					return authRule{}, fmt.Errorf("authorized_keys line %d: %w", lineNum, err)
 				}
 				permitOpen = append(permitOpen, po)
+				count++
+			}
+			if count == 0 {
+				return authRule{}, fmt.Errorf("authorized_keys line %d: empty permitopen option", lineNum)
 			}
 
 		case "no-port-forwarding", "restrict":
@@ -222,6 +269,9 @@ func parseAuthRule(lineNum int, pubKey ssh.PublicKey, opts []string) (authRule, 
 	if !isCA && len(principals) > 0 {
 		return authRule{}, fmt.Errorf("authorized_keys line %d: \"principals\" option requires \"cert-authority\"", lineNum)
 	}
+	if isCA && len(principals) == 0 {
+		return authRule{}, fmt.Errorf("authorized_keys line %d: \"cert-authority\" requires \"principals\" option", lineNum)
+	}
 	if noPortForwarding {
 		permitOpen = nil
 	}
@@ -237,21 +287,29 @@ func parseAuthRule(lineNum int, pubKey ssh.PublicKey, opts []string) (authRule, 
 
 func unquoteOptValue(v string) (string, error) {
 	v = strings.TrimSpace(v)
-	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
-		raw := v[1 : len(v)-1]
-		var b strings.Builder
-		for i := 0; i < len(raw); i++ {
-			if raw[i] == '\\' && i+1 < len(raw) {
-				i++
+	if len(v) < 2 || v[0] != '"' || v[len(v)-1] != '"' {
+		return "", errors.New("option value must be enclosed in double quotes")
+	}
+	raw := v[1 : len(v)-1]
+	var b strings.Builder
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '\\' {
+			if i+1 >= len(raw) {
+				return "", errors.New("unterminated escape sequence in option value")
+			}
+			i++
+			if raw[i] != '\\' && raw[i] != '"' {
+				return "", fmt.Errorf("invalid escape sequence \\%c in option value", raw[i])
 			}
 			b.WriteByte(raw[i])
+			continue
 		}
-		return b.String(), nil
+		if raw[i] == '"' {
+			return "", errors.New("unescaped quote in option value")
+		}
+		b.WriteByte(raw[i])
 	}
-	if strings.HasPrefix(v, "\"") || strings.HasSuffix(v, "\"") {
-		return "", errors.New("mismatched quotes")
-	}
-	return v, nil
+	return b.String(), nil
 }
 
 func parsePermitOpen(spec string) (permitOpenRule, error) {
@@ -261,7 +319,9 @@ func parsePermitOpen(spec string) (permitOpenRule, error) {
 	}
 
 	var hostPart, portPart string
+	bracketed := false
 	if strings.HasPrefix(spec, "[") {
+		bracketed = true
 		idx := strings.IndexByte(spec, ']')
 		if idx == -1 {
 			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: missing closing bracket", spec)
@@ -321,18 +381,102 @@ func parsePermitOpen(spec string) (permitOpenRule, error) {
 		if err != nil {
 			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: %w", spec, err)
 		}
+		if bracketed && !strings.Contains(hostPart, ":") {
+			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: brackets are only valid for IPv6", spec)
+		}
 		rule.cidr = ipNet
 	} else if ip := net.ParseIP(hostPart); ip != nil {
+		if bracketed && !strings.Contains(hostPart, ":") {
+			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: brackets are only valid for IPv6", spec)
+		}
 		rule.ip = ip
 	} else {
+		if bracketed {
+			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: bracketed host must be a valid IPv6 address or CIDR", spec)
+		}
 		pat := strings.ToLower(hostPart)
-		if _, err := path.Match(pat, "test"); err != nil {
+		if err := validateHostPattern(pat); err != nil {
 			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: %w", spec, err)
 		}
 		rule.hostPattern = pat
 	}
 
 	return rule, nil
+}
+
+func validateHostPattern(pat string) error {
+	if pat == "*" {
+		return nil
+	}
+	if len(pat) > 253 {
+		return errors.New("host pattern too long")
+	}
+	if _, err := path.Match(pat, "test"); err != nil {
+		return err
+	}
+	labels := strings.Split(pat, ".")
+	allNumericOrWildcard := true
+	for _, label := range labels {
+		if label == "" {
+			return errors.New("empty label in host pattern")
+		}
+		labelHasAlpha := false
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			switch {
+			case c >= 'a' && c <= 'z':
+				labelHasAlpha = true
+				allNumericOrWildcard = false
+			case c >= '0' && c <= '9', c == '-', c == '_':
+			case c == '*', c == '?', c == '[', c == ']':
+			default:
+				return fmt.Errorf("invalid character %q in host pattern", c)
+			}
+		}
+		_ = labelHasAlpha
+	}
+	if allNumericOrWildcard && len(labels) > 1 {
+		return errors.New("IP wildcards are not supported; use CIDR notation")
+	}
+	lastLabel := labels[len(labels)-1]
+	lastAllDigits := true
+	for i := 0; i < len(lastLabel); i++ {
+		if lastLabel[i] < '0' || lastLabel[i] > '9' {
+			lastAllDigits = false
+			break
+		}
+	}
+	if lastAllDigits {
+		return errors.New("top-level label cannot be all-numeric")
+	}
+	return nil
+}
+
+func isValidDestHostname(h string) bool {
+	if h == "" || len(h) > 253 {
+		return false
+	}
+	labels := strings.Split(h, ".")
+	for _, label := range labels {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+				return false
+			}
+		}
+	}
+	lastLabel := labels[len(labels)-1]
+	lastAllDigits := true
+	for i := 0; i < len(lastLabel); i++ {
+		if lastLabel[i] < '0' || lastLabel[i] > '9' {
+			lastAllDigits = false
+			break
+		}
+	}
+	return !lastAllDigits
 }
 
 func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
@@ -365,6 +509,9 @@ func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*s
 		}, nil
 	}
 
+	if pubKey.Type() == ssh.KeyAlgoDSA {
+		return nil, errors.New("DSA keys are not supported")
+	}
 	keyBytes := pubKey.Marshal()
 	var matchedIndices []string
 	for idx, rule := range j.rules {
@@ -387,12 +534,22 @@ func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*s
 	}, nil
 }
 
+func (j *jumpHost) verifyPublicKey(conn ssh.ConnMetadata, pubKey ssh.PublicKey, _ *ssh.Permissions, sigFormat string) (*ssh.Permissions, error) {
+	if sigFormat == ssh.KeyAlgoRSA || sigFormat == ssh.KeyAlgoDSA {
+		return nil, fmt.Errorf("signature algorithm %q is not supported", sigFormat)
+	}
+	return j.authenticate(conn, pubKey)
+}
+
 func matchPrincipals(patterns, certPrincipals []string) bool {
-	if len(patterns) == 0 {
-		return true
+	if len(patterns) == 0 || len(certPrincipals) == 0 {
+		return false
 	}
 	for _, pat := range patterns {
 		for _, p := range certPrincipals {
+			if p == "" {
+				continue
+			}
 			if matched, err := path.Match(pat, p); err == nil && matched {
 				return true
 			}
@@ -405,11 +562,14 @@ func validateUserCert(cert *ssh.Certificate, remoteAddr net.Addr) error {
 	if cert.CertType != ssh.UserCert {
 		return fmt.Errorf("certificate has wrong type: %d", cert.CertType)
 	}
+	if cert.Key == nil || cert.Key.Type() == ssh.KeyAlgoDSA {
+		return errors.New("certificate key algorithm is not supported")
+	}
 	now := uint64(time.Now().Unix())
 	if cert.ValidAfter > now {
 		return errors.New("certificate is not yet valid")
 	}
-	if cert.ValidBefore != ssh.CertTimeInfinity && (now > cert.ValidBefore || cert.ValidBefore < cert.ValidAfter) {
+	if cert.ValidBefore != ssh.CertTimeInfinity && (now >= cert.ValidBefore || cert.ValidBefore < cert.ValidAfter) {
 		return errors.New("certificate is expired")
 	}
 	for k, v := range cert.CriticalOptions {
@@ -421,10 +581,15 @@ func validateUserCert(cert *ssh.Certificate, remoteAddr net.Addr) error {
 		}
 		return fmt.Errorf("certificate has unsupported critical option %q", k)
 	}
+	if len(cert.Extensions) > 0 {
+		if _, ok := cert.Extensions["permit-port-forwarding"]; !ok {
+			return errors.New("certificate does not permit port forwarding")
+		}
+	}
 	c2 := *cert
 	c2.Signature = nil
 	signBytes := c2.Marshal()
-	if cert.Signature == nil || cert.Signature.Format == ssh.KeyAlgoRSA || cert.Signature.Format == ssh.KeyAlgoDSA {
+	if cert.Signature == nil || cert.SignatureKey == nil || cert.Signature.Format == ssh.KeyAlgoRSA || cert.Signature.Format == ssh.KeyAlgoDSA {
 		return errors.New("certificate signature algorithm is not supported")
 	}
 	if err := cert.SignatureKey.Verify(signBytes[:len(signBytes)-4], cert.Signature); err != nil {
@@ -433,8 +598,25 @@ func validateUserCert(cert *ssh.Certificate, remoteAddr net.Addr) error {
 	return nil
 }
 
+func cidrContainsIP(cidr *net.IPNet, ip net.IP) bool {
+	if cidr == nil || ip == nil {
+		return false
+	}
+	if cidr.Contains(ip) {
+		return true
+	}
+	if prefix, err := netip.ParsePrefix(cidr.String()); err == nil {
+		if addr, ok := netip.AddrFromSlice(ip); ok {
+			if prefix.Contains(addr.Unmap()) || prefix.Contains(addr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func checkSourceAddress(sourceAddrs string, remoteAddr net.Addr) bool {
-	if remoteAddr == nil {
+	if remoteAddr == nil || strings.TrimSpace(sourceAddrs) == "" {
 		return false
 	}
 	host, _, err := net.SplitHostPort(remoteAddr.String())
@@ -445,22 +627,27 @@ func checkSourceAddress(sourceAddrs string, remoteAddr net.Addr) bool {
 	if remoteIP == nil {
 		return false
 	}
+	matched := false
 	for _, entry := range strings.Split(sourceAddrs, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
-			continue
+			return false
 		}
 		if _, cidr, err := net.ParseCIDR(entry); err == nil {
-			if cidr.Contains(remoteIP) {
-				return true
+			if cidrContainsIP(cidr, remoteIP) {
+				matched = true
 			}
 			continue
 		}
-		if ip := net.ParseIP(entry); ip != nil && ip.Equal(remoteIP) {
-			return true
+		ip := net.ParseIP(entry)
+		if ip == nil {
+			return false
+		}
+		if ip.Equal(remoteIP) {
+			matched = true
 		}
 	}
-	return false
+	return matched
 }
 
 func (j *jumpHost) rulesForPermissions(perms *ssh.Permissions) []permitOpenRule {
@@ -482,64 +669,59 @@ func (j *jumpHost) rulesForPermissions(perms *ssh.Permissions) []permitOpenRule 
 	return out
 }
 
-func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenRule, destHost string, destPort uint32) (string, bool) {
+func (j *jumpHost) authorizeDestination(rules []permitOpenRule, destHost string, destPort uint32) (string, bool) {
 	if destPort < 1 || destPort > 65535 {
 		return "", false
 	}
-	h := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(destHost), "]"), "[")
-	if h == "" {
+	rawHost := strings.TrimSpace(destHost)
+	if rawHost == "" {
 		return "", false
 	}
+	h := rawHost
+	if strings.HasPrefix(rawHost, "[") && strings.HasSuffix(rawHost, "]") {
+		inner := rawHost[1 : len(rawHost)-1]
+		if ip := net.ParseIP(inner); ip != nil && strings.Contains(inner, ":") {
+			h = inner
+		} else {
+			return "", false
+		}
+	}
+
 	port := int(destPort)
 	portStr := strconv.Itoa(port)
-	lowerHost := strings.ToLower(h)
-	destIP := net.ParseIP(h)
 
-	var needResolve bool
-	for _, r := range rules {
-		if r.port != 0 && r.port != port {
-			continue
-		}
-		if r.hostPattern != "" {
-			if r.hostPattern == "*" {
-				return net.JoinHostPort(h, portStr), true
-			}
-			if matched, err := path.Match(r.hostPattern, lowerHost); err == nil && matched {
-				return net.JoinHostPort(h, portStr), true
-			}
-		} else if destIP != nil {
-			if r.ip != nil && r.ip.Equal(destIP) {
-				return net.JoinHostPort(destIP.String(), portStr), true
-			}
-			if r.cidr != nil && r.cidr.Contains(destIP) {
-				return net.JoinHostPort(destIP.String(), portStr), true
-			}
-		} else {
-			needResolve = true
-		}
-	}
-
-	if !needResolve {
-		return "", false
-	}
-
-	lookupCtx, cancel := context.WithTimeout(ctx, dialTimeout)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(lookupCtx, h)
-	if err != nil || len(addrs) == 0 {
-		return "", false
-	}
-
-	for _, addr := range addrs {
+	if destIP := net.ParseIP(h); destIP != nil {
 		for _, r := range rules {
 			if r.port != 0 && r.port != port {
 				continue
 			}
-			if r.ip != nil && r.ip.Equal(addr.IP) {
-				return net.JoinHostPort(addr.IP.String(), portStr), true
+			if r.hostPattern == "*" {
+				return net.JoinHostPort(destIP.String(), portStr), true
 			}
-			if r.cidr != nil && r.cidr.Contains(addr.IP) {
-				return net.JoinHostPort(addr.IP.String(), portStr), true
+			if r.ip != nil && r.ip.Equal(destIP) {
+				return net.JoinHostPort(destIP.String(), portStr), true
+			}
+			if r.cidr != nil && cidrContainsIP(r.cidr, destIP) {
+				return net.JoinHostPort(destIP.String(), portStr), true
+			}
+		}
+		return "", false
+	}
+
+	lowerHost := strings.ToLower(h)
+	if !isValidDestHostname(lowerHost) {
+		return "", false
+	}
+	for _, r := range rules {
+		if r.port != 0 && r.port != port {
+			continue
+		}
+		if r.hostPattern == "*" {
+			return net.JoinHostPort(lowerHost, portStr), true
+		}
+		if r.hostPattern != "" {
+			if matched, err := path.Match(r.hostPattern, lowerHost); err == nil && matched {
+				return net.JoinHostPort(lowerHost, portStr), true
 			}
 		}
 	}
@@ -551,7 +733,9 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 	defer conn.Close()
 
 	sshCfg := &ssh.ServerConfig{
-		PublicKeyCallback: j.authenticate,
+		PublicKeyCallback:         j.authenticate,
+		VerifiedPublicKeyCallback: j.verifyPublicKey,
+		PublicKeyAuthAlgorithms:   jumpPubKeyAuthAlgorithms,
 	}
 	sshCfg.AddHostKey(j.signer)
 
@@ -584,14 +768,22 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 		}
 	}()
 
+	sem := make(chan struct{}, maxJumpChannelsPerConn)
 	for newChan := range chans {
 		if newChan.ChannelType() != "direct-tcpip" {
 			_ = newChan.Reject(ssh.Prohibited, "only direct-tcpip is permitted")
 			continue
 		}
+		select {
+		case sem <- struct{}{}:
+		default:
+			_ = newChan.Reject(ssh.ResourceShortage, "too many concurrent channels")
+			continue
+		}
 		wg.Add(1)
 		go func(nc ssh.NewChannel) {
 			defer wg.Done()
+			defer func() { <-sem }()
 			j.handleDirectTCPIP(reqCtx, nc, allowedRules, authID)
 		}(newChan)
 	}
@@ -609,9 +801,9 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, newChan ssh.NewChannel
 		return
 	}
 
-	targetAddr, ok := j.authorizeDestination(ctx, allowedRules, payload.DestHost, payload.DestPort)
+	targetAddr, ok := j.authorizeDestination(allowedRules, payload.DestHost, payload.DestPort)
 	if !ok {
-		j.logger.Printf("jump host denied %s -> %s:%d", authID, payload.DestHost, payload.DestPort)
+		j.logger.Printf("jump host denied %q -> %q:%d", authID, payload.DestHost, payload.DestPort)
 		_ = newChan.Reject(ssh.Prohibited, "destination not permitted")
 		return
 	}
@@ -620,7 +812,7 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, newChan ssh.NewChannel
 	tcpConn, err := j.dialContext(dialCtx, "tcp", targetAddr)
 	cancel()
 	if err != nil {
-		j.logger.Printf("jump host dial %s:%d (%s) failed: %v", payload.DestHost, payload.DestPort, targetAddr, err)
+		j.logger.Printf("jump host dial %q:%d (%s) failed: %v", payload.DestHost, payload.DestPort, targetAddr, err)
 		_ = newChan.Reject(ssh.ConnectionFailed, "upstream connection failed")
 		return
 	}
@@ -671,6 +863,7 @@ func newJumpWSConn(ws *websocket.Conn) *jumpWSConn {
 		ws:   ws,
 		done: make(chan struct{}),
 	}
+	ws.SetReadLimit(maxWSMessageSize)
 	_ = ws.SetReadDeadline(time.Now().Add(pongWait))
 	ws.SetPongHandler(func(string) error {
 		return ws.SetReadDeadline(time.Now().Add(pongWait))
@@ -743,9 +936,11 @@ func (c *jumpWSConn) Close() error {
 	return err
 }
 
-func (c *jumpWSConn) LocalAddr() net.Addr                { return c.ws.LocalAddr() }
-func (c *jumpWSConn) RemoteAddr() net.Addr               { return c.ws.RemoteAddr() }
-func (c *jumpWSConn) SetDeadline(t time.Time) error      { return nil }
+func (c *jumpWSConn) LocalAddr() net.Addr  { return c.ws.LocalAddr() }
+func (c *jumpWSConn) RemoteAddr() net.Addr { return c.ws.RemoteAddr() }
+func (c *jumpWSConn) SetDeadline(t time.Time) error {
+	return errors.Join(c.SetReadDeadline(t), c.SetWriteDeadline(t))
+}
 func (c *jumpWSConn) SetReadDeadline(t time.Time) error  { return c.ws.SetReadDeadline(t) }
 func (c *jumpWSConn) SetWriteDeadline(t time.Time) error { return c.ws.SetWriteDeadline(t) }
 

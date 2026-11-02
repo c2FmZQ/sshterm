@@ -101,8 +101,8 @@ docker run \
 Available flags:
 *   `--addr <ip:port>`: The TCP address to listen on (default `127.0.0.1:8080`).
 *   `--ep <name=host[:port]>` (or `--endpoint`, repeatable): Defines a WebSocket endpoint at `/_ws/<name>` forwarding to `host:port` (defaults to port `22` if omitted) and adds it to `/config.json`.
-*   `--authorized-keys <file>`: Optional path to an OpenSSH `authorized_keys` file to enable the built-in SSH jump host (`jump`). Each entry must include at least one `permitopen="host[:port]"` option (supports hostname wildcards, IPs, and CIDRs; port defaults to `22` or `*` for any port) and may use `cert-authority` with `principals="pattern,..."`.
-*   `--host-key <file>`: Optional path to an SSH private key file for the built-in jump host (if omitted, an ephemeral `ed25519` key is generated at startup).
+*   `--authorized-keys <file>`: Optional path to an OpenSSH `authorized_keys` file to enable the built-in SSH jump host (`jump`). Each entry must include at least one `permitopen="host[:port]"` option (matched against the requested destination; supports hostname wildcards, IP addresses, and CIDR blocks; port defaults to `22` or `*` for any port) and `cert-authority` lines must specify `principals="pattern,..."`. Note: certificate `source-address` critical options are checked against the direct TCP peer of `sshterm-server`.
+*   `--host-key <file>`: Optional path to an SSH private key file for the built-in jump host (recommended for persistent deployments; if omitted, an ephemeral `ed25519` key is generated at startup).
 *   `--config <file>`: Optional path to a base `config.json` file. Configured endpoints are merged into it on the fly.
 *   `--tls-cert <file>` and `--tls-key <file>`: Optional TLS certificate and private key files to serve HTTPS instead of HTTP.
 

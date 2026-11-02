@@ -34,10 +34,15 @@ import (
 )
 
 func (a *App) defaultJumpHosts() string {
-	if jh, ok := a.data.Params["jumpHosts"].(string); ok {
-		return jh
+	jh := a.cfg.JumpHosts
+	if v, ok := a.data.Params["jumpHosts"].(string); ok {
+		jh = v
 	}
-	return a.cfg.JumpHosts
+	jh = strings.TrimSpace(jh)
+	if strings.EqualFold(jh, "none") {
+		return ""
+	}
+	return jh
 }
 
 func (a *App) setTheme(t string) {
@@ -80,7 +85,7 @@ func (a *App) setCommand() *cli.App {
 					}
 					if ctx.Args().Len() == 1 {
 						v := strings.TrimSpace(ctx.Args().Get(0))
-						if v == "none" {
+						if strings.EqualFold(v, "none") {
 							v = ""
 						}
 						a.data.Params["jumpHosts"] = v

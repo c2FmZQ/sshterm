@@ -83,6 +83,13 @@ type Endpoint struct {
 	Address string
 }
 
+func isValidEndpointName(name string) bool {
+	if name == "" || name == "." || name == ".." || strings.EqualFold(name, "none") {
+		return false
+	}
+	return !strings.ContainsAny(name, ":,@/\\ \t\r\n")
+}
+
 // ParseEndpoint parses an endpoint specification in the form "name=host[:port]".
 // If no port is specified, port 22 is used.
 func ParseEndpoint(spec string) (Endpoint, error) {
@@ -95,7 +102,7 @@ func ParseEndpoint(spec string) (Endpoint, error) {
 	if name == "" {
 		return Endpoint{}, fmt.Errorf("invalid endpoint %q: name cannot be empty", spec)
 	}
-	if strings.ContainsAny(name, ":/\\ \t\r\n") || name == "." || name == ".." {
+	if !isValidEndpointName(name) {
 		return Endpoint{}, fmt.Errorf("invalid endpoint name %q", name)
 	}
 	if addr == "" {
@@ -173,7 +180,7 @@ func New(opts Options) (*Server, error) {
 		return nil, errors.New("--host-key requires --authorized-keys")
 	}
 	for _, ep := range opts.Endpoints {
-		if ep.Name == "" || strings.ContainsAny(ep.Name, ":/\\ \t\r\n") || ep.Name == "." || ep.Name == ".." {
+		if !isValidEndpointName(ep.Name) {
 			return nil, fmt.Errorf("invalid endpoint name %q", ep.Name)
 		}
 		if opts.AuthorizedKeysFile != "" && ep.Name == DefaultJumpEndpointName {
@@ -385,6 +392,7 @@ func (s *Server) proxyConn(wsConn *websocket.Conn, tcpConn net.Conn) {
 		})
 	}
 
+	wsConn.SetReadLimit(maxWSMessageSize)
 	_ = wsConn.SetReadDeadline(time.Now().Add(pongWait))
 	wsConn.SetPongHandler(func(string) error {
 		return wsConn.SetReadDeadline(time.Now().Add(pongWait))

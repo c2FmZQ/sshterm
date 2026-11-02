@@ -112,9 +112,20 @@ permitopen="host.example.com:22",permitopen="none" %s cleared-key
 	invalidCases := []string{
 		"not-a-valid-key",
 		fmt.Sprintf(`unknown-opt="foo" %s`, key1),
-		fmt.Sprintf(`principals="foo@example.com" %s`, key1), // principals without cert-authority
-		fmt.Sprintf(`cert-authority,principals="" %s`, caKey),
-		fmt.Sprintf(`cert-authority="val" %s`, caKey),
+		fmt.Sprintf(`principals="foo@example.com" %s`, key1),             // principals without cert-authority
+		fmt.Sprintf(`cert-authority,permitopen="*:22" %s`, caKey),        // cert-authority without principals
+		fmt.Sprintf(`cert-authority,principals="" %s`, caKey),            // empty principals
+		fmt.Sprintf(`cert-authority,principals="a,,b" %s`, caKey),        // empty entry in principals
+		fmt.Sprintf(`cert-authority="val" %s`, caKey),                    // cert-authority with value
+		fmt.Sprintf(`cert-authority,principals="a"permitopen="none" %s`, caKey), // missing comma / unescaped internal quotes
+		fmt.Sprintf(`permitopen=host.example.com:22 %s`, key1),           // unquoted option value
+		fmt.Sprintf(`permitopen="" %s`, key1),                            // empty permitopen
+		fmt.Sprintf(`permitopen="none,host.example.com:22" %s`, key1),    // none combined with other entry
+		fmt.Sprintf(`permitopen="10.0.0.*:22" %s`, key1),                 // IP wildcard instead of CIDR
+		fmt.Sprintf(`permitopen="192.168.*.*:22" %s`, key1),              // IP wildcard instead of CIDR
+		fmt.Sprintf(`permitopen="host.123:22" %s`, key1),                 // numeric TLD
+		fmt.Sprintf(`permitopen="[host.example.com]:22" %s`, key1),       // bracketed non-IPv6
+		fmt.Sprintf(`permitopen="[127.0.0.1]:22" %s`, key1),              // bracketed IPv4
 		fmt.Sprintf(`permitopen %s`, key1),
 		fmt.Sprintf(`permitopen=":22" %s`, key1),
 		fmt.Sprintf(`permitopen="host:" %s`, key1),
@@ -122,7 +133,7 @@ permitopen="host.example.com:22",permitopen="none" %s cleared-key
 		fmt.Sprintf(`permitopen="10.0.0.0/99:22" %s`, key1),
 		fmt.Sprintf(`permitopen="[::1:22" %s`, key1),
 		fmt.Sprintf(`permitopen="2001:db8:1:2:3:4:5:6:22" %s`, key1), // unbracketed IPv6 with port
-		fmt.Sprintf(`permitopen="[badpattern:22" %s`, key1),
+		fmt.Sprintf(`permitopen="bad[pattern.com:22" %s`, key1),
 	}
 	for _, tc := range invalidCases {
 		if _, err := parseAuthorizedKeys([]byte(tc)); err == nil {
@@ -476,13 +487,40 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 		}
 	}
 
-	// 4c. Unmatched principal (user@other.org), expired cert, future cert, force-command cert all fail auth.
+	// 4c. Unmatched principal (user@other.org), expired cert, future cert, force-command cert, malformed source-address cert all fail auth.
+	noPortFwdCert := func() ssh.Signer {
+		uPub, uSigner, _ := generateTestSSHKey(t)
+		cert := &ssh.Certificate{
+			Key:             uPub,
+			CertType:        ssh.UserCert,
+			KeyId:           "alice@example.com",
+			ValidPrincipals: []string{"alice@example.com"},
+			ValidAfter:      now - 60,
+			ValidBefore:     now + 600,
+			Permissions: ssh.Permissions{
+				Extensions: map[string]string{"permit-pty": ""},
+			},
+		}
+		if err := cert.SignCert(rand.Reader, caSigner); err != nil {
+			t.Fatal(err)
+		}
+		cs, err := ssh.NewCertSigner(cert, uSigner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cs
+	}()
+
 	badCerts := []ssh.Signer{
+		mintCert(nil, now-60, now+600, nil),
 		mintCert([]string{"user@other.org"}, now-60, now+600, nil),
 		mintCert([]string{"alice@example.com"}, now-600, now-10, nil),
 		mintCert([]string{"alice@example.com"}, now+600, now+1200, nil),
 		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"force-command": "id"}),
 		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"source-address": "192.0.2.0/24"}),
+		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"source-address": "bad-entry,127.0.0.0/8"}),
+		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"source-address": "127.0.0.0/8,"}),
+		noPortFwdCert,
 	}
 	for i, badSigner := range badCerts {
 		if c, err := dialJumpSSHClient(t, wsJumpURL, "root", jumpHostPub, ssh.PublicKeys(badSigner)); err == nil {

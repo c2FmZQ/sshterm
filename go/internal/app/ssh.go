@@ -211,11 +211,12 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 	if !ok {
 		return nil, fmt.Errorf("invalid target %q", target)
 	}
+	jumpHosts = strings.TrimSpace(jumpHosts)
 	if jumpHosts == "" {
 		if _, exists := a.data.Endpoints[hostname]; !exists {
 			jumpHosts = a.defaultJumpHosts()
 		}
-	} else if jumpHosts == "none" {
+	} else if strings.EqualFold(jumpHosts, "none") {
 		jumpHosts = ""
 	}
 	type userhost struct {

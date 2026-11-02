@@ -106,6 +106,18 @@ func TestParseEndpoint(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			spec:    "none=192.168.1.1:22",
+			wantErr: true,
+		},
+		{
+			spec:    "a,b=192.168.1.1:22",
+			wantErr: true,
+		},
+		{
+			spec:    "a@b=192.168.1.1:22",
+			wantErr: true,
+		},
+		{
 			spec:    "myserver=",
 			wantErr: true,
 		},

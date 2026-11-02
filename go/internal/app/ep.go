@@ -101,8 +101,8 @@ func (a *App) epCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
-					if strings.Index(name, ":") != -1 {
-						return errors.New("endpoint name cannot contain \":\"")
+					if strings.ContainsAny(name, ":,@") || strings.EqualFold(name, "none") {
+						return errors.New("invalid endpoint name")
 					}
 					url := ctx.Args().Get(1)
 					if err := a.addEndpoint(name, url, ctx.String("hostname")); err != nil {
