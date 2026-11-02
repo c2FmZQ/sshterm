@@ -78,14 +78,15 @@ cert-authority,principals="foo@example.com,*@dev.example.com",permitopen="*:*" %
 %s no-permitopen-key
 restrict,port-forwarding,permitopen="allowed.example.com:22",no-port-forwarding %s restricted-key
 permitopen="host.example.com:22",permitopen="none" %s cleared-key
-`, key1, key1, caKey, key1, key1, key1)
+permitopen="old.example.com:22",restrict,port-forwarding,permitopen="new.example.com:22" %s restrict-reset-key
+`, key1, key1, caKey, key1, key1, key1, key1)
 
 	rules, err := parseAuthorizedKeys([]byte(validContent))
 	if err != nil {
 		t.Fatalf("parseAuthorizedKeys unexpected error: %v", err)
 	}
-	if len(rules) != 6 {
-		t.Fatalf("len(rules) = %d, want 6", len(rules))
+	if len(rules) != 7 {
+		t.Fatalf("len(rules) = %d, want 7", len(rules))
 	}
 	if rules[0].isCA || len(rules[0].permitOpen) != 2 {
 		t.Errorf("rules[0] = %+v", rules[0])
@@ -107,6 +108,10 @@ permitopen="host.example.com:22",permitopen="none" %s cleared-key
 	// permitopen="none" clears previous permitOpen on the line.
 	if len(rules[5].permitOpen) != 0 {
 		t.Errorf("rules[5].permitOpen = %+v, want empty", rules[5].permitOpen)
+	}
+	// restrict clears previous permitOpen on the line, keeping only subsequent permitOpen.
+	if len(rules[6].permitOpen) != 1 || rules[6].permitOpen[0].hostPattern != "new.example.com" {
+		t.Errorf("rules[6].permitOpen = %+v, want [new.example.com:22]", rules[6].permitOpen)
 	}
 
 	invalidCases := []string{
@@ -135,6 +140,7 @@ permitopen="host.example.com:22",permitopen="none" %s cleared-key
 		fmt.Sprintf(`permitopen="[::1:22" %s`, key1),
 		fmt.Sprintf(`permitopen="2001:db8:1:2:3:4:5:6:22" %s`, key1), // unbracketed IPv6 with port
 		fmt.Sprintf(`permitopen="bad[pattern.com:22" %s`, key1),
+		fmt.Sprintf(`permitopen="app-[0-9].example.com:22" %s`, key1),
 	}
 	for _, tc := range invalidCases {
 		if _, err := parseAuthorizedKeys([]byte(tc)); err == nil {

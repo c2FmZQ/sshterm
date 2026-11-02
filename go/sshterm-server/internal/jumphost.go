@@ -253,6 +253,9 @@ func parseAuthRule(lineNum int, pubKey ssh.PublicKey, opts []string) (authRule, 
 				return authRule{}, fmt.Errorf("authorized_keys line %d: option %q does not take a value", lineNum, k)
 			}
 			noPortForwarding = true
+			if k == "restrict" {
+				permitOpen = nil
+			}
 
 		case "port-forwarding":
 			if hasVal {
@@ -427,7 +430,7 @@ func validateHostPattern(pat string) error {
 				labelHasAlpha = true
 				allNumericOrWildcard = false
 			case c >= '0' && c <= '9', c == '-', c == '_':
-			case c == '*', c == '?', c == '[', c == ']':
+			case c == '*', c == '?':
 			default:
 				return fmt.Errorf("invalid character %q in host pattern", c)
 			}
@@ -439,7 +442,7 @@ func validateHostPattern(pat string) error {
 	}
 	lastLabel := labels[len(labels)-1]
 	c0 := lastLabel[0]
-	if !((c0 >= 'a' && c0 <= 'z') || c0 == '*' || c0 == '?' || c0 == '[') {
+	if !((c0 >= 'a' && c0 <= 'z') || c0 == '*' || c0 == '?') {
 		return errors.New("top-level label must start with a letter or wildcard")
 	}
 	return nil
@@ -575,11 +578,14 @@ func validateUserCert(cert *ssh.Certificate, remoteAddr net.Addr) error {
 			return errors.New("certificate does not permit port forwarding")
 		}
 	}
+	if cert.Signature == nil || cert.SignatureKey == nil || cert.Signature.Format == ssh.KeyAlgoRSA || cert.Signature.Format == ssh.KeyAlgoDSA {
+		return errors.New("certificate signature algorithm is not supported")
+	}
 	c2 := *cert
 	c2.Signature = nil
 	signBytes := c2.Marshal()
-	if cert.Signature == nil || cert.SignatureKey == nil || cert.Signature.Format == ssh.KeyAlgoRSA || cert.Signature.Format == ssh.KeyAlgoDSA {
-		return errors.New("certificate signature algorithm is not supported")
+	if len(signBytes) < 4 {
+		return errors.New("certificate is malformed")
 	}
 	if err := cert.SignatureKey.Verify(signBytes[:len(signBytes)-4], cert.Signature); err != nil {
 		return errors.New("certificate signature is invalid")
@@ -763,12 +769,23 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 		go func(nc ssh.NewChannel) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			j.handleDirectTCPIP(reqCtx, nc, allowedRules, authID)
+			j.handleDirectTCPIP(reqCtx, sconn, nc, allowedRules, authID)
 		}(newChan)
 	}
 }
 
-func (j *jumpHost) handleDirectTCPIP(ctx context.Context, newChan ssh.NewChannel, allowedRules []permitOpenRule, authID string) {
+type sshChanDeadlineWriter struct {
+	ch        ssh.Channel
+	onTimeout func()
+}
+
+func (w *sshChanDeadlineWriter) Write(p []byte) (int, error) {
+	timer := time.AfterFunc(writeWait, w.onTimeout)
+	defer timer.Stop()
+	return w.ch.Write(p)
+}
+
+func (j *jumpHost) handleDirectTCPIP(ctx context.Context, sconn ssh.Conn, newChan ssh.NewChannel, allowedRules []permitOpenRule, authID string) {
 	var payload struct {
 		DestHost   string
 		DestPort   uint32
@@ -807,10 +824,14 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, newChan ssh.NewChannel
 	var wg sync.WaitGroup
 	wg.Add(2)
 	var closeOnce sync.Once
+	var teardownTimer *time.Timer
 	closeBoth := func() {
 		closeOnce.Do(func() {
 			_ = ch.Close()
 			_ = tcpConn.Close()
+			teardownTimer = time.AfterFunc(writeWait, func() {
+				_ = sconn.Close()
+			})
 		})
 	}
 
@@ -823,10 +844,19 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, newChan ssh.NewChannel
 	go func() {
 		defer wg.Done()
 		defer closeBoth()
-		_, _ = io.Copy(ch, tcpConn)
+		_, _ = io.Copy(&sshChanDeadlineWriter{
+			ch: ch,
+			onTimeout: func() {
+				closeBoth()
+				_ = sconn.Close()
+			},
+		}, tcpConn)
 	}()
 
 	wg.Wait()
+	if teardownTimer != nil {
+		teardownTimer.Stop()
+	}
 }
 
 type jumpWSConn struct {
