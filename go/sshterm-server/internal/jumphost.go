@@ -34,7 +34,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"path"
 	"strconv"
@@ -439,15 +438,9 @@ func validateHostPattern(pat string) error {
 		return errors.New("IP wildcards are not supported; use CIDR notation")
 	}
 	lastLabel := labels[len(labels)-1]
-	lastAllDigits := true
-	for i := 0; i < len(lastLabel); i++ {
-		if lastLabel[i] < '0' || lastLabel[i] > '9' {
-			lastAllDigits = false
-			break
-		}
-	}
-	if lastAllDigits {
-		return errors.New("top-level label cannot be all-numeric")
+	c0 := lastLabel[0]
+	if !((c0 >= 'a' && c0 <= 'z') || c0 == '*' || c0 == '?' || c0 == '[') {
+		return errors.New("top-level label must start with a letter or wildcard")
 	}
 	return nil
 }
@@ -469,20 +462,13 @@ func isValidDestHostname(h string) bool {
 		}
 	}
 	lastLabel := labels[len(labels)-1]
-	lastAllDigits := true
-	for i := 0; i < len(lastLabel); i++ {
-		if lastLabel[i] < '0' || lastLabel[i] > '9' {
-			lastAllDigits = false
-			break
-		}
-	}
-	return !lastAllDigits
+	return lastLabel[0] >= 'a' && lastLabel[0] <= 'z'
 }
 
 func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
 	if cert, ok := pubKey.(*ssh.Certificate); ok {
-		if err := validateUserCert(cert, conn.RemoteAddr()); err != nil {
-			return nil, err
+		if cert.SignatureKey == nil {
+			return nil, errors.New("certificate missing signature key")
 		}
 		caBytes := cert.SignatureKey.Marshal()
 		var matchedIndices []string
@@ -500,6 +486,9 @@ func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*s
 		}
 		if len(matchedIndices) == 0 {
 			return nil, errors.New("certificate not authorized")
+		}
+		if err := validateUserCert(cert, conn.RemoteAddr()); err != nil {
+			return nil, err
 		}
 		return &ssh.Permissions{
 			Extensions: map[string]string{
@@ -602,17 +591,7 @@ func cidrContainsIP(cidr *net.IPNet, ip net.IP) bool {
 	if cidr == nil || ip == nil {
 		return false
 	}
-	if cidr.Contains(ip) {
-		return true
-	}
-	if prefix, err := netip.ParsePrefix(cidr.String()); err == nil {
-		if addr, ok := netip.AddrFromSlice(ip); ok {
-			if prefix.Contains(addr.Unmap()) || prefix.Contains(addr) {
-				return true
-			}
-		}
-	}
-	return false
+	return cidr.Contains(ip)
 }
 
 func checkSourceAddress(sourceAddrs string, remoteAddr net.Addr) bool {
@@ -941,8 +920,12 @@ func (c *jumpWSConn) RemoteAddr() net.Addr { return c.ws.RemoteAddr() }
 func (c *jumpWSConn) SetDeadline(t time.Time) error {
 	return errors.Join(c.SetReadDeadline(t), c.SetWriteDeadline(t))
 }
-func (c *jumpWSConn) SetReadDeadline(t time.Time) error  { return c.ws.SetReadDeadline(t) }
-func (c *jumpWSConn) SetWriteDeadline(t time.Time) error { return c.ws.SetWriteDeadline(t) }
+func (c *jumpWSConn) SetReadDeadline(t time.Time) error { return c.ws.SetReadDeadline(t) }
+func (c *jumpWSConn) SetWriteDeadline(t time.Time) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.ws.SetWriteDeadline(t)
+}
 
 func (s *Server) handleJumpWebSocket(w http.ResponseWriter, req *http.Request) {
 	wsConn, err := s.upgrader.Upgrade(w, req, nil)

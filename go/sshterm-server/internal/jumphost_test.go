@@ -124,6 +124,7 @@ permitopen="host.example.com:22",permitopen="none" %s cleared-key
 		fmt.Sprintf(`permitopen="10.0.0.*:22" %s`, key1),                 // IP wildcard instead of CIDR
 		fmt.Sprintf(`permitopen="192.168.*.*:22" %s`, key1),              // IP wildcard instead of CIDR
 		fmt.Sprintf(`permitopen="host.123:22" %s`, key1),                 // numeric TLD
+		fmt.Sprintf(`permitopen="127.0.0.0x1:22" %s`, key1),              // hex IPv4 TLD
 		fmt.Sprintf(`permitopen="[host.example.com]:22" %s`, key1),       // bracketed non-IPv6
 		fmt.Sprintf(`permitopen="[127.0.0.1]:22" %s`, key1),              // bracketed IPv4
 		fmt.Sprintf(`permitopen %s`, key1),
@@ -518,6 +519,7 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 		mintCert([]string{"alice@example.com"}, now+600, now+1200, nil),
 		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"force-command": "id"}),
 		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"source-address": "192.0.2.0/24"}),
+		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"source-address": "::/0"}),
 		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"source-address": "bad-entry,127.0.0.0/8"}),
 		mintCert([]string{"alice@example.com"}, now-60, now+600, map[string]string{"source-address": "127.0.0.0/8,"}),
 		noPortFwdCert,
