@@ -60,12 +60,14 @@ func (f *endpointFlags) Set(value string) error {
 
 func main() {
 	var (
-		addr        = flag.String("addr", "127.0.0.1:8080", "The TCP address to listen on.")
-		cfgFile     = flag.String("config", "", "Optional path to a base config.json file.")
-		tlsCert     = flag.String("tls-cert", "", "Path to a TLS certificate file (requires --tls-key).")
-		tlsKey      = flag.String("tls-key", "", "Path to a TLS private key file (requires --tls-cert).")
-		versionFlag = flag.Bool("v", false, "Show the version.")
-		endpoints   endpointFlags
+		addr           = flag.String("addr", "127.0.0.1:8080", "The TCP address to listen on.")
+		cfgFile        = flag.String("config", "", "Optional path to a base config.json file.")
+		tlsCert        = flag.String("tls-cert", "", "Path to a TLS certificate file (requires --tls-key).")
+		tlsKey         = flag.String("tls-key", "", "Path to a TLS private key file (requires --tls-cert).")
+		authorizedKeys = flag.String("authorized-keys", "", "Path to an authorized_keys file to enable the built-in jump host.")
+		hostKey        = flag.String("host-key", "", "Optional path to a private key file for the built-in jump host (generated dynamically if unset).")
+		versionFlag    = flag.Bool("v", false, "Show the version.")
+		endpoints      endpointFlags
 	)
 	flag.Var(&endpoints, "ep", "SSH endpoint in the form name=host[:port] (repeatable).")
 	flag.Var(&endpoints, "endpoint", "Alias for -ep.")
@@ -78,11 +80,13 @@ func main() {
 
 	log.Printf("sshterm-server %s %s %s/%s", Version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	srv, err := internal.New(internal.Options{
-		Addr:        *addr,
-		ConfigFile:  *cfgFile,
-		TLSCertFile: *tlsCert,
-		TLSKeyFile:  *tlsKey,
-		Endpoints:   endpoints,
+		Addr:               *addr,
+		ConfigFile:         *cfgFile,
+		TLSCertFile:        *tlsCert,
+		TLSKeyFile:         *tlsKey,
+		AuthorizedKeysFile: *authorizedKeys,
+		HostKeyFile:        *hostKey,
+		Endpoints:          endpoints,
 	})
 	if err != nil {
 		log.Fatalf("Failed to initialize server: %v", err)

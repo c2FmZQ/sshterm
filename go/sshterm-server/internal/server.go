@@ -137,14 +137,16 @@ func normalizeHostPort(addr string) (string, error) {
 
 // Options configures a Server instance.
 type Options struct {
-	Addr        string
-	ConfigFile  string
-	TLSCertFile string
-	TLSKeyFile  string
-	Endpoints   []Endpoint
-	FS          fs.FS
-	DialContext func(ctx context.Context, network, address string) (net.Conn, error)
-	Logger      *log.Logger
+	Addr               string
+	ConfigFile         string
+	TLSCertFile        string
+	TLSKeyFile         string
+	AuthorizedKeysFile string
+	HostKeyFile        string
+	Endpoints          []Endpoint
+	FS                 fs.FS
+	DialContext        func(ctx context.Context, network, address string) (net.Conn, error)
+	Logger             *log.Logger
 }
 
 // Server serves the sshterm web application and proxies WebSocket connections
@@ -152,6 +154,7 @@ type Options struct {
 type Server struct {
 	opts       Options
 	endpoints  map[string]string
+	jumpHost   *jumpHost
 	configJSON []byte
 	upgrader   websocket.Upgrader
 	mux        *http.ServeMux
@@ -166,9 +169,15 @@ func New(opts Options) (*Server, error) {
 	if (opts.TLSCertFile == "") != (opts.TLSKeyFile == "") {
 		return nil, errors.New("--tls-cert and --tls-key must be specified together")
 	}
+	if opts.HostKeyFile != "" && opts.AuthorizedKeysFile == "" {
+		return nil, errors.New("--host-key requires --authorized-keys")
+	}
 	for _, ep := range opts.Endpoints {
 		if ep.Name == "" || strings.ContainsAny(ep.Name, ":/\\ \t\r\n") || ep.Name == "." || ep.Name == ".." {
 			return nil, fmt.Errorf("invalid endpoint name %q", ep.Name)
+		}
+		if opts.AuthorizedKeysFile != "" && ep.Name == DefaultJumpEndpointName {
+			return nil, fmt.Errorf("endpoint name %q is reserved when --authorized-keys is set", ep.Name)
 		}
 		if _, err := normalizeHostPort(ep.Address); err != nil {
 			return nil, fmt.Errorf("invalid address for endpoint %q: %w", ep.Name, err)
@@ -196,7 +205,16 @@ func New(opts Options) (*Server, error) {
 		logger = log.Default()
 	}
 
-	cfgBytes, epMap, err := buildConfigJSON(opts.ConfigFile, opts.Endpoints)
+	var jh *jumpHost
+	if opts.AuthorizedKeysFile != "" {
+		var err error
+		jh, err = newJumpHost(opts.AuthorizedKeysFile, opts.HostKeyFile, opts.DialContext, logger)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	cfgBytes, epMap, err := buildConfigJSON(opts.ConfigFile, opts.Endpoints, jh)
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +222,7 @@ func New(opts Options) (*Server, error) {
 	s := &Server{
 		opts:       opts,
 		endpoints:  epMap,
+		jumpHost:   jh,
 		configJSON: cfgBytes,
 		upgrader: websocket.Upgrader{
 			HandshakeTimeout: dialTimeout,
@@ -226,7 +245,7 @@ func New(opts Options) (*Server, error) {
 	return s, nil
 }
 
-func buildConfigJSON(configFile string, endpoints []Endpoint) ([]byte, map[string]string, error) {
+func buildConfigJSON(configFile string, endpoints []Endpoint, jh *jumpHost) ([]byte, map[string]string, error) {
 	var cfg config.Config
 	if configFile != "" {
 		b, err := os.ReadFile(configFile)
@@ -238,6 +257,23 @@ func buildConfigJSON(configFile string, endpoints []Endpoint) ([]byte, map[strin
 		}
 	}
 
+	upsertEndpoint := func(name, wsURL string) {
+		for i := range cfg.Endpoints {
+			if cfg.Endpoints[i].Name == name {
+				cfg.Endpoints[i].URL = wsURL
+				return
+			}
+		}
+		cfg.Endpoints = append(cfg.Endpoints, struct {
+			Name     string `json:"name"`
+			URL      string `json:"url"`
+			Hostname string `json:"hostname,omitempty"`
+		}{
+			Name: name,
+			URL:  wsURL,
+		})
+	}
+
 	epMap := make(map[string]string, len(endpoints))
 	for _, ep := range endpoints {
 		addr, err := normalizeHostPort(ep.Address)
@@ -245,25 +281,31 @@ func buildConfigJSON(configFile string, endpoints []Endpoint) ([]byte, map[strin
 			return nil, nil, err
 		}
 		epMap[ep.Name] = addr
-		wsURL := "./_ws/" + ep.Name
+		upsertEndpoint(ep.Name, "./_ws/"+ep.Name)
+	}
 
-		updated := false
-		for i := range cfg.Endpoints {
-			if cfg.Endpoints[i].Name == ep.Name {
-				cfg.Endpoints[i].URL = wsURL
-				updated = true
+	if jh != nil {
+		upsertEndpoint(DefaultJumpEndpointName, "./_ws/"+DefaultJumpEndpointName)
+		pubKey := jh.publicKeyAuthorizedFormat()
+		updatedHost := false
+		for i := range cfg.Hosts {
+			if cfg.Hosts[i].Name == DefaultJumpEndpointName {
+				cfg.Hosts[i].Key = pubKey
+				updatedHost = true
 				break
 			}
 		}
-		if !updated {
-			cfg.Endpoints = append(cfg.Endpoints, struct {
-				Name     string `json:"name"`
-				URL      string `json:"url"`
-				Hostname string `json:"hostname,omitempty"`
+		if !updatedHost {
+			cfg.Hosts = append(cfg.Hosts, struct {
+				Name string `json:"name"`
+				Key  string `json:"key,omitempty"`
 			}{
-				Name: ep.Name,
-				URL:  wsURL,
+				Name: DefaultJumpEndpointName,
+				Key:  pubKey,
 			})
+		}
+		if cfg.JumpHosts == "" {
+			cfg.JumpHosts = DefaultJumpEndpointName
 		}
 	}
 
@@ -298,6 +340,10 @@ func (s *Server) handleConfigJSON(w http.ResponseWriter, req *http.Request) {
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
+	if name == DefaultJumpEndpointName && s.jumpHost != nil {
+		s.handleJumpWebSocket(w, req)
+		return
+	}
 	targetAddr, exists := s.endpoints[name]
 	if !exists {
 		http.NotFound(w, req)

@@ -33,6 +33,10 @@ type Config struct {
 	// Theme is the default color theme.
 	Theme string `json:"theme,omitempty"`
 
+	// JumpHosts is a comma-separated list of default jump hosts to use when
+	// connecting to a target that is not a configured endpoint.
+	JumpHosts string `json:"jumpHosts,omitempty"`
+
 	// Persist, if set, forces database persistence to be on or off and
 	// cannot be changed from the app.
 	Persist *bool `json:"persist,omitempty"`

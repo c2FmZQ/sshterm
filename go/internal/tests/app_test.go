@@ -612,6 +612,34 @@ func TestJumpHosts(t *testing.T) {
 		{Type: "password\n", Expect: "exec: hello"},
 		{Wait: time.Second, Type: "\n\n"},
 
+		// Default jump-hosts via `set jump-hosts`.
+		{Type: "set jump-hosts\n", Expect: "Default jump hosts: <none>"},
+		{Expect: prompt},
+		{Type: "set jump-hosts foo\n", Expect: "Default jump hosts: foo"},
+		{Expect: prompt},
+		// Target "baz" is not an endpoint, so it uses default jump host "foo".
+		{Type: "ssh testuser@baz hello\n"},
+		{Expect: `(?s)\[1\] Connecting testuser@foo.*Host certificate for foo is trusted.*Password: `},
+		{Type: "password\n"},
+		{Expect: `(?s)\[2\] Connecting testuser@baz.*Host certificate for baz is trusted.*Password: `},
+		{Type: "password\n", Expect: "exec: hello"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// Target "foo" is a configured endpoint, so it connects directly without jumping.
+		{Type: "ssh testuser@foo direct-hello\n"},
+		{Expect: `(?s)Host certificate for foo is trusted.*Password: `},
+		{Type: "password\n", Expect: "exec: direct-hello"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// "-J none" bypasses the default jump host.
+		{Type: "ssh -J none testuser@baz hello\n", Expect: `unknown endpoint "baz"`},
+		{Expect: prompt},
+
+		// Clearing default jump-hosts with "set jump-hosts none".
+		{Type: "set jump-hosts none\n", Expect: "Default jump hosts: <none>"},
+		{Expect: prompt},
+		{Type: "ssh testuser@baz hello\n", Expect: `unknown endpoint "baz"`},
+
 		{Expect: prompt},
 		{Type: "exit\n"},
 	})

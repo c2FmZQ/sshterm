@@ -49,7 +49,7 @@ func (a *App) sshCommand() *cli.App {
 		Name:            "ssh",
 		Usage:           "Start an SSH connection",
 		UsageText:       "ssh [-i <keyname>] <username>@<hostname> [command]",
-		Description:     "The ssh command starts an SSH connection with a remote server.\nUse the -i flag to select a key (see the keys command). If a key\nwith the name 'default' exists, it will be used by default.\n\nThe <hostname> must have been configured with the ep command,\nunless --jump-host is used, in which case, the first jump host\nmust be a configured endpoint.",
+		Description:     "The ssh command starts an SSH connection with a remote server.\nUse the -i flag to select a key (see the keys command). If a key\nwith the name 'default' exists, it will be used by default.\n\nThe <hostname> must have been configured with the ep command,\nunless --jump-hosts is used or default jump hosts are configured,\nin which case the first jump host must be a configured endpoint.",
 		HideHelpCommand: true,
 		Action:          a.ssh,
 		Flags: []cli.Flag{
@@ -198,10 +198,25 @@ func parseUserHost(target string) (string, string, bool) {
 	return target[:p], target[p+1:], true
 }
 
+func ensureHostPort(addr string) string {
+	if _, _, err := net.SplitHostPort(addr); err == nil {
+		return addr
+	}
+	h := strings.TrimPrefix(strings.TrimSuffix(addr, "]"), "[")
+	return net.JoinHostPort(h, "22")
+}
+
 func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) (*ssh.Client, error) {
 	username, hostname, ok := parseUserHost(target)
 	if !ok {
 		return nil, fmt.Errorf("invalid target %q", target)
+	}
+	if jumpHosts == "" {
+		if _, exists := a.data.Endpoints[hostname]; !exists {
+			jumpHosts = a.defaultJumpHosts()
+		}
+	} else if jumpHosts == "none" {
+		jumpHosts = ""
 	}
 	type userhost struct {
 		u, h string
@@ -210,6 +225,9 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 	if jumpHosts != "" {
 		for _, jh := range strings.Split(jumpHosts, ",") {
 			jh = strings.TrimSpace(jh)
+			if jh == "" {
+				continue
+			}
 			u, h, ok := parseUserHost(jh)
 			if !ok {
 				u = username
@@ -248,10 +266,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 	}
 
 	for i := 1; i < len(hops); i++ {
-		addr := hops[i].h
-		if !strings.Contains(addr, ":") {
-			addr += ":22"
-		}
+		addr := ensureHostPort(hops[i].h)
 		a.term.Printf("[%d] Connecting %s@%s...", i+1, hops[i].u, hops[i].h)
 		conn, err := client.DialContext(ctx, "tcp", addr)
 		if err != nil {

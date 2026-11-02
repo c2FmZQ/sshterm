@@ -1,0 +1,760 @@
+// MIT License
+//
+// Copyright (c) 2026 TTBT Enterprises LLC
+// Copyright (c) 2026 Robin Thellend <rthellend@rthellend.com>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+package internal
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+	"golang.org/x/crypto/ssh"
+)
+
+// DefaultJumpEndpointName is the endpoint and host name used in config.json
+// when the built-in jump host is enabled.
+const DefaultJumpEndpointName = "jump"
+
+type jumpHost struct {
+	signer      ssh.Signer
+	rules       []authRule
+	dialContext func(ctx context.Context, network, address string) (net.Conn, error)
+	logger      *log.Logger
+}
+
+type authRule struct {
+	isCA       bool
+	pubKey     ssh.PublicKey
+	keyBytes   []byte
+	principals []string
+	permitOpen []permitOpenRule
+}
+
+type permitOpenRule struct {
+	hostPattern string
+	ip          net.IP
+	cidr        *net.IPNet
+	port        int // 0 means wildcard '*'
+}
+
+func newJumpHost(authorizedKeysFile, hostKeyFile string, dialContext func(ctx context.Context, network, address string) (net.Conn, error), logger *log.Logger) (*jumpHost, error) {
+	akBytes, err := os.ReadFile(authorizedKeysFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading authorized_keys file: %w", err)
+	}
+	rules, err := parseAuthorizedKeys(akBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	var signer ssh.Signer
+	if hostKeyFile != "" {
+		hkBytes, err := os.ReadFile(hostKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("reading host key file: %w", err)
+		}
+		signer, err = ssh.ParsePrivateKey(hkBytes)
+		if err != nil {
+			return nil, fmt.Errorf("parsing host key file: %w", err)
+		}
+	} else {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, fmt.Errorf("generating jump host key: %w", err)
+		}
+		signer, err = ssh.NewSignerFromKey(priv)
+		if err != nil {
+			return nil, fmt.Errorf("creating jump host signer: %w", err)
+		}
+	}
+
+	return &jumpHost{
+		signer:      signer,
+		rules:       rules,
+		dialContext: dialContext,
+		logger:      logger,
+	}, nil
+}
+
+func (j *jumpHost) publicKeyAuthorizedFormat() string {
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(j.signer.PublicKey())))
+}
+
+func parseAuthorizedKeys(content []byte) ([]authRule, error) {
+	var rules []authRule
+	lines := bytes.Split(content, []byte("\n"))
+	for i, rawLine := range lines {
+		lineNum := i + 1
+		line := bytes.TrimSpace(rawLine)
+		if len(line) == 0 || line[0] == '#' {
+			continue
+		}
+		pubKey, _, opts, _, err := ssh.ParseAuthorizedKey(line)
+		if err != nil {
+			return nil, fmt.Errorf("authorized_keys line %d: %w", lineNum, err)
+		}
+		rule, err := parseAuthRule(lineNum, pubKey, opts)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+func parseAuthRule(lineNum int, pubKey ssh.PublicKey, opts []string) (authRule, error) {
+	var (
+		isCA             bool
+		noPortForwarding bool
+		principals       []string
+		permitOpen       []permitOpenRule
+	)
+
+	for _, opt := range opts {
+		k, v, hasVal := strings.Cut(opt, "=")
+		k = strings.ToLower(strings.TrimSpace(k))
+		if hasVal {
+			var err error
+			v, err = unquoteOptValue(v)
+			if err != nil {
+				return authRule{}, fmt.Errorf("authorized_keys line %d: option %q: %w", lineNum, k, err)
+			}
+		}
+
+		switch k {
+		case "cert-authority":
+			if hasVal {
+				return authRule{}, fmt.Errorf("authorized_keys line %d: option %q does not take a value", lineNum, k)
+			}
+			isCA = true
+
+		case "principals":
+			if !hasVal {
+				return authRule{}, fmt.Errorf("authorized_keys line %d: option %q requires a value", lineNum, k)
+			}
+			var count int
+			for _, p := range strings.Split(v, ",") {
+				p = strings.TrimSpace(p)
+				if p == "" {
+					continue
+				}
+				if _, err := path.Match(p, "test"); err != nil {
+					return authRule{}, fmt.Errorf("authorized_keys line %d: invalid principal pattern %q: %w", lineNum, p, err)
+				}
+				principals = append(principals, p)
+				count++
+			}
+			if count == 0 {
+				return authRule{}, fmt.Errorf("authorized_keys line %d: empty principals option", lineNum)
+			}
+
+		case "permitopen":
+			if !hasVal {
+				return authRule{}, fmt.Errorf("authorized_keys line %d: option %q requires a value", lineNum, k)
+			}
+			for _, entry := range strings.Split(v, ",") {
+				entry = strings.TrimSpace(entry)
+				if entry == "" {
+					continue
+				}
+				if strings.EqualFold(entry, "none") {
+					permitOpen = nil
+					continue
+				}
+				po, err := parsePermitOpen(entry)
+				if err != nil {
+					return authRule{}, fmt.Errorf("authorized_keys line %d: %w", lineNum, err)
+				}
+				permitOpen = append(permitOpen, po)
+			}
+
+		case "no-port-forwarding", "restrict":
+			if hasVal {
+				return authRule{}, fmt.Errorf("authorized_keys line %d: option %q does not take a value", lineNum, k)
+			}
+			noPortForwarding = true
+
+		case "port-forwarding":
+			if hasVal {
+				return authRule{}, fmt.Errorf("authorized_keys line %d: option %q does not take a value", lineNum, k)
+			}
+			noPortForwarding = false
+
+		default:
+			return authRule{}, fmt.Errorf("authorized_keys line %d: unsupported option %q", lineNum, k)
+		}
+	}
+
+	if !isCA && len(principals) > 0 {
+		return authRule{}, fmt.Errorf("authorized_keys line %d: \"principals\" option requires \"cert-authority\"", lineNum)
+	}
+	if noPortForwarding {
+		permitOpen = nil
+	}
+
+	return authRule{
+		isCA:       isCA,
+		pubKey:     pubKey,
+		keyBytes:   pubKey.Marshal(),
+		principals: principals,
+		permitOpen: permitOpen,
+	}, nil
+}
+
+func unquoteOptValue(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		raw := v[1 : len(v)-1]
+		var b strings.Builder
+		for i := 0; i < len(raw); i++ {
+			if raw[i] == '\\' && i+1 < len(raw) {
+				i++
+			}
+			b.WriteByte(raw[i])
+		}
+		return b.String(), nil
+	}
+	if strings.HasPrefix(v, "\"") || strings.HasSuffix(v, "\"") {
+		return "", errors.New("mismatched quotes")
+	}
+	return v, nil
+}
+
+func parsePermitOpen(spec string) (permitOpenRule, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return permitOpenRule{}, errors.New("empty permitopen specification")
+	}
+
+	var hostPart, portPart string
+	if strings.HasPrefix(spec, "[") {
+		idx := strings.IndexByte(spec, ']')
+		if idx == -1 {
+			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: missing closing bracket", spec)
+		}
+		hostPart = spec[1:idx]
+		rest := spec[idx+1:]
+		if rest == "" {
+			portPart = "22"
+		} else if strings.HasPrefix(rest, ":") {
+			portPart = rest[1:]
+		} else {
+			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q", spec)
+		}
+	} else {
+		switch strings.Count(spec, ":") {
+		case 0:
+			hostPart = spec
+			portPart = "22"
+		case 1:
+			hostPart, portPart, _ = strings.Cut(spec, ":")
+		default:
+			if net.ParseIP(spec) != nil {
+				hostPart = spec
+				portPart = "22"
+			} else if _, _, err := net.ParseCIDR(spec); err == nil {
+				hostPart = spec
+				portPart = "22"
+			} else {
+				return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: use [ipv6]:port for IPv6 with port", spec)
+			}
+		}
+	}
+
+	hostPart = strings.TrimSpace(hostPart)
+	portPart = strings.TrimSpace(portPart)
+	if hostPart == "" {
+		return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: host cannot be empty", spec)
+	}
+	if portPart == "" {
+		return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: port cannot be empty", spec)
+	}
+
+	var port int
+	if portPart == "*" {
+		port = 0
+	} else {
+		p, err := strconv.Atoi(portPart)
+		if err != nil || p < 1 || p > 65535 {
+			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: invalid port %q", spec, portPart)
+		}
+		port = p
+	}
+
+	rule := permitOpenRule{port: port}
+	if strings.Contains(hostPart, "/") {
+		_, ipNet, err := net.ParseCIDR(hostPart)
+		if err != nil {
+			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: %w", spec, err)
+		}
+		rule.cidr = ipNet
+	} else if ip := net.ParseIP(hostPart); ip != nil {
+		rule.ip = ip
+	} else {
+		pat := strings.ToLower(hostPart)
+		if _, err := path.Match(pat, "test"); err != nil {
+			return permitOpenRule{}, fmt.Errorf("invalid permitopen %q: %w", spec, err)
+		}
+		rule.hostPattern = pat
+	}
+
+	return rule, nil
+}
+
+func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
+	if cert, ok := pubKey.(*ssh.Certificate); ok {
+		if err := validateUserCert(cert, conn.RemoteAddr()); err != nil {
+			return nil, err
+		}
+		caBytes := cert.SignatureKey.Marshal()
+		var matchedIndices []string
+		for idx, rule := range j.rules {
+			if !rule.isCA || !bytes.Equal(rule.keyBytes, caBytes) {
+				continue
+			}
+			if !matchPrincipals(rule.principals, cert.ValidPrincipals) {
+				continue
+			}
+			if len(rule.permitOpen) == 0 {
+				continue
+			}
+			matchedIndices = append(matchedIndices, strconv.Itoa(idx))
+		}
+		if len(matchedIndices) == 0 {
+			return nil, errors.New("certificate not authorized")
+		}
+		return &ssh.Permissions{
+			Extensions: map[string]string{
+				"jump-rules": strings.Join(matchedIndices, ","),
+				"auth-id":    fmt.Sprintf("cert:%s", cert.KeyId),
+			},
+		}, nil
+	}
+
+	keyBytes := pubKey.Marshal()
+	var matchedIndices []string
+	for idx, rule := range j.rules {
+		if rule.isCA || !bytes.Equal(rule.keyBytes, keyBytes) {
+			continue
+		}
+		if len(rule.permitOpen) == 0 {
+			continue
+		}
+		matchedIndices = append(matchedIndices, strconv.Itoa(idx))
+	}
+	if len(matchedIndices) == 0 {
+		return nil, errors.New("public key not authorized")
+	}
+	return &ssh.Permissions{
+		Extensions: map[string]string{
+			"jump-rules": strings.Join(matchedIndices, ","),
+			"auth-id":    fmt.Sprintf("key:%s", ssh.FingerprintSHA256(pubKey)),
+		},
+	}, nil
+}
+
+func matchPrincipals(patterns, certPrincipals []string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, pat := range patterns {
+		for _, p := range certPrincipals {
+			if matched, err := path.Match(pat, p); err == nil && matched {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validateUserCert(cert *ssh.Certificate, remoteAddr net.Addr) error {
+	if cert.CertType != ssh.UserCert {
+		return fmt.Errorf("certificate has wrong type: %d", cert.CertType)
+	}
+	now := uint64(time.Now().Unix())
+	if cert.ValidAfter > now {
+		return errors.New("certificate is not yet valid")
+	}
+	if cert.ValidBefore != ssh.CertTimeInfinity && (now > cert.ValidBefore || cert.ValidBefore < cert.ValidAfter) {
+		return errors.New("certificate is expired")
+	}
+	for k, v := range cert.CriticalOptions {
+		if k == "source-address" {
+			if !checkSourceAddress(v, remoteAddr) {
+				return errors.New("certificate source-address mismatch")
+			}
+			continue
+		}
+		return fmt.Errorf("certificate has unsupported critical option %q", k)
+	}
+	c2 := *cert
+	c2.Signature = nil
+	signBytes := c2.Marshal()
+	if cert.Signature == nil || cert.Signature.Format == ssh.KeyAlgoRSA || cert.Signature.Format == ssh.KeyAlgoDSA {
+		return errors.New("certificate signature algorithm is not supported")
+	}
+	if err := cert.SignatureKey.Verify(signBytes[:len(signBytes)-4], cert.Signature); err != nil {
+		return errors.New("certificate signature is invalid")
+	}
+	return nil
+}
+
+func checkSourceAddress(sourceAddrs string, remoteAddr net.Addr) bool {
+	if remoteAddr == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(remoteAddr.String())
+	if err != nil {
+		host = remoteAddr.String()
+	}
+	remoteIP := net.ParseIP(host)
+	if remoteIP == nil {
+		return false
+	}
+	for _, entry := range strings.Split(sourceAddrs, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if _, cidr, err := net.ParseCIDR(entry); err == nil {
+			if cidr.Contains(remoteIP) {
+				return true
+			}
+			continue
+		}
+		if ip := net.ParseIP(entry); ip != nil && ip.Equal(remoteIP) {
+			return true
+		}
+	}
+	return false
+}
+
+func (j *jumpHost) rulesForPermissions(perms *ssh.Permissions) []permitOpenRule {
+	if perms == nil || perms.Extensions == nil {
+		return nil
+	}
+	indicesStr := perms.Extensions["jump-rules"]
+	if indicesStr == "" {
+		return nil
+	}
+	var out []permitOpenRule
+	for _, s := range strings.Split(indicesStr, ",") {
+		idx, err := strconv.Atoi(s)
+		if err != nil || idx < 0 || idx >= len(j.rules) {
+			continue
+		}
+		out = append(out, j.rules[idx].permitOpen...)
+	}
+	return out
+}
+
+func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenRule, destHost string, destPort uint32) (string, bool) {
+	if destPort < 1 || destPort > 65535 {
+		return "", false
+	}
+	h := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(destHost), "]"), "[")
+	if h == "" {
+		return "", false
+	}
+	port := int(destPort)
+	portStr := strconv.Itoa(port)
+	lowerHost := strings.ToLower(h)
+	destIP := net.ParseIP(h)
+
+	var needResolve bool
+	for _, r := range rules {
+		if r.port != 0 && r.port != port {
+			continue
+		}
+		if r.hostPattern != "" {
+			if r.hostPattern == "*" {
+				return net.JoinHostPort(h, portStr), true
+			}
+			if matched, err := path.Match(r.hostPattern, lowerHost); err == nil && matched {
+				return net.JoinHostPort(h, portStr), true
+			}
+		} else if destIP != nil {
+			if r.ip != nil && r.ip.Equal(destIP) {
+				return net.JoinHostPort(destIP.String(), portStr), true
+			}
+			if r.cidr != nil && r.cidr.Contains(destIP) {
+				return net.JoinHostPort(destIP.String(), portStr), true
+			}
+		} else {
+			needResolve = true
+		}
+	}
+
+	if !needResolve {
+		return "", false
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(lookupCtx, h)
+	if err != nil || len(addrs) == 0 {
+		return "", false
+	}
+
+	for _, addr := range addrs {
+		for _, r := range rules {
+			if r.port != 0 && r.port != port {
+				continue
+			}
+			if r.ip != nil && r.ip.Equal(addr.IP) {
+				return net.JoinHostPort(addr.IP.String(), portStr), true
+			}
+			if r.cidr != nil && r.cidr.Contains(addr.IP) {
+				return net.JoinHostPort(addr.IP.String(), portStr), true
+			}
+		}
+	}
+	return "", false
+}
+
+func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn) {
+	conn := newJumpWSConn(wsConn)
+	defer conn.Close()
+
+	sshCfg := &ssh.ServerConfig{
+		PublicKeyCallback: j.authenticate,
+	}
+	sshCfg.AddHostKey(j.signer)
+
+	handshakeTimer := time.AfterFunc(dialTimeout, func() {
+		_ = conn.Close()
+	})
+	sconn, chans, reqs, err := ssh.NewServerConn(conn, sshCfg)
+	handshakeTimer.Stop()
+	if err != nil {
+		return
+	}
+	defer sconn.Close()
+
+	allowedRules := j.rulesForPermissions(sconn.Permissions)
+	var authID string
+	if sconn.Permissions != nil {
+		authID = sconn.Permissions.Extensions["auth-id"]
+	}
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for req := range reqs {
+			if req.WantReply {
+				_ = req.Reply(req.Type == "keepalive@openssh.com", nil)
+			}
+		}
+	}()
+
+	for newChan := range chans {
+		if newChan.ChannelType() != "direct-tcpip" {
+			_ = newChan.Reject(ssh.Prohibited, "only direct-tcpip is permitted")
+			continue
+		}
+		wg.Add(1)
+		go func(nc ssh.NewChannel) {
+			defer wg.Done()
+			j.handleDirectTCPIP(reqCtx, nc, allowedRules, authID)
+		}(newChan)
+	}
+}
+
+func (j *jumpHost) handleDirectTCPIP(ctx context.Context, newChan ssh.NewChannel, allowedRules []permitOpenRule, authID string) {
+	var payload struct {
+		DestHost   string
+		DestPort   uint32
+		OriginHost string
+		OriginPort uint32
+	}
+	if err := ssh.Unmarshal(newChan.ExtraData(), &payload); err != nil {
+		_ = newChan.Reject(ssh.ConnectionFailed, "invalid direct-tcpip payload")
+		return
+	}
+
+	targetAddr, ok := j.authorizeDestination(ctx, allowedRules, payload.DestHost, payload.DestPort)
+	if !ok {
+		j.logger.Printf("jump host denied %s -> %s:%d", authID, payload.DestHost, payload.DestPort)
+		_ = newChan.Reject(ssh.Prohibited, "destination not permitted")
+		return
+	}
+
+	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	tcpConn, err := j.dialContext(dialCtx, "tcp", targetAddr)
+	cancel()
+	if err != nil {
+		j.logger.Printf("jump host dial %s:%d (%s) failed: %v", payload.DestHost, payload.DestPort, targetAddr, err)
+		_ = newChan.Reject(ssh.ConnectionFailed, "upstream connection failed")
+		return
+	}
+	defer tcpConn.Close()
+
+	ch, chReqs, err := newChan.Accept()
+	if err != nil {
+		return
+	}
+	defer ch.Close()
+	go ssh.DiscardRequests(chReqs)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var closeOnce sync.Once
+	closeBoth := func() {
+		closeOnce.Do(func() {
+			_ = ch.Close()
+			_ = tcpConn.Close()
+		})
+	}
+
+	go func() {
+		defer wg.Done()
+		defer closeBoth()
+		_, _ = io.Copy(&tcpDeadlineWriter{conn: tcpConn}, ch)
+	}()
+
+	go func() {
+		defer wg.Done()
+		defer closeBoth()
+		_, _ = io.Copy(ch, tcpConn)
+	}()
+
+	wg.Wait()
+}
+
+type jumpWSConn struct {
+	ws        *websocket.Conn
+	reader    io.Reader
+	writeMu   sync.Mutex
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+func newJumpWSConn(ws *websocket.Conn) *jumpWSConn {
+	c := &jumpWSConn{
+		ws:   ws,
+		done: make(chan struct{}),
+	}
+	_ = ws.SetReadDeadline(time.Now().Add(pongWait))
+	ws.SetPongHandler(func(string) error {
+		return ws.SetReadDeadline(time.Now().Add(pongWait))
+	})
+	go func() {
+		ticker := time.NewTicker(pingPeriod)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-c.done:
+				return
+			case <-ticker.C:
+				if err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
+					_ = c.Close()
+					return
+				}
+			}
+		}
+	}()
+	return c
+}
+
+func (c *jumpWSConn) Read(b []byte) (int, error) {
+	for {
+		if c.reader == nil {
+			msgType, r, err := c.ws.NextReader()
+			if err != nil {
+				return 0, err
+			}
+			_ = c.ws.SetReadDeadline(time.Now().Add(pongWait))
+			if msgType != websocket.BinaryMessage {
+				_ = c.ws.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseUnsupportedData, "binary messages only"),
+					time.Now().Add(writeWait),
+				)
+				_ = c.Close()
+				return 0, errors.New("unexpected non-binary websocket message")
+			}
+			c.reader = r
+		}
+		n, err := c.reader.Read(b)
+		if err == io.EOF {
+			c.reader = nil
+			if n > 0 {
+				return n, nil
+			}
+			continue
+		}
+		return n, err
+	}
+}
+
+func (c *jumpWSConn) Write(b []byte) (int, error) {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	_ = c.ws.SetWriteDeadline(time.Now().Add(writeWait))
+	if err := c.ws.WriteMessage(websocket.BinaryMessage, b); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+func (c *jumpWSConn) Close() error {
+	var err error
+	c.closeOnce.Do(func() {
+		close(c.done)
+		err = c.ws.Close()
+	})
+	return err
+}
+
+func (c *jumpWSConn) LocalAddr() net.Addr                { return c.ws.LocalAddr() }
+func (c *jumpWSConn) RemoteAddr() net.Addr               { return c.ws.RemoteAddr() }
+func (c *jumpWSConn) SetDeadline(t time.Time) error      { return nil }
+func (c *jumpWSConn) SetReadDeadline(t time.Time) error  { return c.ws.SetReadDeadline(t) }
+func (c *jumpWSConn) SetWriteDeadline(t time.Time) error { return c.ws.SetWriteDeadline(t) }
+
+func (s *Server) handleJumpWebSocket(w http.ResponseWriter, req *http.Request) {
+	wsConn, err := s.upgrader.Upgrade(w, req, nil)
+	if err != nil {
+		s.logger.Printf("websocket upgrade failed for jump host: %v", err)
+		return
+	}
+	defer wsConn.Close()
+	s.jumpHost.serveWebSocket(req.Context(), wsConn)
+}

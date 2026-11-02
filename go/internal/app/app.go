@@ -710,6 +710,35 @@ func (a *App) autoCompleteWords(args []string) []string {
 		}
 		return words
 	}
+	if args[0] == "set" && len(args) == 3 {
+		switch args[1] {
+		case "theme":
+			var words []string
+			for _, v := range []string{"dark", "green", "light"} {
+				if strings.HasPrefix(v, last) {
+					words = append(words, v)
+				}
+			}
+			return words
+		case "jump-hosts":
+			var words []string
+			if strings.HasPrefix("none", last) {
+				words = append(words, "none")
+			}
+			prefix := ""
+			h := last
+			if u, rest, ok := parseUserHost(last); ok {
+				prefix = u + "@"
+				h = rest
+			}
+			for _, ep := range a.data.Endpoints {
+				if strings.HasPrefix(ep.Name, h) {
+					words = append(words, prefix+ep.Name)
+				}
+			}
+			return words
+		}
+	}
 	if (args[0] == "ssh" || args[0] == "sftp") && strings.Index(last, "@") > 0 {
 		u, h, _ := strings.Cut(last, "@")
 		var words []string
@@ -732,6 +761,16 @@ func (a *App) autoCompleteWords(args []string) []string {
 		var words []string
 		for _, k := range a.data.Keys {
 			w := "--identity=" + k.Name
+			if strings.HasPrefix(w, last) {
+				words = append(words, w)
+			}
+		}
+		return words
+	}
+	if strings.HasPrefix(last, "--jump-hosts=") {
+		var words []string
+		for _, ep := range a.data.Endpoints {
+			w := "--jump-hosts=" + ep.Name
 			if strings.HasPrefix(w, last) {
 				words = append(words, w)
 			}

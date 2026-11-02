@@ -101,6 +101,8 @@ docker run \
 Available flags:
 *   `--addr <ip:port>`: The TCP address to listen on (default `127.0.0.1:8080`).
 *   `--ep <name=host[:port]>` (or `--endpoint`, repeatable): Defines a WebSocket endpoint at `/_ws/<name>` forwarding to `host:port` (defaults to port `22` if omitted) and adds it to `/config.json`.
+*   `--authorized-keys <file>`: Optional path to an OpenSSH `authorized_keys` file to enable the built-in SSH jump host (`jump`). Each entry must include at least one `permitopen="host[:port]"` option (supports hostname wildcards, IPs, and CIDRs; port defaults to `22` or `*` for any port) and may use `cert-authority` with `principals="pattern,..."`.
+*   `--host-key <file>`: Optional path to an SSH private key file for the built-in jump host (if omitted, an ephemeral `ed25519` key is generated at startup).
 *   `--config <file>`: Optional path to a base `config.json` file. Configured endpoints are merged into it on the fly.
 *   `--tls-cert <file>` and `--tls-key <file>`: Optional TLS certificate and private key files to serve HTTPS instead of HTTP.
 
@@ -147,6 +149,7 @@ Here is an example with explanations of the fields:
 
 *   `persist`: Controls whether settings are saved to the browser's local storage. When `false`, all data is cleared on reload.
 *   `theme`: Sets the visual theme (e.g., "dark", "light").
+*   `jumpHosts`: Default comma-separated jump host(s) used when connecting to a target that does not match any configured endpoint.
 *   `certificateAuthorities`: Specifies trusted Certificate Authorities for verifying host certificates.
     *   `name`: A unique name for the CA.
     *   `publicKey`: The public key of the CA in `authorized_keys` format.
@@ -322,6 +325,7 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 
 #### Terminal and Application
 
+*   `set jump-hosts [<jump-hosts>|none]` - Sets or shows the default jump hosts.
 *   `set theme <light|dark|green>` - Sets the color theme.
 *   `clear` - Clears the terminal screen.
 *   `reload` - Reloads the application page.

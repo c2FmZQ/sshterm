@@ -26,10 +26,19 @@
 package app
 
 import (
+	"strings"
+
 	"github.com/urfave/cli/v2"
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 )
+
+func (a *App) defaultJumpHosts() string {
+	if jh, ok := a.data.Params["jumpHosts"].(string); ok {
+		return jh
+	}
+	return a.cfg.JumpHosts
+}
 
 func (a *App) setTheme(t string) {
 	var bg, fg string
@@ -56,10 +65,37 @@ func (a *App) setCommand() *cli.App {
 	ret := &cli.App{
 		Name:            "set",
 		Usage:           "Set parameters",
-		UsageText:       "set theme",
+		UsageText:       "set <jump-hosts|theme>",
 		Description:     "The set command is used to change app parameters.",
 		HideHelpCommand: true,
 		Commands: []*cli.Command{
+			{
+				Name:      "jump-hosts",
+				Usage:     "Set or show the default jump hosts.",
+				UsageText: "set jump-hosts [<jump-hosts>|none]",
+				Action: func(ctx *cli.Context) error {
+					if ctx.Args().Len() > 1 {
+						cli.ShowSubcommandHelp(ctx)
+						return nil
+					}
+					if ctx.Args().Len() == 1 {
+						v := strings.TrimSpace(ctx.Args().Get(0))
+						if v == "none" {
+							v = ""
+						}
+						a.data.Params["jumpHosts"] = v
+						if err := a.saveParams(true); err != nil {
+							return err
+						}
+					}
+					if jh := a.defaultJumpHosts(); jh != "" {
+						a.term.Printf("Default jump hosts: %s\n", jh)
+					} else {
+						a.term.Printf("Default jump hosts: <none>\n")
+					}
+					return nil
+				},
+			},
 			{
 				Name:      "theme",
 				Usage:     "Set the color theme.",
