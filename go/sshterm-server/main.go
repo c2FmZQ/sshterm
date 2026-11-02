@@ -58,6 +58,23 @@ func (f *endpointFlags) Set(value string) error {
 	return nil
 }
 
+type stringListFlag []string
+
+func (f *stringListFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func (f *stringListFlag) Set(value string) error {
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return fmt.Errorf("invalid trusted proxy %q", value)
+		}
+		*f = append(*f, part)
+	}
+	return nil
+}
+
 func main() {
 	var (
 		addr           = flag.String("addr", "127.0.0.1:8080", "The TCP address to listen on.")
@@ -68,9 +85,11 @@ func main() {
 		hostKey        = flag.String("host-key", "", "Optional path to a private key file for the built-in jump host (generated dynamically if unset).")
 		versionFlag    = flag.Bool("v", false, "Show the version.")
 		endpoints      endpointFlags
+		trustedProxies stringListFlag
 	)
 	flag.Var(&endpoints, "ep", "SSH endpoint in the form name=host[:port] (repeatable).")
 	flag.Var(&endpoints, "endpoint", "Alias for -ep.")
+	flag.Var(&trustedProxies, "trusted-proxies", "Comma-separated list of trusted proxy IPs or CIDRs for X-Forwarded-For (repeatable).")
 	flag.Parse()
 
 	if *versionFlag {
@@ -86,6 +105,7 @@ func main() {
 		TLSKeyFile:         *tlsKey,
 		AuthorizedKeysFile: *authorizedKeys,
 		HostKeyFile:        *hostKey,
+		TrustedProxies:     trustedProxies,
 		Endpoints:          endpoints,
 	})
 	if err != nil {

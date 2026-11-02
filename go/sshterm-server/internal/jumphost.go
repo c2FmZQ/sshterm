@@ -65,9 +65,51 @@ var jumpPubKeyAuthAlgorithms = []string{
 	ssh.KeyAlgoRSASHA512,
 }
 
+type ipMatcher struct {
+	ip   net.IP
+	cidr *net.IPNet
+}
+
+func (m ipMatcher) matches(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if m.cidr != nil {
+		return cidrContainsIP(m.cidr, ip)
+	}
+	return m.ip != nil && m.ip.Equal(ip)
+}
+
+func parseTrustedProxies(specs []string) ([]ipMatcher, error) {
+	var matchers []ipMatcher
+	for _, spec := range specs {
+		for _, entry := range strings.Split(spec, ",") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				return nil, fmt.Errorf("invalid trusted proxy %q", spec)
+			}
+			if strings.Contains(entry, "/") {
+				_, cidr, err := net.ParseCIDR(entry)
+				if err != nil {
+					return nil, fmt.Errorf("invalid trusted proxy CIDR %q: %w", entry, err)
+				}
+				matchers = append(matchers, ipMatcher{cidr: cidr})
+				continue
+			}
+			ip := net.ParseIP(entry)
+			if ip == nil {
+				return nil, fmt.Errorf("invalid trusted proxy IP %q", entry)
+			}
+			matchers = append(matchers, ipMatcher{ip: ip})
+		}
+	}
+	return matchers, nil
+}
+
 type jumpHost struct {
 	signer             ssh.Signer
 	authorizedKeysFile string
+	trustedProxies     []ipMatcher
 	dialContext        func(ctx context.Context, network, address string) (net.Conn, error)
 	lookupIP           func(ctx context.Context, host string) ([]net.IPAddr, error)
 	logger             *log.Logger
@@ -92,7 +134,7 @@ type permitOpenRule struct {
 	port        int // 0 means wildcard '*'
 }
 
-func newJumpHost(authorizedKeysFile, hostKeyFile string, dialContext func(ctx context.Context, network, address string) (net.Conn, error), logger *log.Logger) (*jumpHost, error) {
+func newJumpHost(authorizedKeysFile, hostKeyFile string, trustedProxies []ipMatcher, dialContext func(ctx context.Context, network, address string) (net.Conn, error), logger *log.Logger) (*jumpHost, error) {
 	akBytes, err := os.ReadFile(authorizedKeysFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading authorized_keys file: %w", err)
@@ -140,6 +182,7 @@ func newJumpHost(authorizedKeysFile, hostKeyFile string, dialContext func(ctx co
 	return &jumpHost{
 		signer:             signer,
 		authorizedKeysFile: authorizedKeysFile,
+		trustedProxies:     trustedProxies,
 		dialContext:        dialContext,
 		lookupIP:           net.DefaultResolver.LookupIPAddr,
 		logger:             logger,
@@ -618,23 +661,77 @@ func cidrContainsIP(cidr *net.IPNet, ip net.IP) bool {
 	return cidr.Contains(ip)
 }
 
+func parseIPString(s string) net.IP {
+	if h, _, ok := strings.Cut(s, "%"); ok {
+		s = h
+	}
+	return net.ParseIP(s)
+}
+
+func extractAddrIP(addr net.Addr) net.IP {
+	if addr == nil {
+		return nil
+	}
+	if tcpAddr, ok := addr.(*net.TCPAddr); ok {
+		if tcpAddr == nil {
+			return nil
+		}
+		return tcpAddr.IP
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		host = addr.String()
+	}
+	return parseIPString(host)
+}
+
+func (j *jumpHost) isTrustedProxy(ip net.IP) bool {
+	for _, m := range j.trustedProxies {
+		if m.matches(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func (j *jumpHost) resolveClientAddr(req *http.Request, peerAddr net.Addr) net.Addr {
+	if len(j.trustedProxies) == 0 || req == nil {
+		return peerAddr
+	}
+	peerIP := extractAddrIP(peerAddr)
+	if !j.isTrustedProxy(peerIP) {
+		return peerAddr
+	}
+	xffValues := req.Header.Values("X-Forwarded-For")
+	if len(xffValues) == 0 {
+		return peerAddr
+	}
+	var parts []string
+	for _, hdr := range xffValues {
+		for _, p := range strings.Split(hdr, ",") {
+			parts = append(parts, strings.TrimSpace(p))
+		}
+	}
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] == "" {
+			return &net.TCPAddr{}
+		}
+		ip := parseIPString(parts[i])
+		if ip == nil {
+			return &net.TCPAddr{}
+		}
+		if !j.isTrustedProxy(ip) || i == 0 {
+			return &net.TCPAddr{IP: ip}
+		}
+	}
+	return &net.TCPAddr{}
+}
+
 func checkSourceAddress(sourceAddrs string, remoteAddr net.Addr) bool {
 	if remoteAddr == nil || strings.TrimSpace(sourceAddrs) == "" {
 		return false
 	}
-	var remoteIP net.IP
-	if tcpAddr, ok := remoteAddr.(*net.TCPAddr); ok {
-		remoteIP = tcpAddr.IP
-	} else {
-		host, _, err := net.SplitHostPort(remoteAddr.String())
-		if err != nil {
-			host = remoteAddr.String()
-		}
-		if h, _, ok := strings.Cut(host, "%"); ok {
-			host = h
-		}
-		remoteIP = net.ParseIP(host)
-	}
+	remoteIP := extractAddrIP(remoteAddr)
 	if remoteIP == nil {
 		return false
 	}
@@ -749,8 +846,8 @@ func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenR
 	return "", false
 }
 
-func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn) {
-	conn := newJumpWSConn(wsConn)
+func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn, remoteAddr net.Addr) {
+	conn := newJumpWSConn(wsConn, remoteAddr)
 	defer conn.Close()
 
 	rules := j.getRules()
@@ -905,17 +1002,22 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, sconn ssh.Conn, newCha
 }
 
 type jumpWSConn struct {
-	ws        *websocket.Conn
-	reader    io.Reader
-	writeMu   sync.Mutex
-	done      chan struct{}
-	closeOnce sync.Once
+	ws         *websocket.Conn
+	remoteAddr net.Addr
+	reader     io.Reader
+	writeMu    sync.Mutex
+	done       chan struct{}
+	closeOnce  sync.Once
 }
 
-func newJumpWSConn(ws *websocket.Conn) *jumpWSConn {
+func newJumpWSConn(ws *websocket.Conn, remoteAddr net.Addr) *jumpWSConn {
+	if remoteAddr == nil {
+		remoteAddr = ws.RemoteAddr()
+	}
 	c := &jumpWSConn{
-		ws:   ws,
-		done: make(chan struct{}),
+		ws:         ws,
+		remoteAddr: remoteAddr,
+		done:       make(chan struct{}),
 	}
 	ws.SetReadLimit(maxWSMessageSize)
 	_ = ws.SetReadDeadline(time.Now().Add(pongWait))
@@ -991,7 +1093,7 @@ func (c *jumpWSConn) Close() error {
 }
 
 func (c *jumpWSConn) LocalAddr() net.Addr  { return c.ws.LocalAddr() }
-func (c *jumpWSConn) RemoteAddr() net.Addr { return c.ws.RemoteAddr() }
+func (c *jumpWSConn) RemoteAddr() net.Addr { return c.remoteAddr }
 func (c *jumpWSConn) SetDeadline(t time.Time) error {
 	return errors.Join(c.SetReadDeadline(t), c.SetWriteDeadline(t))
 }
@@ -1009,5 +1111,6 @@ func (s *Server) handleJumpWebSocket(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer wsConn.Close()
-	s.jumpHost.serveWebSocket(req.Context(), wsConn)
+	remoteAddr := s.jumpHost.resolveClientAddr(req, wsConn.RemoteAddr())
+	s.jumpHost.serveWebSocket(req.Context(), wsConn, remoteAddr)
 }

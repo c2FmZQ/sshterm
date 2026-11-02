@@ -851,3 +851,130 @@ type writerFunc func([]byte) (int, error)
 func (f writerFunc) Write(p []byte) (int, error) {
 	return f(p)
 }
+
+func TestJumpHostTrustedProxiesXForwardedFor(t *testing.T) {
+	_, caSigner, caKeyLine := generateTestSSHKey(t)
+	akFile := filepath.Join(t.TempDir(), "authorized_keys")
+	if err := os.WriteFile(akFile, []byte(`cert-authority,principals="alice@example.com",permitopen="host.example.com:22" `+caKeyLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Invalid TrustedProxies entries fail startup.
+	for _, badProxy := range []string{"not-an-ip", "10.0.0.0/99", ","} {
+		if _, err := New(Options{
+			AuthorizedKeysFile: akFile,
+			TrustedProxies:     []string{badProxy},
+		}); err == nil {
+			t.Errorf("expected error for invalid TrustedProxies %q", badProxy)
+		}
+	}
+
+	now := uint64(time.Now().Unix())
+	mintSourceCert := func(sourceAddr string) ssh.Signer {
+		t.Helper()
+		uPub, uSigner, _ := generateTestSSHKey(t)
+		cert := &ssh.Certificate{
+			Key:             uPub,
+			CertType:        ssh.UserCert,
+			KeyId:           "alice@example.com",
+			ValidPrincipals: []string{"alice@example.com"},
+			ValidAfter:      now - 60,
+			ValidBefore:     now + 600,
+			Permissions: ssh.Permissions{
+				CriticalOptions: map[string]string{"source-address": sourceAddr},
+				Extensions:      map[string]string{"permit-port-forwarding": ""},
+			},
+		}
+		if err := cert.SignCert(rand.Reader, caSigner); err != nil {
+			t.Fatal(err)
+		}
+		cs, err := ssh.NewCertSigner(cert, uSigner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cs
+	}
+
+	dialWithXFF := func(wsURL string, hostKey ssh.PublicKey, signer ssh.Signer, xff ...string) error {
+		hdr := http.Header{}
+		for _, v := range xff {
+			hdr.Add("X-Forwarded-For", v)
+		}
+		wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, hdr)
+		if err != nil {
+			return err
+		}
+		c, chans, reqs, err := ssh.NewClientConn(&wsNetConn{conn: wsConn}, DefaultJumpEndpointName, &ssh.ClientConfig{
+			User:            "user",
+			Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+			HostKeyCallback: ssh.FixedHostKey(hostKey),
+			Timeout:         5 * time.Second,
+		})
+		if err != nil {
+			wsConn.Close()
+			return err
+		}
+		_ = ssh.NewClient(c, chans, reqs).Close()
+		return nil
+	}
+
+	// 2. Without TrustedProxies, X-Forwarded-For is ignored.
+	srvUntrusted, err := New(Options{
+		AuthorizedKeysFile: akFile,
+		Logger:             log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tsUntrusted := httptest.NewServer(srvUntrusted.Handler())
+	defer tsUntrusted.Close()
+	wsUntrusted := "ws" + strings.TrimPrefix(tsUntrusted.URL, "http") + "/_ws/" + DefaultJumpEndpointName
+	pubUntrusted := srvUntrusted.jumpHost.signer.PublicKey()
+
+	if err := dialWithXFF(wsUntrusted, pubUntrusted, mintSourceCert("203.0.113.0/24"), "203.0.113.5"); err == nil {
+		t.Error("expected X-Forwarded-For to be ignored when TrustedProxies is not configured")
+	}
+	if err := dialWithXFF(wsUntrusted, pubUntrusted, mintSourceCert("127.0.0.0/8"), "203.0.113.5"); err != nil {
+		t.Errorf("expected direct peer 127.0.0.1 to match 127.0.0.0/8 when TrustedProxies is not configured: %v", err)
+	}
+
+	// 3. With TrustedProxies configured (127.0.0.1/32 and 10.10.0.0/16), X-Forwarded-For is evaluated right-to-left.
+	srvTrusted, err := New(Options{
+		AuthorizedKeysFile: akFile,
+		TrustedProxies:     []string{"127.0.0.1/32,10.10.0.0/16"},
+		Logger:             log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tsTrusted := httptest.NewServer(srvTrusted.Handler())
+	defer tsTrusted.Close()
+	wsTrusted := "ws" + strings.TrimPrefix(tsTrusted.URL, "http") + "/_ws/" + DefaultJumpEndpointName
+	pubTrusted := srvTrusted.jumpHost.signer.PublicKey()
+
+	// Single XFF entry from trusted proxy: matches 203.0.113.0/24, does NOT match proxy's own 127.0.0.0/8.
+	if err := dialWithXFF(wsTrusted, pubTrusted, mintSourceCert("203.0.113.0/24"), "203.0.113.5"); err != nil {
+		t.Errorf("expected XFF 203.0.113.5 to match 203.0.113.0/24: %v", err)
+	}
+	if err := dialWithXFF(wsTrusted, pubTrusted, mintSourceCert("127.0.0.0/8"), "203.0.113.5"); err == nil {
+		t.Error("expected XFF 203.0.113.5 not to match proxy's own 127.0.0.0/8")
+	}
+
+	// Client spoofs "198.51.100.99" in XFF; trusted proxy appends real client "203.0.113.5".
+	if err := dialWithXFF(wsTrusted, pubTrusted, mintSourceCert("198.51.100.0/24"), "198.51.100.99, 203.0.113.5"); err == nil {
+		t.Error("client-spoofed XFF prefix 198.51.100.99 should not be trusted")
+	}
+	if err := dialWithXFF(wsTrusted, pubTrusted, mintSourceCert("203.0.113.0/24"), "198.51.100.99, 203.0.113.5"); err != nil {
+		t.Errorf("expected real client IP 203.0.113.5 to be selected: %v", err)
+	}
+
+	// Chained trusted proxies: client spoofs 198.51.100.99 -> outer proxy 10.10.1.2 sees 203.0.113.5 -> inner proxy 127.0.0.1 sees 10.10.1.2.
+	if err := dialWithXFF(wsTrusted, pubTrusted, mintSourceCert("203.0.113.0/24"), "198.51.100.99, 203.0.113.5", "10.10.1.2"); err != nil {
+		t.Errorf("expected chained XFF to resolve 203.0.113.5: %v", err)
+	}
+
+	// Malformed XFF fails closed and does NOT fall back to proxy's 127.0.0.1.
+	if err := dialWithXFF(wsTrusted, pubTrusted, mintSourceCert("127.0.0.0/8"), "invalid-ip"); err == nil {
+		t.Error("expected malformed XFF to fail closed")
+	}
+}

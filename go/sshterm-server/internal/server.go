@@ -156,6 +156,7 @@ type Options struct {
 	TLSKeyFile         string
 	AuthorizedKeysFile string
 	HostKeyFile        string
+	TrustedProxies     []string
 	Endpoints          []Endpoint
 	FS                 fs.FS
 	DialContext        func(ctx context.Context, network, address string) (net.Conn, error)
@@ -218,10 +219,14 @@ func New(opts Options) (*Server, error) {
 		logger = log.Default()
 	}
 
+	trustedProxies, err := parseTrustedProxies(opts.TrustedProxies)
+	if err != nil {
+		return nil, err
+	}
+
 	var jh *jumpHost
 	if opts.AuthorizedKeysFile != "" {
-		var err error
-		jh, err = newJumpHost(opts.AuthorizedKeysFile, opts.HostKeyFile, opts.DialContext, logger)
+		jh, err = newJumpHost(opts.AuthorizedKeysFile, opts.HostKeyFile, trustedProxies, opts.DialContext, logger)
 		if err != nil {
 			return nil, err
 		}
