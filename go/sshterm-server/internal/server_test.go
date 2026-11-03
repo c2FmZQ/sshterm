@@ -167,12 +167,28 @@ func TestNewValidation(t *testing.T) {
 	if _, err := New(Options{ConfigFile: filepath.Join(t.TempDir(), "nonexistent.json")}); err == nil {
 		t.Error("expected error for nonexistent config file")
 	}
-	badEpCfg := filepath.Join(t.TempDir(), "bad-ep.json")
-	if err := os.WriteFile(badEpCfg, []byte(`{"endpoints":[{"name":"none","url":"./ws"}]}`), 0o600); err != nil {
+	// Client-side endpoints in the config file are passed through as-is,
+	// even with names that "ep add" would reject, so existing configs keep
+	// working.
+	dir := t.TempDir()
+	legacyEpCfg := filepath.Join(dir, "legacy-ep.json")
+	if err := os.WriteFile(legacyEpCfg, []byte(`{"endpoints":[{"name":"none","url":"./ws"},{"name":"my server/a:b","url":"./ws2"}]}`), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if _, err := New(Options{ConfigFile: badEpCfg}); err == nil {
-		t.Error("expected error for reserved endpoint name 'none' in config file")
+	if _, err := New(Options{ConfigFile: legacyEpCfg}); err != nil {
+		t.Errorf("expected legacy endpoint names in config file to be accepted, got: %v", err)
+	}
+	// The name reserved for the built-in jump host is still rejected.
+	akFile := filepath.Join(dir, "authorized_keys")
+	if err := os.WriteFile(akFile, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	jumpEpCfg := filepath.Join(dir, "jump-ep.json")
+	if err := os.WriteFile(jumpEpCfg, []byte(`{"endpoints":[{"name":"`+DefaultJumpEndpointName+`","url":"./ws"}]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := New(Options{ConfigFile: jumpEpCfg, AuthorizedKeysFile: akFile}); err == nil {
+		t.Error("expected error for reserved endpoint name 'jump' in config file when --authorized-keys is set")
 	}
 }
 

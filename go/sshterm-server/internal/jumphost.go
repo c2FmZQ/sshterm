@@ -197,25 +197,31 @@ func (j *jumpHost) getRules() []authRule {
 
 	akBytes, err := os.ReadFile(j.authorizedKeysFile)
 	if err != nil {
+		// Fail closed: an unreadable or missing authorized_keys file
+		// authorizes nobody until it becomes readable again.
 		if j.logger != nil {
-			j.logger.Printf("error reading authorized_keys file %q: %v", j.authorizedKeysFile, err)
+			j.logger.Printf("error reading authorized_keys file %q: %v; denying all jump host access", j.authorizedKeysFile, err)
 		}
-		return j.rules
+		j.lastBytes = nil
+		j.rules = nil
+		return nil
 	}
 	if bytes.Equal(akBytes, j.lastBytes) {
 		return j.rules
 	}
 	j.lastBytes = akBytes
-	rules, err := parseAuthorizedKeys(akBytes)
-	if err != nil {
-		if j.logger != nil {
-			j.logger.Printf("error reloading authorized_keys file %q: %v", j.authorizedKeysFile, err)
+	// Fail closed: lines that no longer parse are dropped, so that a
+	// revoked key never keeps working because of an error elsewhere in
+	// the file.
+	rules, errs := parseAuthorizedKeysLines(akBytes)
+	if j.logger != nil {
+		for _, err := range errs {
+			j.logger.Printf("error reloading authorized_keys file %q: %v (line ignored)", j.authorizedKeysFile, err)
 		}
-		return j.rules
 	}
 	j.rules = rules
 	if j.logger != nil {
-		j.logger.Printf("reloaded authorized_keys file %q (%d rules)", j.authorizedKeysFile, len(rules))
+		j.logger.Printf("reloaded authorized_keys file %q (%d rules, %d errors)", j.authorizedKeysFile, len(rules), len(errs))
 	}
 	return j.rules
 }
@@ -224,8 +230,24 @@ func (j *jumpHost) publicKeyAuthorizedFormat() string {
 	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(j.signer.PublicKey())))
 }
 
+// parseAuthorizedKeys parses an authorized_keys file and fails on the first
+// invalid line. It is used for the initial load at startup.
 func parseAuthorizedKeys(content []byte) ([]authRule, error) {
-	var rules []authRule
+	rules, errs := parseAuthorizedKeysLines(content)
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return rules, nil
+}
+
+// parseAuthorizedKeysLines parses every line of an authorized_keys file. Lines
+// that fail to parse are skipped and reported in the returned error list, and
+// the rules from all valid lines are returned.
+func parseAuthorizedKeysLines(content []byte) ([]authRule, []error) {
+	var (
+		rules []authRule
+		errs  []error
+	)
 	lines := bytes.Split(content, []byte("\n"))
 	for i, rawLine := range lines {
 		lineNum := i + 1
@@ -235,15 +257,17 @@ func parseAuthorizedKeys(content []byte) ([]authRule, error) {
 		}
 		pubKey, _, opts, _, err := ssh.ParseAuthorizedKey(line)
 		if err != nil {
-			return nil, fmt.Errorf("authorized_keys line %d: %w", lineNum, err)
+			errs = append(errs, fmt.Errorf("authorized_keys line %d: %w", lineNum, err))
+			continue
 		}
 		rule, err := parseAuthRule(lineNum, pubKey, opts)
 		if err != nil {
-			return nil, err
+			errs = append(errs, err)
+			continue
 		}
 		rules = append(rules, rule)
 	}
-	return rules, nil
+	return rules, errs
 }
 
 func parseAuthRule(lineNum int, pubKey ssh.PublicKey, opts []string) (authRule, error) {
@@ -502,12 +526,10 @@ func validateHostPattern(pat string) error {
 		if label == "" {
 			return errors.New("empty label in host pattern")
 		}
-		labelHasAlpha := false
 		for i := 0; i < len(label); i++ {
 			c := label[i]
 			switch {
 			case c >= 'a' && c <= 'z':
-				labelHasAlpha = true
 				allNumericOrWildcard = false
 			case c >= '0' && c <= '9', c == '-', c == '_':
 			case c == '*', c == '?':
@@ -515,7 +537,6 @@ func validateHostPattern(pat string) error {
 				return fmt.Errorf("invalid character %q in host pattern", c)
 			}
 		}
-		_ = labelHasAlpha
 	}
 	if allNumericOrWildcard && len(labels) > 1 {
 		return errors.New("IP wildcards are not supported; use CIDR notation")
@@ -554,23 +575,28 @@ func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey, rul
 			return nil, "", errors.New("certificate missing signature key")
 		}
 		caBytes := cert.SignatureKey.Marshal()
-		var allowedRules []permitOpenRule
+		var (
+			allowedRules []permitOpenRule
+			principal    string
+		)
 		for _, rule := range rules {
 			if !rule.isCA || !bytes.Equal(rule.keyBytes, caBytes) {
 				continue
 			}
-			if !matchPrincipals(rule.principals, cert.ValidPrincipals) {
+			p, ok := matchPrincipals(rule.principals, cert.ValidPrincipals)
+			if !ok {
 				continue
 			}
 			if len(rule.permitOpen) == 0 {
 				continue
 			}
+			principal = p
 			allowedRules = append(allowedRules, rule.permitOpen...)
 		}
 		if len(allowedRules) == 0 {
 			return nil, "", errors.New("certificate not authorized")
 		}
-		if err := validateUserCert(cert, conn.RemoteAddr()); err != nil {
+		if err := validateUserCert(cert, principal, conn.RemoteAddr()); err != nil {
 			return nil, "", err
 		}
 		return allowedRules, fmt.Sprintf("cert:%s", cert.KeyId), nil
@@ -596,9 +622,11 @@ func (j *jumpHost) authenticate(conn ssh.ConnMetadata, pubKey ssh.PublicKey, rul
 	return allowedRules, fmt.Sprintf("key:%s", ssh.FingerprintSHA256(pubKey)), nil
 }
 
-func matchPrincipals(patterns, certPrincipals []string) bool {
+// matchPrincipals returns the first certificate principal that matches one of
+// the patterns.
+func matchPrincipals(patterns, certPrincipals []string) (string, bool) {
 	if len(patterns) == 0 || len(certPrincipals) == 0 {
-		return false
+		return "", false
 	}
 	for _, pat := range patterns {
 		for _, p := range certPrincipals {
@@ -606,50 +634,41 @@ func matchPrincipals(patterns, certPrincipals []string) bool {
 				continue
 			}
 			if matched, err := path.Match(pat, p); err == nil && matched {
-				return true
+				return p, true
 			}
 		}
 	}
-	return false
+	return "", false
 }
 
-func validateUserCert(cert *ssh.Certificate, remoteAddr net.Addr) error {
+// validateUserCert checks that cert is a usable user certificate. principal is
+// the certificate principal that matched the authorized_keys rule (empty if
+// the certificate has no principals). The validity window, critical option
+// allowlist and CA signature are checked by ssh.CertChecker; the checks that
+// are specific to this jump host are done here.
+func validateUserCert(cert *ssh.Certificate, principal string, remoteAddr net.Addr) error {
 	if cert.CertType != ssh.UserCert {
 		return fmt.Errorf("certificate has wrong type: %d", cert.CertType)
 	}
 	if cert.Key == nil || cert.Key.Type() == ssh.KeyAlgoDSA {
 		return errors.New("certificate key algorithm is not supported")
 	}
-	now := uint64(time.Now().Unix())
-	if cert.ValidAfter > now {
-		return errors.New("certificate is not yet valid")
-	}
-	if cert.ValidBefore != ssh.CertTimeInfinity && (now >= cert.ValidBefore || cert.ValidBefore < cert.ValidAfter) {
-		return errors.New("certificate is expired")
-	}
-	for k, v := range cert.CriticalOptions {
-		if k == "source-address" {
-			if !checkSourceAddress(v, remoteAddr) {
-				return errors.New("certificate source-address mismatch")
-			}
-			continue
-		}
-		return fmt.Errorf("certificate has unsupported critical option %q", k)
-	}
-	if v, ok := cert.Extensions["permit-port-forwarding"]; !ok || v != "" {
-		return errors.New("certificate does not permit port forwarding")
-	}
 	if cert.Signature == nil || cert.SignatureKey == nil || cert.Signature.Format == ssh.KeyAlgoRSA || cert.Signature.Format == ssh.KeyAlgoDSA {
 		return errors.New("certificate signature algorithm is not supported")
 	}
-	c2 := *cert
-	c2.Signature = nil
-	signBytes := c2.Marshal()
-	if len(signBytes) < 4 {
-		return errors.New("certificate is malformed")
+	checker := &ssh.CertChecker{
+		SupportedCriticalOptions: []string{"source-address"},
 	}
-	if err := cert.SignatureKey.Verify(signBytes[:len(signBytes)-4], cert.Signature); err != nil {
-		return errors.New("certificate signature is invalid")
+	if err := checker.CheckCert(principal, cert); err != nil {
+		return err
+	}
+	if v, ok := cert.CriticalOptions["source-address"]; ok {
+		if !checkSourceAddress(v, remoteAddr) {
+			return errors.New("certificate source-address mismatch")
+		}
+	}
+	if v, ok := cert.Extensions["permit-port-forwarding"]; !ok || v != "" {
+		return errors.New("certificate does not permit port forwarding")
 	}
 	return nil
 }
@@ -872,7 +891,10 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 	}
 	sshCfg.AddHostKey(j.signer)
 
-	handshakeTimer := time.AfterFunc(dialTimeout, func() {
+	// The client may stop in the middle of the handshake to ask the user
+	// about an unknown or changed host key, so give it the same grace
+	// period as OpenSSH's LoginGraceTime rather than the dial timeout.
+	handshakeTimer := time.AfterFunc(handshakeTimeout, func() {
 		_ = conn.Close()
 	})
 	sconn, chans, reqs, err := ssh.NewServerConn(conn, sshCfg)
@@ -930,17 +952,6 @@ func rejectChannel(sconn io.Closer, newChan ssh.NewChannel, reason ssh.Rejection
 	withWriteTimeout(sconn, func() {
 		_ = newChan.Reject(reason, message)
 	})
-}
-
-type sshChanDeadlineWriter struct {
-	ch        ssh.Channel
-	onTimeout func()
-}
-
-func (w *sshChanDeadlineWriter) Write(p []byte) (int, error) {
-	timer := time.AfterFunc(writeWait, w.onTimeout)
-	defer timer.Stop()
-	return w.ch.Write(p)
 }
 
 func (j *jumpHost) handleDirectTCPIP(ctx context.Context, sconn ssh.Conn, newChan ssh.NewChannel, allowedRules []permitOpenRule, authID string) {
@@ -1017,13 +1028,11 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, sconn ssh.Conn, newCha
 	go func() {
 		defer wg.Done()
 		defer closeBoth()
-		_, _ = io.Copy(&sshChanDeadlineWriter{
-			ch: ch,
-			onTimeout: func() {
-				_ = sconn.Close()
-				closeBoth()
-			},
-		}, tcpConn)
+		// ch.Write blocks on SSH window flow control while the client
+		// catches up, which is normal back-pressure and not a stalled
+		// peer. Writes to the underlying websocket are bounded by the
+		// write deadline in jumpWSConn.Write.
+		_, _ = io.Copy(ch, tcpConn)
 	}()
 
 	wg.Wait()

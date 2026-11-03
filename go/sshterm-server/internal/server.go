@@ -71,10 +71,11 @@ func init() {
 const (
 	defaultCSP = "default-src 'self'; style-src 'unsafe-inline' 'self'; script-src 'wasm-unsafe-eval' 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';"
 
-	dialTimeout = 10 * time.Second
-	writeWait   = 10 * time.Second
-	pongWait    = 60 * time.Second
-	pingPeriod  = (pongWait * 9) / 10
+	dialTimeout      = 10 * time.Second
+	writeWait        = 10 * time.Second
+	handshakeTimeout = 2 * time.Minute
+	pongWait         = 60 * time.Second
+	pingPeriod       = (pongWait * 9) / 10
 )
 
 // Endpoint maps a logical sshterm endpoint name to a TCP host:port address.
@@ -118,14 +119,20 @@ func ParseEndpoint(spec string) (Endpoint, error) {
 	}, nil
 }
 
+// stripBrackets removes the square brackets around a bracketed IPv6 literal
+// without a port, e.g. "[::1]" -> "::1". Other strings are returned unchanged.
+func stripBrackets(h string) string {
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") && strings.Contains(h, ":") {
+		return h[1 : len(h)-1]
+	}
+	return h
+}
+
 func normalizeHostPort(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		// If splitting failed, assume port 22 was omitted.
-		h := addr
-		if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") && strings.Contains(h, ":") {
-			h = h[1 : len(h)-1]
-		}
+		h := stripBrackets(addr)
 		if h == "" {
 			return "", errors.New("host cannot be empty")
 		}
@@ -273,10 +280,10 @@ func buildConfigJSON(configFile string, endpoints []Endpoint, jh *jumpHost) ([]b
 		if err := json.Unmarshal(b, &cfg); err != nil {
 			return nil, nil, fmt.Errorf("parsing config file: %w", err)
 		}
+		// Endpoints in the base config file are not routed by this
+		// server, so their names are passed through as-is. Only the
+		// name reserved for the built-in jump host is checked.
 		for _, ep := range cfg.Endpoints {
-			if !isValidEndpointName(ep.Name) {
-				return nil, nil, fmt.Errorf("invalid endpoint name %q in config file", ep.Name)
-			}
 			if jh != nil && ep.Name == DefaultJumpEndpointName {
 				return nil, nil, fmt.Errorf("endpoint name %q is reserved when --authorized-keys is set", ep.Name)
 			}

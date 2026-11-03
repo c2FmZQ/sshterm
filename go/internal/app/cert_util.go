@@ -37,14 +37,20 @@ import (
 	"github.com/c2FmZQ/sshterm/internal/termsafe"
 )
 
+// stripBrackets removes the square brackets around a bracketed IPv6 literal
+// without a port, e.g. "[::1]" -> "::1". Other strings are returned unchanged.
+func stripBrackets(h string) string {
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") && strings.Contains(h, ":") {
+		return h[1 : len(h)-1]
+	}
+	return h
+}
+
 func stripPortAndBrackets(addr string) string {
 	if h, _, err := net.SplitHostPort(addr); err == nil {
 		return h
 	}
-	if strings.HasPrefix(addr, "[") && strings.HasSuffix(addr, "]") && strings.Contains(addr, ":") {
-		return addr[1 : len(addr)-1]
-	}
-	return addr
+	return stripBrackets(addr)
 }
 
 func checkCertificate(cert *ssh.Certificate, certType uint32) error {

@@ -687,14 +687,14 @@ func TestValidateUserCertRejectsSHA1RSA(t *testing.T) {
 	if err := cert.SignCert(rand.Reader, &fixedAlgoTestSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSA}); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateUserCert(cert, nil); err == nil {
+	if err := validateUserCert(cert, "", nil); err == nil {
 		t.Error("expected validateUserCert to reject ssh-rsa (SHA-1) signature")
 	}
 
 	if err := cert.SignCert(rand.Reader, &fixedAlgoTestSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSASHA512}); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateUserCert(cert, nil); err != nil {
+	if err := validateUserCert(cert, "", nil); err != nil {
 		t.Errorf("expected validateUserCert to accept rsa-sha2-512 signature, got: %v", err)
 	}
 }
@@ -828,15 +828,20 @@ func TestJumpHostAuthorizedKeysReload(t *testing.T) {
 	}
 	c2.Close()
 
-	// 4. Write invalid syntax to authorized_keys -> logs error and keeps old version (key2 still works).
-	if err := os.WriteFile(akFile, []byte("bad-option "+key1Line+"\n"), 0o600); err != nil {
+	// 4. A reload with an invalid line fails closed: the bad line is
+	// ignored, the valid lines take effect, and a removed key is revoked
+	// even though the file has an error.
+	if err := os.WriteFile(akFile, []byte("bad-option "+key2Line+"\n"+`permitopen="host1.example.com:22" `+key1Line+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c2AfterBad, err := dialJumpSSHClient(t, wsJumpURL, "user", jumpHostPub, ssh.PublicKeys(key2Signer))
-	if err != nil {
-		t.Fatalf("expected key2 to remain authorized after failed reload, got: %v", err)
+	if _, err := dialJumpSSHClient(t, wsJumpURL, "user", jumpHostPub, ssh.PublicKeys(key2Signer)); err == nil {
+		t.Fatal("expected key2 (on an invalid line) to be rejected after reload")
 	}
-	c2AfterBad.Close()
+	c1AfterBad, err := dialJumpSSHClient(t, wsJumpURL, "user", jumpHostPub, ssh.PublicKeys(key1Signer))
+	if err != nil {
+		t.Fatalf("expected key1 (on a valid line) to be authorized after partial reload, got: %v", err)
+	}
+	c1AfterBad.Close()
 
 	logMu.Lock()
 	logs := logBuf.String()
@@ -844,6 +849,24 @@ func TestJumpHostAuthorizedKeysReload(t *testing.T) {
 	if !strings.Contains(logs, "error reloading authorized_keys") {
 		t.Errorf("expected reload error in logs, got: %q", logs)
 	}
+
+	// 5. Removing the file denies everyone.
+	if err := os.Remove(akFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dialJumpSSHClient(t, wsJumpURL, "user", jumpHostPub, ssh.PublicKeys(key1Signer)); err == nil {
+		t.Fatal("expected key1 to be rejected when authorized_keys is missing")
+	}
+
+	// 6. Restoring the file restores access.
+	if err := os.WriteFile(akFile, []byte(`permitopen="host1.example.com:22" `+key1Line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c1Restored, err := dialJumpSSHClient(t, wsJumpURL, "user", jumpHostPub, ssh.PublicKeys(key1Signer))
+	if err != nil {
+		t.Fatalf("expected key1 to be authorized after authorized_keys is restored, got: %v", err)
+	}
+	c1Restored.Close()
 }
 
 type writerFunc func([]byte) (int, error)

@@ -636,6 +636,13 @@ func TestJumpHosts(t *testing.T) {
 		{Expect: prompt},
 		{Type: "ssh --jump-hosts=no\ttestuser@baz hello\n", Expect: `unknown endpoint "baz"`},
 		{Expect: prompt},
+		// "--jump-hosts=user@<endpoint>" tab-completes the endpoint name.
+		{Type: "ssh --jump-hosts=testuser@f\ttestuser@baz hello\n"},
+		{Expect: `(?s)\[1\] Connecting testuser@foo.*Host certificate for foo is trusted.*Password: `},
+		{Type: "password\n"},
+		{Expect: `(?s)\[2\] Connecting testuser@baz.*Host certificate for baz is trusted.*Password: `},
+		{Type: "password\n", Expect: "exec: hello"},
+		{Wait: time.Second, Type: "\n\n"},
 
 		// Clearing default jump-hosts with "set jump-hosts none" (with tab completion).
 		{Type: "set jump-hosts no\t\n", Expect: "Default jump hosts: <none>"},

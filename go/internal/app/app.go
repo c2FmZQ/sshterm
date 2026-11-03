@@ -188,14 +188,21 @@ func (a *App) initPresetConfig() error {
 		}
 	}
 	for i, ep := range a.cfg.Endpoints {
+		if ep.Name == "" {
+			// Report the bad entry, but keep processing the rest of
+			// the preset config.
+			a.term.Errorf("endpoints[%d]: empty endpoint name", i)
+			continue
+		}
 		hostname := ep.Hostname
 		// Keep the hostname that the user set, unless the config has one.
 		if old, exists := a.data.Endpoints[ep.Name]; exists && hostname == "" {
 			hostname = old.Hostname
 		}
-		if err := a.addEndpoint(ep.Name, ep.URL, hostname); err != nil {
-			return fmt.Errorf("endpoints[%d]: %w", i, err)
-		}
+		// Preset endpoint names are not validated: existing deployments
+		// may use names that "ep add" would reject, and they still work
+		// as direct targets.
+		a.setEndpoint(ep.Name, ep.URL, hostname)
 	}
 	for i, host := range a.cfg.Hosts {
 		if err := a.addHost(host.Name, host.Key); err != nil {
@@ -739,24 +746,8 @@ func (a *App) autoCompleteWords(args []string) []string {
 			return words
 		}
 	}
-	if (args[0] == "ssh" || args[0] == "sftp") && strings.Index(last, "@") > 0 {
-		u, h, _ := strings.Cut(last, "@")
-		var words []string
-		for _, ep := range a.data.Endpoints {
-			if strings.HasPrefix(ep.Name, h) {
-				words = append(words, u+"@"+ep.Name)
-			}
-		}
-		for _, host := range a.data.Hosts {
-			if _, exists := a.data.Endpoints[host.Name]; exists {
-				continue
-			}
-			if strings.HasPrefix(host.Name, h) {
-				words = append(words, u+"@"+host.Name)
-			}
-		}
-		return words
-	}
+	// Flag values must be handled before the generic user@host branch
+	// below, which would otherwise catch "--jump-hosts=user@..." words.
 	if strings.HasPrefix(last, "--identity=") {
 		var words []string
 		for _, k := range a.data.Keys {
@@ -781,6 +772,24 @@ func (a *App) autoCompleteWords(args []string) []string {
 		for _, ep := range a.data.Endpoints {
 			if strings.HasPrefix(ep.Name, h) {
 				words = append(words, prefix+ep.Name)
+			}
+		}
+		return words
+	}
+	if (args[0] == "ssh" || args[0] == "sftp") && !strings.HasPrefix(last, "-") && strings.Index(last, "@") > 0 {
+		u, h, _ := strings.Cut(last, "@")
+		var words []string
+		for _, ep := range a.data.Endpoints {
+			if strings.HasPrefix(ep.Name, h) {
+				words = append(words, u+"@"+ep.Name)
+			}
+		}
+		for _, host := range a.data.Hosts {
+			if _, exists := a.data.Endpoints[host.Name]; exists {
+				continue
+			}
+			if strings.HasPrefix(host.Name, h) {
+				words = append(words, u+"@"+host.Name)
 			}
 		}
 		return words

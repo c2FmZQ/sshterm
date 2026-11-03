@@ -31,7 +31,7 @@ This document explains how `sshterm-server` evaluates `authorized_keys` and prov
    - The universal wildcard `*` (e.g., `*:22`, `*:*`) matches both hostnames and IP addresses.
 
 6. **Strict Validation and Automatic Reloading**
-   `sshterm-server` loads and validates the entire `authorized_keys` file at startup. Any syntax error, unknown option, unsupported key type (`ssh-dss` or an SSH certificate used directly in place of a public/CA key), `cert-authority` without `principals`, or invalid `permitopen` pattern during the initial load causes `sshterm-server` to fail startup immediately with an error message identifying the line number. When the `authorized_keys` file changes on disk, `sshterm-server` opportunistically reloads it on the next jump-host connection; if a reload encounters an error, `sshterm-server` logs the error and continues using the last valid rules.
+   `sshterm-server` loads and validates the entire `authorized_keys` file at startup. Any syntax error, unknown option, unsupported key type (`ssh-dss` or an SSH certificate used directly in place of a public/CA key), `cert-authority` without `principals`, or invalid `permitopen` pattern during the initial load causes `sshterm-server` to fail startup immediately with an error message identifying the line number. When the `authorized_keys` file changes on disk, `sshterm-server` opportunistically reloads it on the next jump-host connection. Reloads fail closed: a line that no longer parses is logged and ignored while the remaining valid lines take effect, so removing a key always revokes it even if another line has an error. If the file cannot be read (for example, it was deleted), all jump-host access is denied until it becomes readable again.
 
 ---
 

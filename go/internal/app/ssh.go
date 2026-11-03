@@ -210,9 +210,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 	if !ok {
 		return nil, fmt.Errorf("invalid target %q", target)
 	}
-	if strings.HasPrefix(hostname, "[") && strings.HasSuffix(hostname, "]") && strings.Contains(hostname, ":") {
-		hostname = hostname[1 : len(hostname)-1]
-	}
+	hostname = stripBrackets(hostname)
 	if hostname == "" {
 		return nil, fmt.Errorf("invalid target %q", target)
 	}
@@ -239,9 +237,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 				u = username
 				h = jh
 			}
-			if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") && strings.Contains(h, ":") {
-				h = h[1 : len(h)-1]
-			}
+			h = stripBrackets(h)
 			if h == "" {
 				return nil, fmt.Errorf("invalid jump host in %q", jumpHosts)
 			}
