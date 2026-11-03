@@ -58,17 +58,38 @@ func (f *endpointFlags) Set(value string) error {
 	return nil
 }
 
+type stringListFlag []string
+
+func (f *stringListFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func (f *stringListFlag) Set(value string) error {
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return fmt.Errorf("invalid trusted proxy %q", value)
+		}
+		*f = append(*f, part)
+	}
+	return nil
+}
+
 func main() {
 	var (
-		addr        = flag.String("addr", "127.0.0.1:8080", "The TCP address to listen on.")
-		cfgFile     = flag.String("config", "", "Optional path to a base config.json file.")
-		tlsCert     = flag.String("tls-cert", "", "Path to a TLS certificate file (requires --tls-key).")
-		tlsKey      = flag.String("tls-key", "", "Path to a TLS private key file (requires --tls-cert).")
-		versionFlag = flag.Bool("v", false, "Show the version.")
-		endpoints   endpointFlags
+		addr           = flag.String("addr", "127.0.0.1:8080", "The TCP address to listen on.")
+		cfgFile        = flag.String("config", "", "Optional path to a base config.json file.")
+		tlsCert        = flag.String("tls-cert", "", "Path to a TLS certificate file (requires --tls-key).")
+		tlsKey         = flag.String("tls-key", "", "Path to a TLS private key file (requires --tls-cert).")
+		authorizedKeys = flag.String("authorized-keys", "", "Path to an authorized_keys file to enable the built-in jump host.")
+		hostKey        = flag.String("host-key", "", "Optional path to a private key file for the built-in jump host (generated dynamically if unset).")
+		versionFlag    = flag.Bool("v", false, "Show the version.")
+		endpoints      endpointFlags
+		trustedProxies stringListFlag
 	)
 	flag.Var(&endpoints, "ep", "SSH endpoint in the form name=host[:port] (repeatable).")
 	flag.Var(&endpoints, "endpoint", "Alias for -ep.")
+	flag.Var(&trustedProxies, "trusted-proxies", "Comma-separated list of trusted proxy IPs or CIDRs for X-Forwarded-For (repeatable).")
 	flag.Parse()
 
 	if *versionFlag {
@@ -78,11 +99,14 @@ func main() {
 
 	log.Printf("sshterm-server %s %s %s/%s", Version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	srv, err := internal.New(internal.Options{
-		Addr:        *addr,
-		ConfigFile:  *cfgFile,
-		TLSCertFile: *tlsCert,
-		TLSKeyFile:  *tlsKey,
-		Endpoints:   endpoints,
+		Addr:               *addr,
+		ConfigFile:         *cfgFile,
+		TLSCertFile:        *tlsCert,
+		TLSKeyFile:         *tlsKey,
+		AuthorizedKeysFile: *authorizedKeys,
+		HostKeyFile:        *hostKey,
+		TrustedProxies:     trustedProxies,
+		Endpoints:          endpoints,
 	})
 	if err != nil {
 		log.Fatalf("Failed to initialize server: %v", err)

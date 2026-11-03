@@ -34,9 +34,27 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// isValidEndpointName reports whether name can be used both as an ssh target
+// and in a jump-hosts list.
+func isValidEndpointName(name string) bool {
+	return name != "" && !strings.ContainsAny(name, ":,@[]") && !strings.EqualFold(name, "none")
+}
+
+// addEndpoint adds an endpoint created with "ep add". The name is validated
+// so that it can be used in a jump-hosts list.
 func (a *App) addEndpoint(name, url, hostname string) error {
-	a.data.Endpoints[name] = &endpoint{Name: name, URL: url, Hostname: hostname}
+	if !isValidEndpointName(name) {
+		return errors.New("invalid endpoint name")
+	}
+	a.setEndpoint(name, url, hostname)
 	return nil
+}
+
+// setEndpoint adds or replaces an endpoint without validating its name. It is
+// used for preset endpoints from config.json, whose names predate the naming
+// rules enforced by "ep add".
+func (a *App) setEndpoint(name, url, hostname string) {
+	a.data.Endpoints[name] = &endpoint{Name: name, URL: url, Hostname: hostname}
 }
 
 func (a *App) epCommand() *cli.App {
@@ -101,9 +119,6 @@ func (a *App) epCommand() *cli.App {
 						return nil
 					}
 					name := ctx.Args().Get(0)
-					if strings.Index(name, ":") != -1 {
-						return errors.New("endpoint name cannot contain \":\"")
-					}
 					url := ctx.Args().Get(1)
 					if err := a.addEndpoint(name, url, ctx.String("hostname")); err != nil {
 						return err

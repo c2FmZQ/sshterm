@@ -71,16 +71,24 @@ func init() {
 const (
 	defaultCSP = "default-src 'self'; style-src 'unsafe-inline' 'self'; script-src 'wasm-unsafe-eval' 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';"
 
-	dialTimeout = 10 * time.Second
-	writeWait   = 10 * time.Second
-	pongWait    = 60 * time.Second
-	pingPeriod  = (pongWait * 9) / 10
+	dialTimeout      = 10 * time.Second
+	writeWait        = 10 * time.Second
+	handshakeTimeout = 2 * time.Minute
+	pongWait         = 60 * time.Second
+	pingPeriod       = (pongWait * 9) / 10
 )
 
 // Endpoint maps a logical sshterm endpoint name to a TCP host:port address.
 type Endpoint struct {
 	Name    string
 	Address string
+}
+
+func isValidEndpointName(name string) bool {
+	if name == "" || name == "." || name == ".." || strings.EqualFold(name, "none") {
+		return false
+	}
+	return !strings.ContainsAny(name, ":,@[]/\\ \t\r\n")
 }
 
 // ParseEndpoint parses an endpoint specification in the form "name=host[:port]".
@@ -95,7 +103,7 @@ func ParseEndpoint(spec string) (Endpoint, error) {
 	if name == "" {
 		return Endpoint{}, fmt.Errorf("invalid endpoint %q: name cannot be empty", spec)
 	}
-	if strings.ContainsAny(name, ":/\\ \t\r\n") || name == "." || name == ".." {
+	if !isValidEndpointName(name) {
 		return Endpoint{}, fmt.Errorf("invalid endpoint name %q", name)
 	}
 	if addr == "" {
@@ -111,11 +119,20 @@ func ParseEndpoint(spec string) (Endpoint, error) {
 	}, nil
 }
 
+// stripBrackets removes the square brackets around a bracketed IPv6 literal
+// without a port, e.g. "[::1]" -> "::1". Other strings are returned unchanged.
+func stripBrackets(h string) string {
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") && strings.Contains(h, ":") {
+		return h[1 : len(h)-1]
+	}
+	return h
+}
+
 func normalizeHostPort(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		// If splitting failed, assume port 22 was omitted.
-		h := strings.TrimPrefix(strings.TrimSuffix(addr, "]"), "[")
+		h := stripBrackets(addr)
 		if h == "" {
 			return "", errors.New("host cannot be empty")
 		}
@@ -128,6 +145,9 @@ func normalizeHostPort(addr string) (string, error) {
 	if host == "" {
 		return "", errors.New("host cannot be empty")
 	}
+	if strings.ContainsAny(host, "[]") {
+		return "", fmt.Errorf("invalid host %q", host)
+	}
 	p, err := strconv.Atoi(port)
 	if err != nil || p < 1 || p > 65535 {
 		return "", fmt.Errorf("invalid port %q", port)
@@ -137,14 +157,17 @@ func normalizeHostPort(addr string) (string, error) {
 
 // Options configures a Server instance.
 type Options struct {
-	Addr        string
-	ConfigFile  string
-	TLSCertFile string
-	TLSKeyFile  string
-	Endpoints   []Endpoint
-	FS          fs.FS
-	DialContext func(ctx context.Context, network, address string) (net.Conn, error)
-	Logger      *log.Logger
+	Addr               string
+	ConfigFile         string
+	TLSCertFile        string
+	TLSKeyFile         string
+	AuthorizedKeysFile string
+	HostKeyFile        string
+	TrustedProxies     []string
+	Endpoints          []Endpoint
+	FS                 fs.FS
+	DialContext        func(ctx context.Context, network, address string) (net.Conn, error)
+	Logger             *log.Logger
 }
 
 // Server serves the sshterm web application and proxies WebSocket connections
@@ -152,6 +175,7 @@ type Options struct {
 type Server struct {
 	opts       Options
 	endpoints  map[string]string
+	jumpHost   *jumpHost
 	configJSON []byte
 	upgrader   websocket.Upgrader
 	mux        *http.ServeMux
@@ -166,9 +190,15 @@ func New(opts Options) (*Server, error) {
 	if (opts.TLSCertFile == "") != (opts.TLSKeyFile == "") {
 		return nil, errors.New("--tls-cert and --tls-key must be specified together")
 	}
+	if opts.HostKeyFile != "" && opts.AuthorizedKeysFile == "" {
+		return nil, errors.New("--host-key requires --authorized-keys")
+	}
 	for _, ep := range opts.Endpoints {
-		if ep.Name == "" || strings.ContainsAny(ep.Name, ":/\\ \t\r\n") || ep.Name == "." || ep.Name == ".." {
+		if !isValidEndpointName(ep.Name) {
 			return nil, fmt.Errorf("invalid endpoint name %q", ep.Name)
+		}
+		if opts.AuthorizedKeysFile != "" && ep.Name == DefaultJumpEndpointName {
+			return nil, fmt.Errorf("endpoint name %q is reserved when --authorized-keys is set", ep.Name)
 		}
 		if _, err := normalizeHostPort(ep.Address); err != nil {
 			return nil, fmt.Errorf("invalid address for endpoint %q: %w", ep.Name, err)
@@ -196,7 +226,20 @@ func New(opts Options) (*Server, error) {
 		logger = log.Default()
 	}
 
-	cfgBytes, epMap, err := buildConfigJSON(opts.ConfigFile, opts.Endpoints)
+	trustedProxies, err := parseTrustedProxies(opts.TrustedProxies)
+	if err != nil {
+		return nil, err
+	}
+
+	var jh *jumpHost
+	if opts.AuthorizedKeysFile != "" {
+		jh, err = newJumpHost(opts.AuthorizedKeysFile, opts.HostKeyFile, trustedProxies, opts.DialContext, logger)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	cfgBytes, epMap, err := buildConfigJSON(opts.ConfigFile, opts.Endpoints, jh)
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +247,7 @@ func New(opts Options) (*Server, error) {
 	s := &Server{
 		opts:       opts,
 		endpoints:  epMap,
+		jumpHost:   jh,
 		configJSON: cfgBytes,
 		upgrader: websocket.Upgrader{
 			HandshakeTimeout: dialTimeout,
@@ -226,7 +270,7 @@ func New(opts Options) (*Server, error) {
 	return s, nil
 }
 
-func buildConfigJSON(configFile string, endpoints []Endpoint) ([]byte, map[string]string, error) {
+func buildConfigJSON(configFile string, endpoints []Endpoint, jh *jumpHost) ([]byte, map[string]string, error) {
 	var cfg config.Config
 	if configFile != "" {
 		b, err := os.ReadFile(configFile)
@@ -235,6 +279,41 @@ func buildConfigJSON(configFile string, endpoints []Endpoint) ([]byte, map[strin
 		}
 		if err := json.Unmarshal(b, &cfg); err != nil {
 			return nil, nil, fmt.Errorf("parsing config file: %w", err)
+		}
+		// Endpoints in the base config file are not routed by this
+		// server, so their names are passed through as-is. Only the
+		// name reserved for the built-in jump host is checked.
+		for _, ep := range cfg.Endpoints {
+			if jh != nil && ep.Name == DefaultJumpEndpointName {
+				return nil, nil, fmt.Errorf("endpoint name %q is reserved when --authorized-keys is set", ep.Name)
+			}
+		}
+	}
+
+	upsertEndpoint := func(name, wsURL string) {
+		updated := false
+		out := cfg.Endpoints[:0]
+		for _, ep := range cfg.Endpoints {
+			if ep.Name == name {
+				if !updated {
+					ep.URL = wsURL
+					out = append(out, ep)
+					updated = true
+				}
+				continue
+			}
+			out = append(out, ep)
+		}
+		cfg.Endpoints = out
+		if !updated {
+			cfg.Endpoints = append(cfg.Endpoints, struct {
+				Name     string `json:"name"`
+				URL      string `json:"url"`
+				Hostname string `json:"hostname,omitempty"`
+			}{
+				Name: name,
+				URL:  wsURL,
+			})
 		}
 	}
 
@@ -245,25 +324,37 @@ func buildConfigJSON(configFile string, endpoints []Endpoint) ([]byte, map[strin
 			return nil, nil, err
 		}
 		epMap[ep.Name] = addr
-		wsURL := "./_ws/" + ep.Name
+		upsertEndpoint(ep.Name, "./_ws/"+ep.Name)
+	}
 
-		updated := false
-		for i := range cfg.Endpoints {
-			if cfg.Endpoints[i].Name == ep.Name {
-				cfg.Endpoints[i].URL = wsURL
-				updated = true
-				break
+	if jh != nil {
+		upsertEndpoint(DefaultJumpEndpointName, "./_ws/"+DefaultJumpEndpointName)
+		pubKey := jh.publicKeyAuthorizedFormat()
+		updatedHost := false
+		outHosts := cfg.Hosts[:0]
+		for _, h := range cfg.Hosts {
+			if h.Name == DefaultJumpEndpointName {
+				if !updatedHost {
+					h.Key = pubKey
+					outHosts = append(outHosts, h)
+					updatedHost = true
+				}
+				continue
 			}
+			outHosts = append(outHosts, h)
 		}
-		if !updated {
-			cfg.Endpoints = append(cfg.Endpoints, struct {
-				Name     string `json:"name"`
-				URL      string `json:"url"`
-				Hostname string `json:"hostname,omitempty"`
+		cfg.Hosts = outHosts
+		if !updatedHost {
+			cfg.Hosts = append(cfg.Hosts, struct {
+				Name string `json:"name"`
+				Key  string `json:"key,omitempty"`
 			}{
-				Name: ep.Name,
-				URL:  wsURL,
+				Name: DefaultJumpEndpointName,
+				Key:  pubKey,
 			})
+		}
+		if cfg.JumpHosts == "" {
+			cfg.JumpHosts = DefaultJumpEndpointName
 		}
 	}
 
@@ -298,6 +389,10 @@ func (s *Server) handleConfigJSON(w http.ResponseWriter, req *http.Request) {
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
+	if name == DefaultJumpEndpointName && s.jumpHost != nil {
+		s.handleJumpWebSocket(w, req)
+		return
+	}
 	targetAddr, exists := s.endpoints[name]
 	if !exists {
 		http.NotFound(w, req)
@@ -339,6 +434,7 @@ func (s *Server) proxyConn(wsConn *websocket.Conn, tcpConn net.Conn) {
 		})
 	}
 
+	wsConn.SetReadLimit(maxWSMessageSize)
 	_ = wsConn.SetReadDeadline(time.Now().Add(pongWait))
 	wsConn.SetPongHandler(func(string) error {
 		return wsConn.SetReadDeadline(time.Now().Add(pongWait))

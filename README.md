@@ -101,6 +101,9 @@ docker run \
 Available flags:
 *   `--addr <ip:port>`: The TCP address to listen on (default `127.0.0.1:8080`).
 *   `--ep <name=host[:port]>` (or `--endpoint`, repeatable): Defines a WebSocket endpoint at `/_ws/<name>` forwarding to `host:port` (defaults to port `22` if omitted) and adds it to `/config.json`.
+*   `--authorized-keys <file>`: Optional path to an OpenSSH `authorized_keys` file to enable the built-in SSH jump host (`jump`). Each entry must include at least one `permitopen="host[:port]"` option (matched against the requested destination; supports hostname wildcards, IP addresses, and CIDR blocks; port defaults to `22` or `*` for any port) and `cert-authority` lines must specify `principals="pattern,..."`. Note: certificate `source-address` critical options are checked against the direct TCP peer of `sshterm-server` (or the client IP from `X-Forwarded-For` when `--trusted-proxies` is configured), and user certificates must include the `permit-port-forwarding` extension. See [AUTHORIZED_KEYS.md](AUTHORIZED_KEYS.md) for detailed examples.
+*   `--host-key <file>`: Optional path to an SSH private key file for the built-in jump host (recommended for persistent deployments; if omitted, an ephemeral `ed25519` key is generated at startup).
+*   `--trusted-proxies <ip|cidr[,...]>` (repeatable): Optional comma-separated list of trusted reverse proxy IP addresses or CIDR ranges (e.g., `192.168.0.12/32`). When a connection arrives from a trusted proxy, the client IP is extracted from the `X-Forwarded-For` header for certificate `source-address` verification.
 *   `--config <file>`: Optional path to a base `config.json` file. Configured endpoints are merged into it on the fly.
 *   `--tls-cert <file>` and `--tls-key <file>`: Optional TLS certificate and private key files to serve HTTPS instead of HTTP.
 
@@ -147,6 +150,7 @@ Here is an example with explanations of the fields:
 
 *   `persist`: Controls whether settings are saved to the browser's local storage. When `false`, all data is cleared on reload.
 *   `theme`: Sets the visual theme (e.g., "dark", "light").
+*   `jumpHosts`: Default comma-separated jump host(s) used when connecting to a target that does not match any configured endpoint.
 *   `certificateAuthorities`: Specifies trusted Certificate Authorities for verifying host certificates.
     *   `name`: A unique name for the CA.
     *   `publicKey`: The public key of the CA in `authorized_keys` format.
@@ -166,10 +170,11 @@ Here is an example with explanations of the fields:
     *   `resident`: If `true`, request a discoverable (resident) credential on the security key. Only valid with type `ecdsa-sk`.
 *   `autoConnect`: Automatically connect to a specified host on startup.
     *   `username`: The user to connect as.
-    *   `hostname`: The host to connect to (must match an endpoint name).
+    *   `hostname`: The host to connect to (must match an endpoint name unless jump hosts are configured).
     *   `identity`: The name of the key to use for authentication.
     *   `command`: An optional command to run on the remote server.
     *   `forwardAgent`: If `true`, enables agent forwarding for the session.
+    *   `jumpHosts`: Optional comma-separated jump host(s) for the connection (or `"none"` to bypass the default `jumpHosts`).
 
 ### Deployment Security
 
@@ -322,6 +327,7 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 
 #### Terminal and Application
 
+*   `set jump-hosts [<jump-hosts>|none]` - Sets or shows the default jump hosts.
 *   `set theme <light|dark|green>` - Sets the color theme.
 *   `clear` - Clears the terminal screen.
 *   `reload` - Reloads the application page.

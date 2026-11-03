@@ -29,12 +29,29 @@ import (
 	"net"
 	"path"
 	"slices"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 
 	"github.com/c2FmZQ/sshterm/internal/termsafe"
 )
+
+// stripBrackets removes the square brackets around a bracketed IPv6 literal
+// without a port, e.g. "[::1]" -> "::1". Other strings are returned unchanged.
+func stripBrackets(h string) string {
+	if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") && strings.Contains(h, ":") {
+		return h[1 : len(h)-1]
+	}
+	return h
+}
+
+func stripPortAndBrackets(addr string) string {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return stripBrackets(addr)
+}
 
 func checkCertificate(cert *ssh.Certificate, certType uint32) error {
 	var errs []error
@@ -45,7 +62,7 @@ func checkCertificate(cert *ssh.Certificate, certType uint32) error {
 	if cert.ValidAfter > now {
 		errs = append(errs, fmt.Errorf("certificate is not yet valid"))
 	}
-	if cert.ValidBefore != ssh.CertTimeInfinity && (now > cert.ValidBefore || cert.ValidBefore < cert.ValidAfter) {
+	if cert.ValidBefore != ssh.CertTimeInfinity && (now >= cert.ValidBefore || cert.ValidBefore < cert.ValidAfter) {
 		errs = append(errs, fmt.Errorf("certificate is expired"))
 	}
 	if certType == ssh.HostCert && len(cert.CriticalOptions) > 0 {
@@ -74,9 +91,7 @@ func checkHostCertPrincipal(cert *ssh.Certificate, hostname string) error {
 	if len(cert.ValidPrincipals) == 0 {
 		return nil
 	}
-	if h, _, err := net.SplitHostPort(hostname); err == nil {
-		hostname = h
-	}
+	hostname = stripPortAndBrackets(hostname)
 	if slices.Contains(cert.ValidPrincipals, hostname) {
 		return nil
 	}
@@ -84,14 +99,14 @@ func checkHostCertPrincipal(cert *ssh.Certificate, hostname string) error {
 }
 
 // matchHostnames returns true if any of names (or its host part when formatted
-// as host:port) matches any of patterns.
+// as host:port or [ipv6]) matches any of patterns.
 func matchHostnames(patterns []string, names ...string) bool {
 	for _, pat := range patterns {
 		for _, n := range names {
 			if matched, err := path.Match(pat, n); err == nil && matched {
 				return true
 			}
-			if h, _, err := net.SplitHostPort(n); err == nil {
+			if h := stripPortAndBrackets(n); h != n {
 				if matched, err := path.Match(pat, h); err == nil && matched {
 					return true
 				}

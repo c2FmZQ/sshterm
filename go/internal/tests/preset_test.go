@@ -192,8 +192,9 @@ func TestPresetKeys(t *testing.T) {
 			"certificateAuthorities": [{
 				"name": "testca",
 				"publicKey": "`+strings.TrimSpace(string(caKey))+`",
-				"hostnames": ["*.example.com"]}
+				"hostnames": ["*.example.com", "baz"]}
 			],
+			"jumpHosts": "myserver.example.com",
 			"endpoints": [{
 				"name": "myserver.example.com",
 				"url": "./websocket?cert=true"
@@ -226,6 +227,10 @@ func TestPresetKeys(t *testing.T) {
 
 		script(t, []line{
 			{Type: "ssh testuser@myserver.example.com foo\n", Expect: `(?s)Host certificate for myserver.example.com is trusted.\r\n.*exec: foo`},
+			{Wait: time.Second, Type: "\n\n"},
+
+			// "baz" is not an endpoint, so it connects via preset jumpHosts ("myserver.example.com").
+			{Type: "ssh testuser@baz via-preset-jump\n", Expect: `(?s)\[1\] Connecting testuser@myserver\.example\.com.*\[2\] Connecting testuser@baz.*Host certificate for baz is trusted\.\r\n.*exec: via-preset-jump`},
 			{Wait: time.Second, Type: "\n\n"},
 
 			{Type: "keys show foo\n", Expect: `(?s)Fingerprint: (SHA256:[^\r\n]+).*Certificate: ssh-ed25519-cert-v01@openssh\.com [A-Za-z0-9+/=]+\r\n.*Validity:\.+ .* \(UTC\)`, Do: func(m []string) {

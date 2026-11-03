@@ -612,6 +612,51 @@ func TestJumpHosts(t *testing.T) {
 		{Type: "password\n", Expect: "exec: hello"},
 		{Wait: time.Second, Type: "\n\n"},
 
+		// Default jump-hosts via `set jump-hosts`.
+		{Type: "set jump-hosts\n", Expect: "Default jump hosts: <none>"},
+		{Expect: prompt},
+		{Type: "set jump-hosts foo\n", Expect: "Default jump hosts: foo"},
+		{Expect: prompt},
+		// Target "baz" is not an endpoint, so it uses default jump host "foo".
+		{Type: "ssh testuser@baz hello\n"},
+		{Expect: `(?s)\[1\] Connecting testuser@foo.*Host certificate for foo is trusted.*Password: `},
+		{Type: "password\n"},
+		{Expect: `(?s)\[2\] Connecting testuser@baz.*Host certificate for baz is trusted.*Password: `},
+		{Type: "password\n", Expect: "exec: hello"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// Target "foo" is a configured endpoint, so it connects directly without jumping.
+		{Type: "ssh testuser@foo direct-hello\n"},
+		{Expect: `(?s)Host certificate for foo is trusted.*Password: `},
+		{Type: "password\n", Expect: "exec: direct-hello"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// "-J none" and "--jump-hosts=none" (with tab completion) bypass the default jump host.
+		{Type: "ssh -J none testuser@baz hello\n", Expect: `unknown endpoint "baz"`},
+		{Expect: prompt},
+		{Type: "ssh --jump-hosts=no\ttestuser@baz hello\n", Expect: `unknown endpoint "baz"`},
+		{Expect: prompt},
+		// "--jump-hosts=user@<endpoint>" tab-completes the endpoint name.
+		{Type: "ssh --jump-hosts=testuser@f\ttestuser@baz hello\n"},
+		{Expect: `(?s)\[1\] Connecting testuser@foo.*Host certificate for foo is trusted.*Password: `},
+		{Type: "password\n"},
+		{Expect: `(?s)\[2\] Connecting testuser@baz.*Host certificate for baz is trusted.*Password: `},
+		{Type: "password\n", Expect: "exec: hello"},
+		{Wait: time.Second, Type: "\n\n"},
+
+		// Clearing default jump-hosts with "set jump-hosts none" (with tab completion).
+		{Type: "set jump-hosts no\t\n", Expect: "Default jump hosts: <none>"},
+		{Expect: prompt},
+		{Type: "ssh testuser@baz hello\n", Expect: `unknown endpoint "baz"`},
+		{Expect: prompt},
+
+		// Empty jump-host segments are rejected.
+		{Type: "set jump-hosts ,\n", Expect: "invalid jump-hosts"},
+		{Expect: prompt},
+		{Type: "set jump-hosts foo,\n", Expect: "invalid jump-hosts"},
+		{Expect: prompt},
+		{Type: "ssh -J , testuser@foo hello\n", Expect: `invalid jump host in ","`},
+
 		{Expect: prompt},
 		{Type: "exit\n"},
 	})
