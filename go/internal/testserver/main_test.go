@@ -86,11 +86,15 @@ func TestSSHTerm(t *testing.T) {
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}
-	sshServer, err := newSSHServer(t, tmpDir, false)
+	sshServer, err := newSSHServer(t, tmpDir, false, false)
 	if err != nil {
 		t.Fatalf("SSH Server: %v", err)
 	}
-	sshServerWithCert, err := newSSHServer(t, tmpDir, true)
+	sshServerWithCert, err := newSSHServer(t, tmpDir, true, false)
+	if err != nil {
+		t.Fatalf("SSH Server: %v", err)
+	}
+	sshServerWithPassword, err := newSSHServer(t, tmpDir, false, true)
 	if err != nil {
 		t.Fatalf("SSH Server: %v", err)
 	}
@@ -111,6 +115,10 @@ func TestSSHTerm(t *testing.T) {
 		}
 		if req.Form.Get("cert") == "true" {
 			sshServerWithCert.handle(&netConn{conn: conn})
+			return
+		}
+		if req.Form.Get("pw") == "true" {
+			sshServerWithPassword.handle(&netConn{conn: conn})
 			return
 		}
 		sshServer.handle(&netConn{conn: conn})
@@ -410,7 +418,7 @@ type sshServer struct {
 	pubKey    ssh.PublicKey
 }
 
-func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {
+func newSSHServer(t *testing.T, dir string, hostCert, passwordAuth bool) (*sshServer, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("ed25519.GenerateKey: %w", err)
@@ -479,7 +487,18 @@ func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {
 	}
 
 	config := &ssh.ServerConfig{
-		KeyboardInteractiveCallback: func(c ssh.ConnMetadata, client ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
+		PublicKeyCallback: certChecker.Authenticate,
+	}
+	if passwordAuth {
+		config.PasswordCallback = func(c ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+			t.Logf("PasswordCallback")
+			if c.User() == "testuser" && string(password) == "password" {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("password rejected for %q", c.User())
+		}
+	} else {
+		config.KeyboardInteractiveCallback = func(c ssh.ConnMetadata, client ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
 			t.Logf("KeyboardInteractiveCallback")
 			answers, err := client("", "", []string{"Password: "}, []bool{false})
 			if err != nil {
@@ -489,9 +508,7 @@ func newSSHServer(t *testing.T, dir string, hostCert bool) (*sshServer, error) {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("keyboard interactive rejected for %q", c.User())
-		},
-
-		PublicKeyCallback: certChecker.Authenticate,
+		}
 	}
 	config.AddHostKey(signer)
 	server.config = config

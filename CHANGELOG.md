@@ -4,11 +4,12 @@
 
 ### :star2: New features
 
-* Add a built-in SSH jump host to `sshterm-server` (`--authorized-keys` and `--host-key` flags) exposed at `/_ws/jump`:
+* Add a built-in SSH jump host to `sshterm-server` (`--authorized-keys` and `--host-key` flags) exposed at `/_ws/sshterm-server:
   * Parses OpenSSH-style `authorized_keys` files supporting `cert-authority`, `principals`, `permitopen`, `no-port-forwarding`, `restrict`, and `port-forwarding` options. Lines without an effective `permitopen` deny all destinations.
   * Restricts access by public key or user certificate (matching certificate principals against `principals="..."` in `authorized_keys`) and allows only `direct-tcpip` channels to permitted `host:port` destinations.
-  * Automatically injects the `jump` endpoint, its host key, and default `jumpHosts` into `/config.json`.
+  * Automatically injects the `sshterm-server` endpoint, its host key, and default `jumpHosts` into `/config.json`.
 * Add a top-level `jumpHosts` configuration parameter in `config.json` and interactive `set jump-hosts [<jump-hosts>|none]` command in `sshterm`. Configured endpoints are matched first when connecting, falling back to the default jump hosts when no endpoint matches (or `-J none` to bypass default jump hosts).
+* Add support for SSH `password` authentication (`ssh.PasswordCallback`) in addition to `publickey` and `keyboard-interactive`.
 
 ### :wrench: Bug fixes
 
