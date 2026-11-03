@@ -47,7 +47,7 @@ import (
 
 // DefaultJumpEndpointName is the endpoint and host name used in config.json
 // when the built-in jump host is enabled.
-const DefaultJumpEndpointName = "jump"
+const DefaultJumpEndpointName = "sshterm-server"
 
 const (
 	maxJumpChannelsPerConn = 32
