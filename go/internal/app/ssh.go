@@ -345,6 +345,11 @@ func (a *App) sshClientFromConn(ctx context.Context, c net.Conn, username, hostn
 					return ans, nil
 				},
 			), 5),
+			ssh.RetryableAuthMethod(ssh.PasswordCallback(
+				func() (secret string, err error) {
+					return t.ReadPassword(fmt.Sprintf("%s%s@%s%s's password: ", t.Escape.Green, username, hostname, t.Escape.Reset))
+				},
+			), 5),
 		},
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			cert, ok := key.(*ssh.Certificate)

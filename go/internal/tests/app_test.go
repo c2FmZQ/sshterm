@@ -337,6 +337,14 @@ func TestSSH(t *testing.T) {
 		{Type: "exit\n", Expect: prompt},
 		{Wait: time.Second, Type: "\n\n"},
 
+		{Type: "ep add pw-server websocket?pw=true\n", Expect: prompt},
+		{Type: "ssh testuser@pw-server\n", Expect: `(?s)Host key for pw-server.*Choice>`},
+		{Type: "3\n", Expect: `testuser@pw-server.*'s password: `},
+		{Type: "wrongpass\n", Expect: `testuser@pw-server.*'s password: `},
+		{Type: "password\n", Expect: "remote> "},
+		{Type: "exit\n", Expect: prompt},
+		{Wait: time.Second, Type: "\n\n"},
+
 		{Type: "keys generate test\n", Expect: "Enter a passphrase"},
 		{Type: "foobar\n", Expect: "Re-enter the same passphrase"},
 		{Type: "foobar\n", Expect: prompt},
