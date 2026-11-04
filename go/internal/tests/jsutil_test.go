@@ -26,8 +26,13 @@
 package tests
 
 import (
+	"bytes"
+	"context"
+	"strings"
+	"sync"
 	"syscall/js"
 	"testing"
+	"time"
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 )
@@ -85,4 +90,141 @@ func TestServiceWorkerSingleton(t *testing.T) {
 	if !cb1.Equal(cb2) {
 		t.Error("serviceWorker.onmessage was overwritten by second NewStreamHelper() call")
 	}
+}
+
+func TestCheckAuthRequired(t *testing.T) {
+	doc := js.Global().Get("document")
+	t.Cleanup(func() {
+		doc.Set("cookie", "sso_expired=; path=/; max-age=0")
+	})
+
+	ctx := context.Background()
+	doc.Set("cookie", "sso_expired=; path=/; max-age=0")
+	if jsutil.CheckAuthRequired(ctx, "./websocket") {
+		t.Error("CheckAuthRequired(./websocket) = true, want false when authenticated")
+	}
+	if jsutil.CheckAuthRequired(ctx, "./cert") {
+		t.Error("CheckAuthRequired(./cert) = true, want false when authenticated")
+	}
+	if jsutil.CheckAuthRequired(ctx, "ws://[invalid") {
+		t.Error("CheckAuthRequired(ws://[invalid) = true, want false")
+	}
+
+	doc.Set("cookie", "sso_expired=1; path=/")
+	if !jsutil.CheckAuthRequired(ctx, "./websocket") {
+		t.Error("CheckAuthRequired(./websocket) = false, want true when 403")
+	}
+	if !jsutil.CheckAuthRequired(ctx, "./websocket?redirect=true") {
+		t.Error("CheckAuthRequired(./websocket?redirect=true) = false, want true when 302 redirect")
+	}
+	if !jsutil.CheckAuthRequired(ctx, "./cert") {
+		t.Error("CheckAuthRequired(./cert) = false, want true when 403")
+	}
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestLoginPopup(t *testing.T) {
+	doc := js.Global().Get("document")
+	win := js.Global().Get("window")
+	t.Cleanup(func() {
+		doc.Set("cookie", "sso_expired=; path=/; max-age=0")
+		doc.Set("cookie", "__tlsproxySid=; path=/; max-age=0")
+	})
+
+	// 1. Direct popup open (not blocked).
+	t.Run("DirectOpen", func(t *testing.T) {
+		doc.Set("cookie", "sso_expired=1; path=/")
+		doc.Set("cookie", "__tlsproxySid=old-sid; path=/")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		var buf syncBuffer
+		if err := jsutil.LoginPopup(ctx, "./websocket", &buf); err != nil {
+			t.Fatalf("LoginPopup() failed: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Authentication required. Waiting for login...") {
+			t.Errorf("unexpected log output: %q", buf.String())
+		}
+		if jsutil.CheckAuthRequired(ctx, "./websocket") {
+			t.Error("CheckAuthRequired(./websocket) is still true after LoginPopup")
+		}
+		if got, want := jsutil.TLSProxySID(), "fresh-sid"; got != want {
+			t.Errorf("TLSProxySID() = %q, want %q", got, want)
+		}
+	})
+
+	// 2. Popup blocked initially, then opened on keydown user gesture.
+	t.Run("PopupBlockedFallback", func(t *testing.T) {
+		doc.Set("cookie", "sso_expired=1; path=/")
+		doc.Set("cookie", "__tlsproxySid=old-sid; path=/")
+
+		origOpen := win.Get("open")
+		calls := 0
+		mockOpen := js.FuncOf(func(this js.Value, args []js.Value) any {
+			calls++
+			if calls == 1 {
+				return js.Null()
+			}
+			a := make([]any, len(args))
+			for i := range args {
+				a[i] = args[i]
+			}
+			return origOpen.Invoke(a...)
+		})
+		win.Set("open", mockOpen)
+		t.Cleanup(func() {
+			win.Set("open", origOpen)
+			mockOpen.Release()
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		var buf syncBuffer
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- jsutil.LoginPopup(ctx, "./websocket", &buf)
+		}()
+
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			if strings.Contains(buf.String(), "Press Enter or click to log in...") {
+				break
+			}
+		}
+		if !strings.Contains(buf.String(), "Press Enter or click to log in...") {
+			t.Fatalf("expected popup blocked prompt, got %q", buf.String())
+		}
+
+		ev := js.Global().Get("KeyboardEvent").New("keydown", jsutil.NewObject(map[string]any{
+			"key":        "Enter",
+			"bubbles":    true,
+			"cancelable": true,
+		}))
+		win.Call("dispatchEvent", ev)
+
+		if err := <-errCh; err != nil {
+			t.Fatalf("LoginPopup() failed: %v", err)
+		}
+		if calls < 2 {
+			t.Errorf("window.open calls = %d, want >= 2", calls)
+		}
+		if jsutil.CheckAuthRequired(ctx, "./websocket") {
+			t.Error("CheckAuthRequired(./websocket) is still true after LoginPopup")
+		}
+	})
 }

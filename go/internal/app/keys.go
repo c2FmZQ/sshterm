@@ -96,6 +96,7 @@ func (a *App) generateKey(name, passphrase, idp, typ string, bits int, resident 
 		Private:  pem.EncodeToMemory(privPEM),
 		Provider: idp,
 		errorf:   a.term.Errorf,
+		log:      a.term,
 	}
 	globalAgent.(*keyRing).ForceRemoveByName(name)
 	a.data.Keys[name] = k
@@ -271,9 +272,10 @@ func (a *App) keysCommand() *cli.App {
 						Private:  pem.EncodeToMemory(privPEM),
 						Provider: ctx.String("idp"),
 						errorf:   a.term.Errorf,
+						log:      a.term,
 					}
 					if k.Provider != "" {
-						if err := k.updateCert(); err != nil {
+						if err := k.updateCert(ctx.Context); err != nil {
 							a.term.Errorf("certificate update: %v", err)
 						}
 					}
@@ -335,7 +337,7 @@ func (a *App) keysCommand() *cli.App {
 					}
 					a.term.Printf("Public key:  %s %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))), name)
 					a.term.Printf("Fingerprint: %s\n", ssh.FingerprintSHA256(pub))
-					if cert := key.Certificate(); cert != nil {
+					if cert := key.CertificateContext(ctx.Context); cert != nil {
 						a.term.Printf("Certificate: %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(cert))))
 						a.term.Printf("Details:\n")
 						a.printCertificate(cert)
@@ -448,6 +450,7 @@ func (a *App) keysCommand() *cli.App {
 						Name:    name,
 						Private: content,
 						errorf:  a.term.Errorf,
+						log:     a.term,
 					}
 					if key.isWebAuthn() {
 						sk, err := webauthnsk.Unmarshal(content, name, a.term.ReadPassword)
@@ -688,6 +691,7 @@ type key struct {
 	CertBytes []byte `json:"certificate,omitempty"`
 
 	errorf func(string, ...any)
+	log    io.Writer
 }
 
 func (k *key) isWebAuthn() bool {
@@ -715,12 +719,16 @@ func (k *key) parseCert() *ssh.Certificate {
 	return nil
 }
 
-func (k *key) Certificate() (cert *ssh.Certificate) {
+func (k *key) Certificate() *ssh.Certificate {
+	return k.CertificateContext(context.Background())
+}
+
+func (k *key) CertificateContext(ctx context.Context) (cert *ssh.Certificate) {
 	cert = k.parseCert()
 	if cert != nil && (cert.ValidBefore == ssh.CertTimeInfinity || cert.ValidBefore > uint64(time.Now().Add(5*time.Minute).Unix())) {
 		return
 	}
-	if err := k.updateCert(); err != nil {
+	if err := k.updateCert(ctx); err != nil {
 		if k.errorf != nil {
 			k.errorf("certificate update: %v", err)
 		}
@@ -729,7 +737,7 @@ func (k *key) Certificate() (cert *ssh.Certificate) {
 	return k.parseCert()
 }
 
-func (k *key) updateCert() error {
+func (k *key) updateCert(ctx context.Context) error {
 	if k.Provider == "" {
 		return nil
 	}
@@ -737,32 +745,18 @@ func (k *key) updateCert() error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "POST", k.Provider, bytes.NewReader(ssh.MarshalAuthorizedKey(pub)))
+	certBytes, authFailed, err := k.fetchCert(ctx, pub)
+	if err != nil && authFailed && ctx.Err() == nil {
+		prevSID := jsutil.TLSProxySID()
+		if jsutil.CheckAuthRequired(ctx, k.Provider) || jsutil.TLSProxySID() == prevSID {
+			if err := jsutil.LoginPopup(ctx, k.Provider, k.log); err != nil {
+				return err
+			}
+		}
+		certBytes, _, err = k.fetchCert(ctx, pub)
+	}
 	if err != nil {
 		return err
-	}
-	req.Header.Set("Content-Type", "text/plain")
-	// The CSRF token is only for the proxy that serves this app.
-	if sid := jsutil.TLSProxySID(); sid != "" && jsutil.IsSameOrigin(k.Provider) {
-		req.Header.Set("x-csrf-token", sid)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("%q: %w", k.Provider, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain" {
-		if resp.StatusCode == http.StatusForbidden {
-			msg, _ := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 1024})
-			return fmt.Errorf("%q: %s: %s", k.Provider, resp.Status, termsafe.Text(string(msg)))
-		}
-		return fmt.Errorf("%q: status code %q content-type %q", k.Provider, resp.Status, resp.Header.Get("Content-Type"))
-	}
-	certBytes, err := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 20480})
-	if err != nil {
-		return fmt.Errorf("%q: %w", k.Provider, err)
 	}
 	if c, _, _, _, err := ssh.ParseAuthorizedKey(certBytes); err != nil {
 		return fmt.Errorf("%q: %w", k.Provider, err)
@@ -775,6 +769,46 @@ func (k *key) updateCert() error {
 	}
 	k.CertBytes = certBytes
 	return nil
+}
+
+func (k *key) fetchCert(parentCtx context.Context, pub ssh.PublicKey) ([]byte, bool, error) {
+	ctx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "POST", k.Provider, bytes.NewReader(ssh.MarshalAuthorizedKey(pub)))
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("Content-Type", "text/plain")
+	// The CSRF token is only for the proxy that serves this app.
+	if sid := jsutil.TLSProxySID(); sid != "" && jsutil.IsSameOrigin(k.Provider) {
+		req.Header.Set("x-csrf-token", sid)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		authFailed := parentCtx.Err() == nil && jsutil.CheckAuthRequired(parentCtx, k.Provider)
+		return nil, authFailed, fmt.Errorf("%q: %w", k.Provider, err)
+	}
+	defer resp.Body.Close()
+	ct := resp.Header.Get("Content-Type")
+	if resp.StatusCode != http.StatusOK || ct != "text/plain" {
+		msg, _ := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 1024})
+		trimmedMsg := strings.TrimSpace(string(msg))
+		authFailed := resp.StatusCode == http.StatusUnauthorized ||
+			resp.StatusCode == http.StatusForbidden ||
+			(resp.StatusCode == http.StatusBadRequest && trimmedMsg == "session expired") ||
+			(resp.StatusCode >= 300 && resp.StatusCode < 400) ||
+			(resp.StatusCode == http.StatusOK && strings.HasPrefix(ct, "text/html")) ||
+			jsutil.CheckAuthRequired(parentCtx, k.Provider)
+		if resp.StatusCode == http.StatusForbidden {
+			return nil, authFailed, fmt.Errorf("%q: %s: %s", k.Provider, resp.Status, termsafe.Text(string(msg)))
+		}
+		return nil, authFailed, fmt.Errorf("%q: status code %q content-type %q", k.Provider, resp.Status, ct)
+	}
+	certBytes, err := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 20480})
+	if err != nil {
+		return nil, false, fmt.Errorf("%q: %w", k.Provider, err)
+	}
+	return certBytes, false, nil
 }
 
 func (k *key) PrivateKey(rp func(string) (string, error)) (any, error) {

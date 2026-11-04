@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"syscall/js"
 	"testing"
 	"time"
 
@@ -245,5 +246,85 @@ func TestPresetKeys(t *testing.T) {
 	}
 	if fingerprints[0] != fingerprints[1] {
 		t.Errorf("key changed after restart: %v", fingerprints)
+	}
+}
+
+func TestSSOReauth(t *testing.T) {
+	cfg := *appConfig
+	cfg.Term.Call("writeln", t.Name())
+
+	doc := js.Global().Get("document")
+	t.Cleanup(func() {
+		doc.Set("cookie", "sso_expired=; path=/; max-age=0")
+		doc.Set("cookie", "require_csrf=; path=/; max-age=0")
+		doc.Set("cookie", "__tlsproxySid=; path=/; max-age=0")
+	})
+
+	resp, err := http.Get("/cakey")
+	if err != nil {
+		t.Fatalf("/cakey: %v", err)
+	}
+	defer resp.Body.Close()
+
+	caKey, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+
+	if err := json.Unmarshal(
+		[]byte(`{
+			"certificateAuthorities": [{
+				"name": "testca",
+				"publicKey": "`+strings.TrimSpace(string(caKey))+`",
+				"hostnames": ["*.example.com"]}
+			],
+			"endpoints": [{
+				"name": "myserver.example.com",
+				"url": "./websocket?cert=true"
+			}],
+			"generateKeys": [{
+				"name": "sso-key",
+				"identityProvider": "./cert",
+				"addToAgent": true
+			}]
+		}`),
+		&cfg,
+	); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	cfg.DBName = fmt.Sprintf("test-sso-reauth-%d", time.Now().UnixNano())
+
+	a, err := app.New(&cfg)
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	result := make(chan error)
+	go func() {
+		result <- a.Run()
+	}()
+	t.Cleanup(a.Stop)
+
+	script(t, []line{
+		{Expect: prompt, Do: func([]string) {
+			// Simulate expired SSO session + stale CSRF cookie when fetching ./cert.
+			doc.Set("cookie", "sso_expired=1; path=/")
+			doc.Set("cookie", "require_csrf=1; path=/")
+			doc.Set("cookie", "__tlsproxySid=stale-sid; path=/")
+		}},
+		{Type: "ssh testuser@myserver.example.com sso-cert-ok\n", Expect: `(?s)Authentication required\. Waiting for login\.\.\..*Host certificate for myserver\.example\.com is trusted\.\r\n.*exec: sso-cert-ok`},
+		{Wait: time.Second, Type: "\n\n"},
+
+		{Expect: prompt, Do: func([]string) {
+			// Certificate is now cached and valid; simulate expired SSO session on ./websocket.
+			doc.Set("cookie", "sso_expired=1; path=/")
+		}},
+		{Type: "ssh testuser@myserver.example.com sso-ws-ok\n", Expect: `(?s)Authentication required\. Waiting for login\.\.\..*Host certificate for myserver\.example\.com is trusted\.\r\n.*exec: sso-ws-ok`},
+		{Wait: time.Second, Type: "\n\n"},
+
+		{Expect: prompt},
+		{Type: "exit\n"},
+	})
+	if err := <-result; err != nil {
+		t.Fatalf("Run(): %v", err)
 	}
 }
