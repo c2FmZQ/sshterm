@@ -193,7 +193,7 @@ func TestJumpHostConfigAndValidation(t *testing.T) {
 	srv, err := New(Options{
 		AuthorizedKeysFile: akFile,
 		HostKeyFile:        hkFile,
-		Endpoints:          []Endpoint{{Name: "direct", Address: "10.0.0.1:22"}},
+		Endpoints:          []Endpoint{{Name: "direct-wss", Address: "10.0.0.1:22"}},
 		Logger:             log.New(io.Discard, "", 0),
 	})
 	if err != nil {
@@ -203,31 +203,48 @@ func TestJumpHostConfigAndValidation(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/config.json")
-	if err != nil {
-		t.Fatalf("GET /config.json: %v", err)
-	}
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range []struct {
+		hostHeader string
+		wantName   string
+	}{
+		{"", "127.0.0.1-wss"},
+		{"SSH.Example.COM.:8443", "ssh.example.com-wss"},
+		{"[::1]:8080", DefaultJumpEndpointName},
+		{"direct", DefaultJumpEndpointName}, // "direct-wss" collides with configured endpoint
+	} {
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/config.json", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.hostHeader != "" {
+			req.Host = tc.hostHeader
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET /config.json (Host=%q): %v", tc.hostHeader, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	var gotCfg config.Config
-	if err := json.Unmarshal(body, &gotCfg); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	if gotCfg.JumpHosts != DefaultJumpEndpointName {
-		t.Errorf("JumpHosts = %q, want %q", gotCfg.JumpHosts, DefaultJumpEndpointName)
-	}
-	if len(gotCfg.Endpoints) != 2 {
-		t.Fatalf("len(Endpoints) = %d, want 2: %+v", len(gotCfg.Endpoints), gotCfg.Endpoints)
-	}
-	if gotCfg.Endpoints[1].Name != DefaultJumpEndpointName || gotCfg.Endpoints[1].URL != "./_ws/"+DefaultJumpEndpointName {
-		t.Errorf("jump endpoint = %+v", gotCfg.Endpoints[1])
-	}
-	if len(gotCfg.Hosts) != 1 || gotCfg.Hosts[0].Name != DefaultJumpEndpointName || gotCfg.Hosts[0].Key != wantPubKey {
-		t.Errorf("Hosts = %+v, want jump host with key %q", gotCfg.Hosts, wantPubKey)
+		var gotCfg config.Config
+		if err := json.Unmarshal(body, &gotCfg); err != nil {
+			t.Fatalf("Unmarshal (Host=%q): %v", tc.hostHeader, err)
+		}
+		if gotCfg.JumpHosts != tc.wantName {
+			t.Errorf("Host=%q: JumpHosts = %q, want %q", tc.hostHeader, gotCfg.JumpHosts, tc.wantName)
+		}
+		if len(gotCfg.Endpoints) != 2 {
+			t.Fatalf("Host=%q: len(Endpoints) = %d, want 2: %+v", tc.hostHeader, len(gotCfg.Endpoints), gotCfg.Endpoints)
+		}
+		if gotCfg.Endpoints[1].Name != tc.wantName || gotCfg.Endpoints[1].URL != "./_ws/"+DefaultJumpEndpointName {
+			t.Errorf("Host=%q: jump endpoint = %+v, want Name=%q URL=%q", tc.hostHeader, gotCfg.Endpoints[1], tc.wantName, "./_ws/"+DefaultJumpEndpointName)
+		}
+		if len(gotCfg.Hosts) != 1 || gotCfg.Hosts[0].Name != tc.wantName || gotCfg.Hosts[0].Key != wantPubKey {
+			t.Errorf("Host=%q: Hosts = %+v, want Name=%q Key=%q", tc.hostHeader, gotCfg.Hosts, tc.wantName, wantPubKey)
+		}
 	}
 }
 

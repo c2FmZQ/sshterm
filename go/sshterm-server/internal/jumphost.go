@@ -45,8 +45,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// DefaultJumpEndpointName is the endpoint and host name used in config.json
-// when the built-in jump host is enabled.
+// DefaultJumpEndpointName is the WebSocket route name and fallback endpoint
+// name used in config.json when the built-in jump host is enabled.
 const DefaultJumpEndpointName = "sshterm-server"
 
 const (

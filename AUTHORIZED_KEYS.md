@@ -1,6 +1,6 @@
 # `sshterm-server` Jump Host `authorized_keys` Guide
 
-When `sshterm-server` is started with `--authorized-keys <file>`, it enables a built-in SSH jump host exposed over WebSocket at `/_ws/jump`, adds the `jump` endpoint and its host public key to `/config.json`, and sets `"jumpHosts": "jump"` in `/config.json` (unless `jumpHosts` is already set in a base `--config` file). The endpoint name `jump` is reserved when `--authorized-keys` is set.
+When `sshterm-server` is started with `--authorized-keys <file>`, it enables a built-in SSH jump host exposed over WebSocket at `/_ws/sshterm-server`, adds the `<hostname>-wss` endpoint (or `sshterm-server` as fallback) and its host public key to `/config.json`, and sets `"jumpHosts"` in `/config.json` accordingly (unless `jumpHosts` is already set in a base `--config` file). The endpoint name `sshterm-server` is reserved when `--authorized-keys` is set.
 
 This document explains how `sshterm-server` evaluates `authorized_keys` and provides practical examples for configuring access control by key, certificate, and destination.
 
@@ -9,13 +9,13 @@ This document explains how `sshterm-server` evaluates `authorized_keys` and prov
 ## Context & Design Model
 
 1. **Forwarding-Only (`direct-tcpip` Only)**
-   The built-in jump host does not allocate PTYs, run shells or commands, or serve SFTP. It only accepts SSH `direct-tcpip` channel requests (`ssh -J jump ...` or default `jumpHosts`, up to 32 concurrent channels per SSH connection) to tunnel SSH connections to downstream target hosts.
+   The built-in jump host does not allocate PTYs, run shells or commands, or serve SFTP. It only accepts SSH `direct-tcpip` channel requests (`ssh -J <jump-host> ...` or default `jumpHosts`, up to 32 concurrent channels per SSH connection) to tunnel SSH connections to downstream target hosts.
 
 2. **Default-Deny Destination Policy (`permitopen` Required)**
    Every active line in `authorized_keys` must explicitly declare which `host[:port]` destinations it may reach via `permitopen="..."`. Any line without an effective `permitopen` grants access to **no destinations** and is skipped during authentication (if a key or certificate matches only such lines, SSH authentication to the jump host fails).
 
 3. **SSH Username Is Ignored on the Jump Host**
-   When a user runs `ssh root@db.prod.internal` in `sshterm` using the default jump host `jump`, the SSH connection to `jump` uses `root` as the SSH transport username (`c.User()`). Meanwhile, SSH Certificate Authorities (such as [`tlsproxy`](https://github.com/c2FmZQ/tlsproxy)) issue user certificates whose principals are user identities—typically email addresses like `alice@example.com`.
+   When a user runs `ssh root@db.prod.internal` in `sshterm` using the default jump host, the SSH connection to the jump host uses `root` as the SSH transport username (`c.User()`). Meanwhile, SSH Certificate Authorities (such as [`tlsproxy`](https://github.com/c2FmZQ/tlsproxy)) issue user certificates whose principals are user identities—typically email addresses like `alice@example.com`.
    Because `authorized_keys` on `sshterm-server` is a single global access-control file rather than a per-OS-user `~/.ssh/authorized_keys` file:
    - The SSH login username on the jump host is ignored.
    - Public keys are matched directly against non-CA lines in `authorized_keys`.
