@@ -37,6 +37,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -176,6 +177,7 @@ type Server struct {
 	opts       Options
 	endpoints  map[string]string
 	jumpHost   *jumpHost
+	baseCfg    config.Config
 	configJSON []byte
 	upgrader   websocket.Upgrader
 	mux        *http.ServeMux
@@ -239,16 +241,16 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 
-	cfgBytes, epMap, err := buildConfigJSON(opts.ConfigFile, opts.Endpoints, jh)
+	baseCfg, epMap, err := loadBaseConfig(opts.ConfigFile, opts.Endpoints, jh != nil)
 	if err != nil {
 		return nil, err
 	}
 
 	s := &Server{
-		opts:       opts,
-		endpoints:  epMap,
-		jumpHost:   jh,
-		configJSON: cfgBytes,
+		opts:      opts,
+		endpoints: epMap,
+		jumpHost:  jh,
+		baseCfg:   baseCfg,
 		upgrader: websocket.Upgrader{
 			HandshakeTimeout: dialTimeout,
 			ReadBufferSize:   8192,
@@ -257,6 +259,12 @@ func New(opts Options) (*Server, error) {
 		mux:    http.NewServeMux(),
 		logger: logger,
 	}
+
+	cfgBytes, err := s.renderConfigJSON(DefaultJumpEndpointName)
+	if err != nil {
+		return nil, err
+	}
+	s.configJSON = cfgBytes
 
 	fileServer := http.FileServerFS(docFS)
 	s.mux.HandleFunc("GET /config.json", s.handleConfigJSON)
@@ -270,22 +278,22 @@ func New(opts Options) (*Server, error) {
 	return s, nil
 }
 
-func buildConfigJSON(configFile string, endpoints []Endpoint, jh *jumpHost) ([]byte, map[string]string, error) {
+func loadBaseConfig(configFile string, endpoints []Endpoint, hasJumpHost bool) (config.Config, map[string]string, error) {
 	var cfg config.Config
 	if configFile != "" {
 		b, err := os.ReadFile(configFile)
 		if err != nil {
-			return nil, nil, fmt.Errorf("reading config file: %w", err)
+			return config.Config{}, nil, fmt.Errorf("reading config file: %w", err)
 		}
 		if err := json.Unmarshal(b, &cfg); err != nil {
-			return nil, nil, fmt.Errorf("parsing config file: %w", err)
+			return config.Config{}, nil, fmt.Errorf("parsing config file: %w", err)
 		}
 		// Endpoints in the base config file are not routed by this
 		// server, so their names are passed through as-is. Only the
 		// name reserved for the built-in jump host is checked.
 		for _, ep := range cfg.Endpoints {
-			if jh != nil && ep.Name == DefaultJumpEndpointName {
-				return nil, nil, fmt.Errorf("endpoint name %q is reserved when --authorized-keys is set", ep.Name)
+			if hasJumpHost && ep.Name == DefaultJumpEndpointName {
+				return config.Config{}, nil, fmt.Errorf("endpoint name %q is reserved when --authorized-keys is set", ep.Name)
 			}
 		}
 	}
@@ -321,19 +329,73 @@ func buildConfigJSON(configFile string, endpoints []Endpoint, jh *jumpHost) ([]b
 	for _, ep := range endpoints {
 		addr, err := normalizeHostPort(ep.Address)
 		if err != nil {
-			return nil, nil, err
+			return config.Config{}, nil, err
 		}
 		epMap[ep.Name] = addr
 		upsertEndpoint(ep.Name, "./_ws/"+ep.Name)
 	}
 
-	if jh != nil {
-		upsertEndpoint(DefaultJumpEndpointName, "./_ws/"+DefaultJumpEndpointName)
-		pubKey := jh.publicKeyAuthorizedFormat()
+	return cfg, epMap, nil
+}
+
+func isValidJumpHostLabel(h string) bool {
+	if h == "" || len(h) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(h, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (s *Server) jumpEndpointName(reqHost string) string {
+	host := strings.TrimSpace(reqHost)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if !isValidJumpHostLabel(host) {
+		return DefaultJumpEndpointName
+	}
+	candidate := host + "-wss"
+	if !isValidEndpointName(candidate) {
+		return DefaultJumpEndpointName
+	}
+	for _, ep := range s.baseCfg.Endpoints {
+		if ep.Name == candidate {
+			return DefaultJumpEndpointName
+		}
+	}
+	return candidate
+}
+
+func (s *Server) renderConfigJSON(jumpName string) ([]byte, error) {
+	cfg := s.baseCfg
+	if s.jumpHost != nil {
+		cfg.Endpoints = append(slices.Clone(s.baseCfg.Endpoints), struct {
+			Name     string `json:"name"`
+			URL      string `json:"url"`
+			Hostname string `json:"hostname,omitempty"`
+		}{
+			Name: jumpName,
+			URL:  "./_ws/" + DefaultJumpEndpointName,
+		})
+		pubKey := s.jumpHost.publicKeyAuthorizedFormat()
+		outHosts := make([]struct {
+			Name string `json:"name"`
+			Key  string `json:"key,omitempty"`
+		}, 0, len(s.baseCfg.Hosts)+1)
 		updatedHost := false
-		outHosts := cfg.Hosts[:0]
-		for _, h := range cfg.Hosts {
-			if h.Name == DefaultJumpEndpointName {
+		for _, h := range s.baseCfg.Hosts {
+			if h.Name == jumpName {
 				if !updatedHost {
 					h.Key = pubKey
 					outHosts = append(outHosts, h)
@@ -343,27 +405,27 @@ func buildConfigJSON(configFile string, endpoints []Endpoint, jh *jumpHost) ([]b
 			}
 			outHosts = append(outHosts, h)
 		}
-		cfg.Hosts = outHosts
 		if !updatedHost {
-			cfg.Hosts = append(cfg.Hosts, struct {
+			outHosts = append(outHosts, struct {
 				Name string `json:"name"`
 				Key  string `json:"key,omitempty"`
 			}{
-				Name: DefaultJumpEndpointName,
+				Name: jumpName,
 				Key:  pubKey,
 			})
 		}
+		cfg.Hosts = outHosts
 		if cfg.JumpHosts == "" {
-			cfg.JumpHosts = DefaultJumpEndpointName
+			cfg.JumpHosts = jumpName
 		}
 	}
 
 	out, err := json.MarshalIndent(&cfg, "", "  ")
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshaling config.json: %w", err)
+		return nil, fmt.Errorf("marshaling config.json: %w", err)
 	}
 	out = append(out, '\n')
-	return out, epMap, nil
+	return out, nil
 }
 
 // Handler returns the HTTP handler for the server.
@@ -377,14 +439,21 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) handleConfigJSON(w http.ResponseWriter, req *http.Request) {
+	cfgBytes := s.configJSON
+	if s.jumpHost != nil {
+		if b, err := s.renderConfigJSON(s.jumpEndpointName(req.Host)); err == nil {
+			cfgBytes = b
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Content-Length", strconv.Itoa(len(s.configJSON)))
+	w.Header().Set("Vary", "Host")
+	w.Header().Set("Content-Length", strconv.Itoa(len(cfgBytes)))
 	if req.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	w.Write(s.configJSON)
+	w.Write(cfgBytes)
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, req *http.Request) {
