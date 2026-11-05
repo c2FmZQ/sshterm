@@ -26,6 +26,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -266,11 +267,6 @@ func (a *App) refreshDB() error {
 	} else {
 		a.lastDBRefresh = ts
 	}
-	defer func() {
-		for _, k := range a.data.Keys {
-			k.errorf = a.term.Errorf
-		}
-	}()
 	if err := a.db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("authorities load: %w", err)
 	}
@@ -280,8 +276,31 @@ func (a *App) refreshDB() error {
 	if err := a.db.Get("hosts", &a.data.Hosts); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("hosts load: %w", err)
 	}
-	if err := a.db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
+	// The agent holds references to keys. Keep the existing key objects so
+	// that the agent and a.data.Keys stay in sync, and only update their
+	// persisted fields.
+	var keys map[string]*key
+	if err := a.db.Get("keys", &keys); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("keys load: %w", err)
+	}
+	for name, k := range keys {
+		if old, exists := a.data.Keys[name]; exists && bytes.Equal(old.Public, k.Public) {
+			old.Private, old.Provider = k.Private, k.Provider
+			// A certificate from an identity provider is refreshed in
+			// memory, and the saved one may be older.
+			if old.Provider == "" || !old.certValid() {
+				old.CertBytes = k.CertBytes
+			}
+			continue
+		}
+		k.errorf = a.term.Errorf
+		a.data.Keys[name] = k
+	}
+	// Drop keys that were deleted or renamed by another tab.
+	for name := range a.data.Keys {
+		if _, exists := keys[name]; !exists {
+			delete(a.data.Keys, name)
+		}
 	}
 	if err := a.db.Get("params", &a.data.Params); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("params load: %w", err)

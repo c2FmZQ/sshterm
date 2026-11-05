@@ -43,6 +43,18 @@ var (
 )
 
 func New(ctx context.Context, url string, log io.Writer) (*WebSocket, error) {
+	ws, err := dial(ctx, url, log)
+	if err == nil || ctx.Err() != nil || !jsutil.CheckAuthRequired(ctx, url) {
+		return ws, err
+	}
+	// The SSO session expired. Log in again and retry.
+	if err := jsutil.LoginPopup(ctx, url, log); err != nil {
+		return nil, err
+	}
+	return dial(ctx, url, log)
+}
+
+func dial(ctx context.Context, url string, log io.Writer) (*WebSocket, error) {
 	var jsWS js.Value
 	var err error
 	jsutil.TryCatch(

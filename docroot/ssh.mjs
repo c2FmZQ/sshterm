@@ -30,6 +30,10 @@ function isTest() {
   return window.location.pathname.indexOf('tests.html') !== -1;
 }
 
+export function isSSOPopup() {
+  return new URLSearchParams(window.location.search).get('sso') === '1';
+}
+
 export const workarounds = {
   // Protects @xterm/xterm (5.5.0) InputHandler.repeatPrecedingCharacter
   // (CSI Ps b) from throwing an uncaught RangeError on large Ps values and
@@ -318,7 +322,9 @@ window.sshApp.ready = new Promise(resolve => {
   };
 });
 
-const go = new Go();
-const wasmFile = isTest() ? 'tests.wasm' : 'ssh.wasm';
-WebAssembly.instantiateStreaming(fetch(wasmFile), go.importObject)
-  .then(r => go.run(r.instance));
+if (window.top === window.self && !isSSOPopup()) {
+  const go = new Go();
+  const wasmFile = isTest() ? 'tests.wasm' : 'ssh.wasm';
+  WebAssembly.instantiateStreaming(fetch(wasmFile), go.importObject)
+    .then(r => go.run(r.instance));
+}
