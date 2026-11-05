@@ -236,11 +236,16 @@ func rawPublicKey(s ssh.Signer) ssh.PublicKey {
 
 func matchesKey(s ssh.Signer, v []byte) bool {
 	if ds, ok := s.(*dynSigner); ok {
-		if bytes.Equal(v, ds.Signer.PublicKey().Marshal()) {
+		rawPub := ds.Signer.PublicKey().Marshal()
+		if bytes.Equal(v, rawPub) {
 			return true
 		}
-		if cert := ds.key.parseCert(); cert != nil && bytes.Equal(v, cert.Marshal()) {
-			return true
+		// Also accept any certificate for this key, including an older
+		// one that a client obtained from List() before a refresh.
+		if pub, err := ssh.ParsePublicKey(v); err == nil {
+			if cert, ok := pub.(*ssh.Certificate); ok && bytes.Equal(cert.Key.Marshal(), rawPub) {
+				return true
+			}
 		}
 		return false
 	}
@@ -465,13 +470,28 @@ func (r *keyRing) Signers() ([]ssh.Signer, error) {
 	return out, nil
 }
 
+func (r *keyRing) KeyComment(key ssh.PublicKey) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.locked {
+		return "", false
+	}
+	v := key.Marshal()
+	for _, k := range r.keys {
+		if matchesKey(k.signer, v) {
+			return k.comment, true
+		}
+	}
+	return "", false
+}
+
 var errForwardedAgent = errors.New("operation not permitted on forwarded agent")
 
 // forwardedAgent is the view of the agent that is forwarded to a remote
 // host. The remote host can only list the keys and request signatures. The
 // user is notified of each signature request.
 type forwardedAgent struct {
-	agent  agent.Agent
+	agent  *keyRing
 	host   string
 	notify func(format string, args ...any)
 }
@@ -488,20 +508,11 @@ func (f *forwardedAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, e
 
 func (f *forwardedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
 	name := ssh.FingerprintSHA256(key)
-	if keys, err := f.agent.List(); err == nil {
-		v := key.Marshal()
-		for _, k := range keys {
-			if bytes.Equal(v, k.Blob) {
-				name = k.Comment
-				break
-			}
-		}
+	if comment, ok := f.agent.KeyComment(key); ok {
+		name = comment
 	}
 	f.notify("[agent] %s requested a signature with key %q\n", f.host, name)
-	if ea, ok := f.agent.(agent.ExtendedAgent); ok {
-		return ea.SignWithFlags(key, data, flags)
-	}
-	return f.agent.Sign(key, data)
+	return f.agent.SignWithFlags(key, data, flags)
 }
 
 func (f *forwardedAgent) Extension(extensionType string, contents []byte) ([]byte, error) {
