@@ -251,7 +251,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 		return nil, fmt.Errorf("unknown endpoint %q", hops[0].h)
 	}
 
-	signers, err := a.sshSigners(ctx, keyName)
+	signers, err := a.sshSigners(keyName)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +290,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 	return client, nil
 }
 
-func (a *App) sshSigners(ctx context.Context, keyName string) ([]ssh.Signer, error) {
+func (a *App) sshSigners(keyName string) ([]ssh.Signer, error) {
 	signers, err := globalAgent.Signers()
 	if err != nil {
 		a.term.Errorf("%v", err)
@@ -308,16 +308,6 @@ func (a *App) sshSigners(ctx context.Context, keyName string) ([]ssh.Signer, err
 			signers = append(signers, signer)
 		} else if origKeyName != "" {
 			return nil, fmt.Errorf("unknown key %q", keyName)
-		}
-	}
-	for _, s := range signers {
-		if ds, ok := s.(*dynSigner); ok {
-			ds.key.errorf = a.term.Errorf
-			ds.key.log = a.term
-			ds.key.CertificateContext(ctx)
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
 		}
 	}
 	return signers, nil

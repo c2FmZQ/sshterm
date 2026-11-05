@@ -43,7 +43,6 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -100,46 +99,8 @@ func TestSSHTerm(t *testing.T) {
 		t.Fatalf("SSH Server: %v", err)
 	}
 
-	checkSSO := func(w http.ResponseWriter, req *http.Request) bool {
-		c, err := req.Cookie("sso_expired")
-		if err != nil || c.Value != "1" {
-			return true
-		}
-		if req.Method == http.MethodGet && req.Header.Get("Upgrade") == "" && req.URL.Query().Get("redirect") != "false" {
-			http.Redirect(w, req, "/.sso/login?redirect="+url.QueryEscape(req.URL.RequestURI()), http.StatusFound)
-			return false
-		}
-		if req.URL.Query().Get("redirect") == "true" {
-			http.Redirect(w, req, "/.sso/login?redirect="+url.QueryEscape(req.URL.RequestURI()), http.StatusFound)
-			return false
-		}
-		http.Error(w, "authentication required", http.StatusForbidden)
-		return false
-	}
-
 	mux := http.NewServeMux()
-	mux.HandleFunc("/.sso/login", func(w http.ResponseWriter, req *http.Request) {
-		http.SetCookie(w, &http.Cookie{
-			Name:   "sso_expired",
-			Value:  "",
-			Path:   "/",
-			MaxAge: -1,
-		})
-		http.SetCookie(w, &http.Cookie{
-			Name:  "__tlsproxySid",
-			Value: "fresh-sid",
-			Path:  "/",
-		})
-		redirect := req.URL.Query().Get("redirect")
-		if redirect == "" {
-			redirect = "/?sso=1"
-		}
-		http.Redirect(w, req, redirect, http.StatusFound)
-	})
 	mux.HandleFunc("/websocket", func(w http.ResponseWriter, req *http.Request) {
-		if !checkSSO(w, req) {
-			return
-		}
 		conn, err := upgrader.Upgrade(w, req, nil)
 		if err != nil {
 			t.Logf("ERR %v", err)
@@ -191,22 +152,6 @@ func TestSSHTerm(t *testing.T) {
 	})
 	mux.HandleFunc("/cert", func(w http.ResponseWriter, req *http.Request) {
 		t.Logf("/cert")
-		if req.Method == http.MethodPost {
-			if c, err := req.Cookie("require_csrf"); err == nil && c.Value == "1" {
-				if req.Header.Get("x-csrf-token") != "fresh-sid" {
-					http.Error(w, "session expired", http.StatusBadRequest)
-					return
-				}
-			}
-		}
-		if !checkSSO(w, req) {
-			return
-		}
-		if req.Method == http.MethodHead || req.Method == http.MethodGet {
-			w.Header().Set("content-type", "text/html")
-			w.WriteHeader(http.StatusOK)
-			return
-		}
 		if req.Method != "POST" {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
 			return
@@ -244,9 +189,6 @@ func TestSSHTerm(t *testing.T) {
 	})
 	fs := http.FileServer(http.Dir(*docRoot))
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Query().Get("sso") == "1" && !checkSSO(w, req) {
-			return
-		}
 		w.Header().Set("Cache-Control", "no-store")
 		fs.ServeHTTP(w, req)
 	})

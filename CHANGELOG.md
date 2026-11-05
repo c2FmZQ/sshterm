@@ -10,7 +10,6 @@
   * Automatically injects the `<hostname>-wss` endpoint (falling back to `sshterm-server`), its host key, and default `jumpHosts` into `/config.json`.
 * Add a top-level `jumpHosts` configuration parameter in `config.json` and interactive `set jump-hosts [<jump-hosts>|none]` command in `sshterm`. Configured endpoints are matched first when connecting, falling back to the default jump hosts when no endpoint matches (or `-J none` to bypass default jump hosts).
 * Add support for SSH `password` authentication (`ssh.PasswordCallback`) in addition to `publickey` and `keyboard-interactive`.
-* Automatically open a login popup window and retry when a WebSocket connection or SSH CA certificate request fails due to an expired SSO session.
 
 ### :wrench: Bug fixes
 

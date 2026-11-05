@@ -269,7 +269,6 @@ func (a *App) refreshDB() error {
 	defer func() {
 		for _, k := range a.data.Keys {
 			k.errorf = a.term.Errorf
-			k.log = a.term
 		}
 	}()
 	if err := a.db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {

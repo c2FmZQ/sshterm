@@ -240,7 +240,6 @@ func (a *App) dbCommand() *cli.App {
 					}
 					for _, k := range newData.Keys {
 						k.errorf = a.term.Errorf
-						k.log = a.term
 					}
 					if a.cfg.Persist != nil {
 						newData.Persist = *a.cfg.Persist
