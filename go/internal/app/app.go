@@ -130,9 +130,9 @@ type App struct {
 	db            *indexeddb.DB
 	data          appData
 	lastDBRefresh time.Time
-	// ssoDeclined holds the URLs for which the user declined to log in
-	// during the current command.
-	ssoDeclined map[string]bool
+	// ssoDeclined is set when the user declined to log in during the
+	// current command.
+	ssoDeclined bool
 	bc          js.Value
 
 	commands     []*cli.App
@@ -488,7 +488,7 @@ func (a *App) Run() error {
 				func() { // try
 					ctx, cancel := context.WithCancel(a.ctx)
 					defer a.ctrlC(cancel)()
-					a.ssoDeclined = nil
+					a.ssoDeclined = false
 					if err := cmd.RunContext(ctx, args); err != nil {
 						if errors.Is(err, context.Canceled) {
 							t.Errorf("Aborted")
@@ -514,7 +514,7 @@ func (a *App) Run() error {
 // the failure is unrelated to authentication or the user declined, and the
 // login error otherwise.
 func (a *App) ssoLogin(ctx context.Context, rawURL string, cause error) error {
-	if ctx.Err() != nil || a.ssoDeclined[rawURL] || !jsutil.CheckAuthRequired(ctx, rawURL) {
+	if ctx.Err() != nil || a.ssoDeclined || !jsutil.CheckAuthRequired(ctx, rawURL) {
 		return cause
 	}
 	ok := a.term.Confirm("Authentication required. Open login window?", true)
@@ -522,10 +522,7 @@ func (a *App) ssoLogin(ctx context.Context, rawURL string, cause error) error {
 		return ctx.Err()
 	}
 	if !ok {
-		if a.ssoDeclined == nil {
-			a.ssoDeclined = make(map[string]bool)
-		}
-		a.ssoDeclined[rawURL] = true
+		a.ssoDeclined = true
 		return cause
 	}
 	return jsutil.LoginPopup(ctx, rawURL, a.term)

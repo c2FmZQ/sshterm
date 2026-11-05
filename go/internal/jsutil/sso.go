@@ -140,7 +140,7 @@ func wrapPopupErr(err error) error {
 func LoginPopup(ctx context.Context, rawURL string, log io.Writer) error {
 	httpURL, err := toHTTPURL(rawURL)
 	if err != nil {
-		return err
+		return wrapPopupErr(err)
 	}
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
