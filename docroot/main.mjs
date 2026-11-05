@@ -23,7 +23,7 @@
  * SOFTWARE.
  */
 
-import { TabManager } from './ssh.mjs';
+import { TabManager, isSSOPopup } from './ssh.mjs';
 
 window.addEventListener('load', () => {
   const elem = document.getElementById('terminal');
@@ -31,6 +31,17 @@ window.addEventListener('load', () => {
   if (window.top !== window.self) {
     elem.style.color = 'white';
     elem.textContent = 'SSH Term cannot run inside a frame.';
+    return;
+  }
+  if (isSSOPopup()) {
+    elem.style.color = 'white';
+    elem.style.fontFamily = 'monospace';
+    elem.style.padding = '1rem';
+    elem.textContent = 'Authentication complete. You may close this window.';
+    const bc = new BroadcastChannel('sshterm_sso');
+    bc.postMessage('authenticated');
+    bc.close();
+    window.close();
     return;
   }
   new TabManager(elem);

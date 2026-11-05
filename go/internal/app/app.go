@@ -26,6 +26,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -129,7 +130,10 @@ type App struct {
 	db            *indexeddb.DB
 	data          appData
 	lastDBRefresh time.Time
-	bc            js.Value
+	// ssoDeclined is set when the user declined to log in during the
+	// current command.
+	ssoDeclined bool
+	bc          js.Value
 
 	commands     []*cli.App
 	streamHelper *jsutil.StreamHelper
@@ -266,11 +270,6 @@ func (a *App) refreshDB() error {
 	} else {
 		a.lastDBRefresh = ts
 	}
-	defer func() {
-		for _, k := range a.data.Keys {
-			k.errorf = a.term.Errorf
-		}
-	}()
 	if err := a.db.Get("authorities", &a.data.Authorities); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("authorities load: %w", err)
 	}
@@ -280,8 +279,35 @@ func (a *App) refreshDB() error {
 	if err := a.db.Get("hosts", &a.data.Hosts); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("hosts load: %w", err)
 	}
-	if err := a.db.Get("keys", &a.data.Keys); err != nil && err != indexeddb.ErrNotFound {
-		return fmt.Errorf("keys load: %w", err)
+	// The agent holds references to keys. Keep the existing key objects so
+	// that the agent and a.data.Keys stay in sync, and only update their
+	// persisted fields.
+	var keys map[string]*key
+	if err := a.db.Get("keys", &keys); err != nil {
+		if err != indexeddb.ErrNotFound {
+			return fmt.Errorf("keys load: %w", err)
+		}
+		// Nothing was saved yet, e.g. the database was just created by
+		// `db persist on`. Keep the keys that are in memory.
+	} else {
+		for name, k := range keys {
+			if old, exists := a.data.Keys[name]; exists && bytes.Equal(old.Public, k.Public) {
+				old.Private, old.Provider = k.Private, k.Provider
+				// A certificate from an identity provider is refreshed
+				// in memory, and the saved one may be older.
+				if old.Provider == "" || !old.certValid() {
+					old.CertBytes = k.CertBytes
+				}
+				continue
+			}
+			a.data.Keys[name] = k
+		}
+		// Drop keys that were deleted or renamed by another tab.
+		for name := range a.data.Keys {
+			if _, exists := keys[name]; !exists {
+				delete(a.data.Keys, name)
+			}
+		}
 	}
 	if err := a.db.Get("params", &a.data.Params); err != nil && err != indexeddb.ErrNotFound {
 		return fmt.Errorf("params load: %w", err)
@@ -461,6 +487,7 @@ func (a *App) Run() error {
 				func() { // try
 					ctx, cancel := context.WithCancel(a.ctx)
 					defer a.ctrlC(cancel)()
+					a.ssoDeclined = false
 					if err := cmd.RunContext(ctx, args); err != nil {
 						if errors.Is(err, context.Canceled) {
 							t.Errorf("Aborted")
@@ -477,6 +504,27 @@ func (a *App) Run() error {
 			)
 		}
 	}
+}
+
+// ssoLogin is called when a request to rawURL failed with cause. If the
+// server wants the user to authenticate, e.g. because the SSO session
+// expired, the user is offered to log in again in a popup window. It returns
+// nil when the login completed and the request should be retried, cause when
+// the failure is unrelated to authentication or the user declined, and the
+// login error otherwise.
+func (a *App) ssoLogin(ctx context.Context, rawURL string, cause error) error {
+	if ctx.Err() != nil || a.ssoDeclined || !jsutil.CheckAuthRequired(ctx, rawURL) {
+		return cause
+	}
+	ok := a.term.Confirm("Authentication required. Open login window?", true)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if !ok {
+		a.ssoDeclined = true
+		return cause
+	}
+	return jsutil.LoginPopup(ctx, rawURL, a.term)
 }
 
 func (a *App) ctrlC(cancel context.CancelFunc) context.CancelFunc {

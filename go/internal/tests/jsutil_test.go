@@ -26,8 +26,14 @@
 package tests
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"strings"
+	"sync"
 	"syscall/js"
 	"testing"
+	"time"
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 )
@@ -85,4 +91,172 @@ func TestServiceWorkerSingleton(t *testing.T) {
 	if !cb1.Equal(cb2) {
 		t.Error("serviceWorker.onmessage was overwritten by second NewStreamHelper() call")
 	}
+}
+
+func TestCheckAuthRequired(t *testing.T) {
+	doc := js.Global().Get("document")
+	t.Cleanup(func() {
+		doc.Set("cookie", "sso_expired=; path=/; max-age=0")
+	})
+
+	ctx := context.Background()
+	doc.Set("cookie", "sso_expired=; path=/; max-age=0")
+	if jsutil.CheckAuthRequired(ctx, "./websocket") {
+		t.Error("CheckAuthRequired(./websocket) = true, want false when authenticated")
+	}
+	if jsutil.CheckAuthRequired(ctx, "./cert") {
+		t.Error("CheckAuthRequired(./cert) = true, want false when authenticated")
+	}
+	if jsutil.CheckAuthRequired(ctx, "ws://[invalid") {
+		t.Error("CheckAuthRequired(ws://[invalid) = true, want false")
+	}
+
+	doc.Set("cookie", "sso_expired=1; path=/")
+	if !jsutil.CheckAuthRequired(ctx, "./websocket") {
+		t.Error("CheckAuthRequired(./websocket) = false, want true when 403")
+	}
+	if !jsutil.CheckAuthRequired(ctx, "./websocket?redirect=true") {
+		t.Error("CheckAuthRequired(./websocket?redirect=true) = false, want true when 302 redirect")
+	}
+	if !jsutil.CheckAuthRequired(ctx, "./cert") {
+		t.Error("CheckAuthRequired(./cert) = false, want true when 403")
+	}
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestLoginPopup(t *testing.T) {
+	doc := js.Global().Get("document")
+	win := js.Global().Get("window")
+	t.Cleanup(func() {
+		doc.Set("cookie", "sso_expired=; path=/; max-age=0")
+		doc.Set("cookie", "__tlsproxySid=; path=/; max-age=0")
+	})
+
+	// 1. Direct popup open (not blocked).
+	t.Run("DirectOpen", func(t *testing.T) {
+		doc.Set("cookie", "sso_expired=1; path=/")
+		doc.Set("cookie", "__tlsproxySid=old-sid; path=/")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		var buf syncBuffer
+		if err := jsutil.LoginPopup(ctx, "./websocket", &buf); err != nil {
+			t.Fatalf("LoginPopup() failed: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Authentication required. Waiting for login...") {
+			t.Errorf("unexpected log output: %q", buf.String())
+		}
+		if jsutil.CheckAuthRequired(ctx, "./websocket") {
+			t.Error("CheckAuthRequired(./websocket) is still true after LoginPopup")
+		}
+		if got, want := jsutil.TLSProxySID(), "fresh-sid"; got != want {
+			t.Errorf("TLSProxySID() = %q, want %q", got, want)
+		}
+	})
+
+	// 2. The browser blocks the popup. LoginPopup fails right away.
+	t.Run("PopupBlocked", func(t *testing.T) {
+		doc.Set("cookie", "sso_expired=1; path=/")
+
+		origOpen := win.Get("open")
+		mockOpen := js.FuncOf(func(this js.Value, args []js.Value) any {
+			return js.Null()
+		})
+		win.Set("open", mockOpen)
+		t.Cleanup(func() {
+			win.Set("open", origOpen)
+			mockOpen.Release()
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var buf syncBuffer
+		err := jsutil.LoginPopup(ctx, "./websocket", &buf)
+		if !errors.Is(err, jsutil.ErrAuthRequired) || errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("LoginPopup() = %v, want %v", err, jsutil.ErrAuthRequired)
+		}
+		if err == nil || !strings.Contains(err.Error(), "blocked") {
+			t.Errorf("LoginPopup() = %v, want a blocked popup error", err)
+		}
+		if buf.String() != "" {
+			t.Errorf("unexpected log output: %q", buf.String())
+		}
+	})
+
+	// 3. The popup is closed without the login page announcing a login,
+	// e.g. by the user. LoginPopup returns so that the caller retries.
+	t.Run("Closed", func(t *testing.T) {
+		doc.Set("cookie", "sso_expired=1; path=/")
+
+		origOpen := win.Get("open")
+		closeFn := js.FuncOf(func(this js.Value, args []js.Value) any { return nil })
+		mockOpen := js.FuncOf(func(this js.Value, args []js.Value) any {
+			return jsutil.NewObject(map[string]any{
+				"closed": true,
+				"close":  closeFn,
+			})
+		})
+		win.Set("open", mockOpen)
+		t.Cleanup(func() {
+			win.Set("open", origOpen)
+			mockOpen.Release()
+			closeFn.Release()
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var buf syncBuffer
+		start := time.Now()
+		if err := jsutil.LoginPopup(ctx, "./websocket", &buf); err != nil {
+			t.Errorf("LoginPopup() = %v, want nil", err)
+		}
+		if d := time.Since(start); d > 2*time.Second {
+			t.Errorf("LoginPopup() took %s, want a prompt return after the popup closed", d)
+		}
+	})
+
+	// 4. The popup stays open and the login never completes. LoginPopup
+	// gives up when the context expires.
+	t.Run("Timeout", func(t *testing.T) {
+		doc.Set("cookie", "sso_expired=1; path=/")
+
+		origOpen := win.Get("open")
+		closeFn := js.FuncOf(func(this js.Value, args []js.Value) any { return nil })
+		mockOpen := js.FuncOf(func(this js.Value, args []js.Value) any {
+			return jsutil.NewObject(map[string]any{
+				"closed": false,
+				"close":  closeFn,
+			})
+		})
+		win.Set("open", mockOpen)
+		t.Cleanup(func() {
+			win.Set("open", origOpen)
+			mockOpen.Release()
+			closeFn.Release()
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+		defer cancel()
+		var buf syncBuffer
+		err := jsutil.LoginPopup(ctx, "./websocket", &buf)
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, jsutil.ErrAuthRequired) {
+			t.Errorf("LoginPopup() = %v, want %v and %v", err, jsutil.ErrAuthRequired, context.DeadlineExceeded)
+		}
+	})
 }

@@ -26,12 +26,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -125,7 +127,8 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	if forwardAgent {
 		_, hostname, _ := parseUserHost(target)
 		fwd := &forwardedAgent{
-			agent: globalAgent,
+			ctx:   ctx,
+			agent: globalAgent.(*keyRing),
 			host:  hostname,
 			notify: func(f string, args ...any) {
 				t.Printf(f, args...)
@@ -251,7 +254,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 		return nil, fmt.Errorf("unknown endpoint %q", hops[0].h)
 	}
 
-	signers, err := a.sshSigners(keyName)
+	signers, err := a.sshSigners(ctx, keyName)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +262,7 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 	if len(hops) > 1 {
 		a.term.Printf("[1] Connecting %s@%s...", hops[0].u, hops[0].h)
 	}
-	ws, err := websocket.New(ctx, ep.URL, a.term)
+	ws, err := a.dialWebSocket(ctx, ep.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +293,21 @@ func (a *App) sshClient(ctx context.Context, target, keyName, jumpHosts string) 
 	return client, nil
 }
 
-func (a *App) sshSigners(keyName string) ([]ssh.Signer, error) {
+// dialWebSocket connects to url. If the connection fails because the SSO
+// session expired, the user is offered to log in again, and the connection
+// is retried.
+func (a *App) dialWebSocket(ctx context.Context, url string) (*websocket.WebSocket, error) {
+	ws, err := websocket.New(ctx, url, a.term)
+	if err == nil || ctx.Err() != nil {
+		return ws, err
+	}
+	if err := a.ssoLogin(ctx, url, err); err != nil {
+		return nil, err
+	}
+	return websocket.New(ctx, url, a.term)
+}
+
+func (a *App) sshSigners(ctx context.Context, keyName string) ([]ssh.Signer, error) {
 	signers, err := globalAgent.Signers()
 	if err != nil {
 		a.term.Errorf("%v", err)
@@ -301,13 +318,26 @@ func (a *App) sshSigners(keyName string) ([]ssh.Signer, error) {
 			keyName = "default"
 		}
 		if key, exists := a.data.Keys[keyName]; exists {
-			signer, err := key.Signer(a.term.ReadPassword)
-			if err != nil {
-				return nil, fmt.Errorf("key.signer: %w", err)
+			inAgent := slices.ContainsFunc(signers, func(s ssh.Signer) bool {
+				ds, ok := s.(*dynSigner)
+				return ok && bytes.Equal(ds.key.Public, key.Public)
+			})
+			if !inAgent {
+				signer, err := key.Signer(a.term.ReadPassword)
+				if err != nil {
+					return nil, fmt.Errorf("key.signer: %w", err)
+				}
+				signers = append(signers, signer)
 			}
-			signers = append(signers, signer)
 		} else if origKeyName != "" {
 			return nil, fmt.Errorf("unknown key %q", keyName)
+		}
+	}
+	for _, s := range signers {
+		if ds, ok := s.(*dynSigner); ok {
+			if err := a.refreshCert(ctx, ds.key); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return signers, nil

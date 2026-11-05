@@ -95,7 +95,6 @@ func (a *App) generateKey(name, passphrase, idp, typ string, bits int, resident 
 		Public:   sshPub.Marshal(),
 		Private:  pem.EncodeToMemory(privPEM),
 		Provider: idp,
-		errorf:   a.term.Errorf,
 	}
 	globalAgent.(*keyRing).ForceRemoveByName(name)
 	a.data.Keys[name] = k
@@ -270,12 +269,6 @@ func (a *App) keysCommand() *cli.App {
 						Public:   sshPub.Marshal(),
 						Private:  pem.EncodeToMemory(privPEM),
 						Provider: ctx.String("idp"),
-						errorf:   a.term.Errorf,
-					}
-					if k.Provider != "" {
-						if err := k.updateCert(); err != nil {
-							a.term.Errorf("certificate update: %v", err)
-						}
 					}
 					globalAgent.(*keyRing).ForceRemoveByName(name)
 					a.data.Keys[name] = k
@@ -335,7 +328,14 @@ func (a *App) keysCommand() *cli.App {
 					}
 					a.term.Printf("Public key:  %s %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))), name)
 					a.term.Printf("Fingerprint: %s\n", ssh.FingerprintSHA256(pub))
-					if cert := key.Certificate(); cert != nil {
+					if err := a.refreshCert(ctx.Context, key); err != nil {
+						if ctx.Context.Err() != nil {
+							return err
+						}
+						// Still show the existing certificate.
+						a.term.Errorf("certificate update: %v", err)
+					}
+					if cert := key.parseCert(); cert != nil {
 						a.term.Printf("Certificate: %s\n", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(cert))))
 						a.term.Printf("Details:\n")
 						a.printCertificate(cert)
@@ -447,7 +447,6 @@ func (a *App) keysCommand() *cli.App {
 					key := &key{
 						Name:    name,
 						Private: content,
-						errorf:  a.term.Errorf,
 					}
 					if key.isWebAuthn() {
 						sk, err := webauthnsk.Unmarshal(content, name, a.term.ReadPassword)
@@ -686,8 +685,6 @@ type key struct {
 	Private   []byte `json:"private"`
 	Provider  string `json:"provider,omitempty"`
 	CertBytes []byte `json:"certificate,omitempty"`
-
-	errorf func(string, ...any)
 }
 
 func (k *key) isWebAuthn() bool {
@@ -705,43 +702,102 @@ func (k *key) parseCert() *ssh.Certificate {
 	if len(k.CertBytes) == 0 {
 		return nil
 	}
-	c, _, _, _, err := ssh.ParseAuthorizedKey(k.CertBytes)
+	cert, err := parseCertBytes(k.CertBytes)
 	if err != nil {
 		return nil
 	}
-	if cert, ok := c.(*ssh.Certificate); ok {
-		return cert
-	}
-	return nil
+	return cert
 }
 
-func (k *key) Certificate() (cert *ssh.Certificate) {
-	cert = k.parseCert()
-	if cert != nil && (cert.ValidBefore == ssh.CertTimeInfinity || cert.ValidBefore > uint64(time.Now().Add(5*time.Minute).Unix())) {
-		return
+// parseCertBytes parses a certificate in authorized_keys format.
+func parseCertBytes(b []byte) (*ssh.Certificate, error) {
+	c, _, _, _, err := ssh.ParseAuthorizedKey(b)
+	if err != nil {
+		return nil, err
 	}
-	if err := k.updateCert(); err != nil {
-		if k.errorf != nil {
-			k.errorf("certificate update: %v", err)
-		}
-		return
+	cert, ok := c.(*ssh.Certificate)
+	if !ok {
+		return nil, errors.New("not a certificate")
 	}
-	return k.parseCert()
+	return cert, nil
 }
 
-func (k *key) updateCert() error {
-	if k.Provider == "" {
+// certValid returns true if the key has a certificate that remains valid for
+// at least 5 minutes.
+func (k *key) certValid() bool {
+	cert := k.parseCert()
+	return cert != nil && (cert.ValidBefore == ssh.CertTimeInfinity || cert.ValidBefore > uint64(time.Now().Add(5*time.Minute).Unix()))
+}
+
+// ensureCert requests a new certificate from the identity provider when the
+// current one is missing or about to expire. When login is not nil, a failed
+// request is passed to it, see App.ssoLogin, and retried if login returns
+// nil.
+func (k *key) ensureCert(ctx context.Context, login func(context.Context, string, error) error) error {
+	if k.Provider == "" || k.certValid() {
 		return nil
 	}
 	pub, err := k.sshPublicKey()
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	certBytes, err := k.fetchCert(ctx, pub)
+	if err != nil && login != nil && ctx.Err() == nil && !errors.As(err, new(noResponseError)) {
+		if err := login(ctx, k.Provider, err); err != nil {
+			return err
+		}
+		certBytes, err = k.fetchCert(ctx, pub)
+	}
+	if err != nil {
+		return err
+	}
+	cert, err := parseCertBytes(certBytes)
+	if err != nil {
+		return fmt.Errorf("%q: %w", k.Provider, err)
+	}
+	if !bytes.Equal(cert.Key.Marshal(), pub.Marshal()) {
+		return fmt.Errorf("%q: certificate key doesn't match", k.Provider)
+	}
+	if err := checkCertificate(cert, ssh.UserCert); err != nil {
+		return fmt.Errorf("%q: %w", k.Provider, err)
+	}
+	k.CertBytes = certBytes
+	return nil
+}
+
+// refreshCert refreshes the certificate of k, asking the user to log in if
+// needed. Cancellation and login failures abort the current command. Other
+// errors are reported to the user, and the key remains usable without a
+// certificate.
+func (a *App) refreshCert(ctx context.Context, k *key) error {
+	err := k.ensureCert(ctx, a.ssoLogin)
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil || errors.Is(err, jsutil.ErrAuthRequired) {
+		return err
+	}
+	a.term.Errorf("certificate update: %v", err)
+	return nil
+}
+
+// noResponseError is returned by fetchCert when the request failed before
+// any response was received, e.g. when the network is down. Such a failure
+// cannot be caused by an expired SSO session, so there is no point in asking
+// the user to log in.
+type noResponseError struct {
+	err error
+}
+
+func (e noResponseError) Error() string { return e.err.Error() }
+func (e noResponseError) Unwrap() error { return e.err }
+
+func (k *key) fetchCert(parentCtx context.Context, pub ssh.PublicKey) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "POST", k.Provider, bytes.NewReader(ssh.MarshalAuthorizedKey(pub)))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "text/plain")
 	// The CSRF token is only for the proxy that serves this app.
@@ -750,31 +806,22 @@ func (k *key) updateCert() error {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%q: %w", k.Provider, err)
+		return nil, noResponseError{fmt.Errorf("%q: %w", k.Provider, err)}
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain" {
+	ct := resp.Header.Get("Content-Type")
+	if resp.StatusCode != http.StatusOK || ct != "text/plain" {
 		if resp.StatusCode == http.StatusForbidden {
 			msg, _ := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 1024})
-			return fmt.Errorf("%q: %s: %s", k.Provider, resp.Status, termsafe.Text(string(msg)))
+			return nil, fmt.Errorf("%q: %s: %s", k.Provider, resp.Status, termsafe.Text(string(msg)))
 		}
-		return fmt.Errorf("%q: status code %q content-type %q", k.Provider, resp.Status, resp.Header.Get("Content-Type"))
+		return nil, fmt.Errorf("%q: status code %q content-type %q", k.Provider, resp.Status, ct)
 	}
 	certBytes, err := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 20480})
 	if err != nil {
-		return fmt.Errorf("%q: %w", k.Provider, err)
+		return nil, fmt.Errorf("%q: %w", k.Provider, err)
 	}
-	if c, _, _, _, err := ssh.ParseAuthorizedKey(certBytes); err != nil {
-		return fmt.Errorf("%q: %w", k.Provider, err)
-	} else if cert, ok := c.(*ssh.Certificate); !ok {
-		return fmt.Errorf("%q: returned data is not a certificate", k.Provider)
-	} else if !bytes.Equal(cert.Key.Marshal(), pub.Marshal()) {
-		return fmt.Errorf("%q: certificate key doesn't match", k.Provider)
-	} else if err := checkCertificate(cert, ssh.UserCert); err != nil {
-		return fmt.Errorf("%q: %w", k.Provider, err)
-	}
-	k.CertBytes = certBytes
-	return nil
+	return certBytes, nil
 }
 
 func (k *key) PrivateKey(rp func(string) (string, error)) (any, error) {
@@ -824,8 +871,11 @@ type dynSigner struct {
 
 var _ ssh.MultiAlgorithmSigner = (*dynSigner)(nil)
 
+// PublicKey returns the current certificate of the key, or the raw public key
+// if there is no certificate. It doesn't refresh an expired certificate. See
+// App.refreshCert and forwardedAgent.List.
 func (s *dynSigner) PublicKey() ssh.PublicKey {
-	if cert := s.key.Certificate(); cert != nil {
+	if cert := s.key.parseCert(); cert != nil {
 		return cert
 	}
 	return s.Signer.PublicKey()
