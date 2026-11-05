@@ -127,6 +127,7 @@ func (a *App) runSSH(ctx context.Context, target, keyName, command string, forwa
 	if forwardAgent {
 		_, hostname, _ := parseUserHost(target)
 		fwd := &forwardedAgent{
+			ctx:   ctx,
 			agent: globalAgent.(*keyRing),
 			host:  hostname,
 			notify: func(f string, args ...any) {

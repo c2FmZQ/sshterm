@@ -300,7 +300,6 @@ func (a *App) refreshDB() error {
 				}
 				continue
 			}
-			k.errorf = a.term.Errorf
 			a.data.Keys[name] = k
 		}
 		// Drop keys that were deleted or renamed by another tab.

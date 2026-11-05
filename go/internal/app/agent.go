@@ -27,6 +27,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"errors"
@@ -234,20 +235,16 @@ func rawPublicKey(s ssh.Signer) ssh.PublicKey {
 	return pub
 }
 
-func matchesKey(s ssh.Signer, v []byte) bool {
+// matchesKey returns true if s is the signer for key.
+func matchesKey(s ssh.Signer, key ssh.PublicKey) bool {
+	v := key.Marshal()
 	if ds, ok := s.(*dynSigner); ok {
-		rawPub := ds.Signer.PublicKey().Marshal()
-		if bytes.Equal(v, rawPub) {
-			return true
+		// Accept the raw key or any certificate for it, including an
+		// older one that a client obtained from List() before a refresh.
+		if cert, ok := key.(*ssh.Certificate); ok {
+			v = cert.Key.Marshal()
 		}
-		// Also accept any certificate for this key, including an older
-		// one that a client obtained from List() before a refresh.
-		if pub, err := ssh.ParsePublicKey(v); err == nil {
-			if cert, ok := pub.(*ssh.Certificate); ok && bytes.Equal(cert.Key.Marshal(), rawPub) {
-				return true
-			}
-		}
-		return false
+		return bytes.Equal(v, ds.Signer.PublicKey().Marshal())
 	}
 	pub := s.PublicKey()
 	if cert, ok := pub.(*ssh.Certificate); ok && bytes.Equal(v, cert.Key.Marshal()) {
@@ -281,23 +278,33 @@ func (r *keyRing) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 }
 
 func (r *keyRing) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
-	r.mu.Lock()
-	if r.locked {
-		r.mu.Unlock()
-		return nil, errAgentLocked
+	signer, _, err := r.lookup(key)
+	if err != nil {
+		return nil, err
 	}
-	v := key.Marshal()
+	return signWithFlags(signer, data, flags)
+}
+
+// lookup returns the signer and the comment of the key that matches key. It
+// doesn't hold the lock when it returns, so that signing can wait for the
+// user. With WebAuthn keys, Sign waits for the user to touch the security
+// key.
+func (r *keyRing) lookup(key ssh.PublicKey) (ssh.Signer, string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.locked {
+		return nil, "", errAgentLocked
+	}
 	i := slices.IndexFunc(r.keys, func(k agentKey) bool {
-		return matchesKey(k.signer, v)
+		return matchesKey(k.signer, key)
 	})
 	if i < 0 {
-		r.mu.Unlock()
-		return nil, errAgentKeyNotFound
+		return nil, "", errAgentKeyNotFound
 	}
-	signer := r.keys[i].signer
-	// Don't hold the lock while signing. With WebAuthn keys, Sign waits for
-	// the user to touch the security key.
-	r.mu.Unlock()
+	return r.keys[i].signer, r.keys[i].comment, nil
+}
+
+func signWithFlags(signer ssh.Signer, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
 	if flags == 0 {
 		return signer.Sign(rand.Reader, data)
 	}
@@ -365,10 +372,9 @@ func (r *keyRing) ForceRemove(key ssh.PublicKey) error {
 }
 
 func (r *keyRing) remove(key ssh.PublicKey) error {
-	v := key.Marshal()
 	found := false
 	r.keys = slices.DeleteFunc(r.keys, func(k agentKey) bool {
-		if matchesKey(k.signer, v) {
+		if matchesKey(k.signer, key) {
 			found = true
 			return true
 		}
@@ -470,27 +476,13 @@ func (r *keyRing) Signers() ([]ssh.Signer, error) {
 	return out, nil
 }
 
-func (r *keyRing) KeyComment(key ssh.PublicKey) (string, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.locked {
-		return "", false
-	}
-	v := key.Marshal()
-	for _, k := range r.keys {
-		if matchesKey(k.signer, v) {
-			return k.comment, true
-		}
-	}
-	return "", false
-}
-
 var errForwardedAgent = errors.New("operation not permitted on forwarded agent")
 
 // forwardedAgent is the view of the agent that is forwarded to a remote
 // host. The remote host can only list the keys and request signatures. The
 // user is notified of each signature request.
 type forwardedAgent struct {
+	ctx    context.Context
 	agent  *keyRing
 	host   string
 	notify func(format string, args ...any)
@@ -499,6 +491,17 @@ type forwardedAgent struct {
 var _ agent.ExtendedAgent = (*forwardedAgent)(nil)
 
 func (f *forwardedAgent) List() ([]*agent.Key, error) {
+	// The remote host uses the keys as it sees them here. Refresh expired
+	// certificates first, without user interaction.
+	if signers, err := f.agent.Signers(); err == nil {
+		for _, s := range signers {
+			if ds, ok := s.(*dynSigner); ok {
+				if err := ds.key.ensureCert(f.ctx, nil); err != nil {
+					f.notify("[agent] certificate update: %v\n", err)
+				}
+			}
+		}
+	}
 	return f.agent.List()
 }
 
@@ -507,12 +510,15 @@ func (f *forwardedAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, e
 }
 
 func (f *forwardedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
-	name := ssh.FingerprintSHA256(key)
-	if comment, ok := f.agent.KeyComment(key); ok {
-		name = comment
+	signer, name, err := f.agent.lookup(key)
+	if err != nil {
+		name = ssh.FingerprintSHA256(key)
 	}
 	f.notify("[agent] %s requested a signature with key %q\n", f.host, name)
-	return f.agent.SignWithFlags(key, data, flags)
+	if err != nil {
+		return nil, err
+	}
+	return signWithFlags(signer, data, flags)
 }
 
 func (f *forwardedAgent) Extension(extensionType string, contents []byte) ([]byte, error) {

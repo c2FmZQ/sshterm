@@ -238,9 +238,6 @@ func (a *App) dbCommand() *cli.App {
 					if newData.Params == nil {
 						newData.Params = make(map[string]any)
 					}
-					for _, k := range newData.Keys {
-						k.errorf = a.term.Errorf
-					}
 					if a.cfg.Persist != nil {
 						newData.Persist = *a.cfg.Persist
 					}
