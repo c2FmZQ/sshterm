@@ -740,6 +740,9 @@ func (k *key) ensureCert(ctx context.Context, term io.Writer) error {
 		return nil
 	}
 	k.lastAttempt = time.Now()
+	// A slow attempt, e.g. a 15 second timeout, would otherwise outlast the
+	// cooldown. Measure it from the end of the attempt.
+	defer func() { k.lastAttempt = time.Now() }()
 	pub, err := k.sshPublicKey()
 	if err != nil {
 		return err
