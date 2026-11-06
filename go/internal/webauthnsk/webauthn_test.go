@@ -36,8 +36,11 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
+	"net"
 	"testing"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -566,6 +569,19 @@ func TestKeyVerify(t *testing.T) {
 		t.Error("key.Verify(wrong-data) succeeded; want error")
 	}
 
+	// Verify that standard golang.org/x/crypto/ssh parsed PublicKey also verifies
+	// the WebAuthn signature.
+	stdPub, err := ssh.ParsePublicKey(key.Marshal())
+	if err != nil {
+		t.Fatalf("ssh.ParsePublicKey(key.Marshal()): %v", err)
+	}
+	if err := stdPub.Verify(data, webauthnSig); err != nil {
+		t.Errorf("stdPub.Verify(webauthnSig) failed: %v", err)
+	}
+	if err := stdPub.Verify([]byte("wrong-data"), webauthnSig); err == nil {
+		t.Error("stdPub.Verify(wrong-data) succeeded; want error")
+	}
+
 	// 2. Verify sk-ecdsa-sha2-nistp256@openssh.com signature.
 	dataHash := sha256.Sum256(data)
 	var skSigned cryptobyte.Builder
@@ -628,6 +644,9 @@ func TestKeyVerify(t *testing.T) {
 	}
 	if err := key.Verify(data, extSig); err != nil {
 		t.Errorf("key.Verify(extSig) failed: %v", err)
+	}
+	if err := stdPub.Verify(data, extSig); err != nil {
+		t.Errorf("stdPub.Verify(extSig) failed: %v", err)
 	}
 
 	// 4. Negative cases for WebAuthn & SK signature flags, origin, and clientData.
@@ -729,4 +748,172 @@ func TestKeyVerify(t *testing.T) {
 	if err := key.Verify(data, skNoUPSig); err == nil {
 		t.Error("key.Verify(sk missing UP flag) succeeded; want error")
 	}
+}
+
+type mockWebAuthnSigner struct {
+	key  *Key
+	priv *ecdsa.PrivateKey
+}
+
+func (s *mockWebAuthnSigner) PublicKey() ssh.PublicKey {
+	return s.key
+}
+
+func (s *mockWebAuthnSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+	const origin = "https://example.com"
+	clientData := fmt.Sprintf(`{"type":"webauthn.get","challenge":%q,"origin":%q}`,
+		base64.RawURLEncoding.EncodeToString(data), origin)
+	appHash := sha256.Sum256(s.key.rpID)
+	cdHash := sha256.Sum256([]byte(clientData))
+	const flags byte = 0x05 // UP | UV
+	const counter uint32 = 1
+
+	var signed cryptobyte.Builder
+	signed.AddBytes(appHash[:])
+	signed.AddUint8(flags)
+	signed.AddUint32(counter)
+	signed.AddBytes(cdHash[:])
+	digest := sha256.Sum256(signed.BytesOrPanic())
+
+	r, ss, err := ecdsa.Sign(rand, s.priv, digest[:])
+	if err != nil {
+		return nil, err
+	}
+	return &ssh.Signature{
+		Format: webauthnSignatureFormat,
+		Blob:   ssh.Marshal(struct{ R, S *big.Int }{r, ss}),
+		Rest: ssh.Marshal(struct {
+			Flags      byte
+			Counter    uint32
+			Origin     string
+			ClientData string
+			Extensions string
+		}{
+			Flags:      flags,
+			Counter:    counter,
+			Origin:     origin,
+			ClientData: clientData,
+		}),
+	}, nil
+}
+
+func TestSSHServerAuthInterop(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	key := &Key{
+		typ:    ecdsa256KeyType,
+		id:     []byte("credential-id-12345"),
+		rpID:   []byte("ssh:example.com"),
+		pubKey: &priv.PublicKey,
+	}
+	signer := &mockWebAuthnSigner{key: key, priv: priv}
+
+	_, hostPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey: %v", err)
+	}
+	hostSigner, err := ssh.NewSignerFromKey(hostPriv)
+	if err != nil {
+		t.Fatalf("ssh.NewSignerFromKey: %v", err)
+	}
+
+	_, caPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey: %v", err)
+	}
+	caSigner, err := ssh.NewSignerFromKey(caPriv)
+	if err != nil {
+		t.Fatalf("ssh.NewSignerFromKey: %v", err)
+	}
+
+	parsedPub, _, _, _, err := ssh.ParseAuthorizedKey(ssh.MarshalAuthorizedKey(key))
+	if err != nil {
+		t.Fatalf("ssh.ParseAuthorizedKey: %v", err)
+	}
+
+	checker := &ssh.CertChecker{
+		IsUserAuthority: func(auth ssh.PublicKey) bool {
+			return bytes.Equal(auth.Marshal(), caSigner.PublicKey().Marshal())
+		},
+		UserKeyFallback: func(conn ssh.ConnMetadata, pub ssh.PublicKey) (*ssh.Permissions, error) {
+			if bytes.Equal(pub.Marshal(), parsedPub.Marshal()) {
+				return &ssh.Permissions{}, nil
+			}
+			return nil, errors.New("unknown public key")
+		},
+	}
+
+	tryHandshake := func(t *testing.T, clientSigner ssh.Signer) {
+		t.Helper()
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("net.Listen: %v", err)
+		}
+		defer ln.Close()
+
+		serverConf := &ssh.ServerConfig{
+			PublicKeyCallback: checker.Authenticate,
+		}
+		serverConf.AddHostKey(hostSigner)
+
+		errCh := make(chan error, 1)
+		go func() {
+			c1, err := ln.Accept()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			defer c1.Close()
+			sc, _, _, err := ssh.NewServerConn(c1, serverConf)
+			if sc != nil {
+				sc.Close()
+			}
+			errCh <- err
+		}()
+
+		c2, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatalf("net.Dial: %v", err)
+		}
+		defer c2.Close()
+
+		clientConf := &ssh.ClientConfig{
+			User:            "testuser",
+			Auth:            []ssh.AuthMethod{ssh.PublicKeys(clientSigner)},
+			HostKeyCallback: ssh.FixedHostKey(hostSigner.PublicKey()),
+		}
+		cc, _, _, clientErr := ssh.NewClientConn(c2, "example.com:22", clientConf)
+		if cc != nil {
+			cc.Close()
+		}
+		serverErr := <-errCh
+		if clientErr != nil || serverErr != nil {
+			t.Fatalf("SSH auth failed: clientErr=%v, serverErr=%v", clientErr, serverErr)
+		}
+	}
+
+	t.Run("raw webauthn key", func(t *testing.T) {
+		tryHandshake(t, signer)
+	})
+
+	t.Run("webauthn user certificate", func(t *testing.T) {
+		cert := &ssh.Certificate{
+			Key:             parsedPub,
+			Serial:          1,
+			CertType:        ssh.UserCert,
+			KeyId:           "testuser",
+			ValidPrincipals: []string{"testuser"},
+			ValidBefore:     ssh.CertTimeInfinity,
+		}
+		if err := cert.SignCert(rand.Reader, caSigner); err != nil {
+			t.Fatalf("cert.SignCert: %v", err)
+		}
+		certSigner, err := ssh.NewCertSigner(cert, signer)
+		if err != nil {
+			t.Fatalf("ssh.NewCertSigner: %v", err)
+		}
+		tryHandshake(t, certSigner)
+	})
 }

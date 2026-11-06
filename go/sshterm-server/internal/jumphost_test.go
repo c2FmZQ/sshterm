@@ -487,7 +487,19 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 				},
 			},
 		}
-		if err := cert.SignCert(rand.Reader, caSigner); err != nil {
+		if len(principals) == 0 {
+			cert.Nonce = make([]byte, 32)
+			if _, err := io.ReadFull(rand.Reader, cert.Nonce); err != nil {
+				t.Fatal(err)
+			}
+			cert.SignatureKey = caSigner.PublicKey()
+			out := cert.Marshal()
+			sig, err := caSigner.Sign(rand.Reader, out[:len(out)-4])
+			if err != nil {
+				t.Fatal(err)
+			}
+			cert.Signature = sig
+		} else if err := cert.SignCert(rand.Reader, caSigner); err != nil {
 			t.Fatal(err)
 		}
 		certSigner, err := ssh.NewCertSigner(cert, uSigner)
@@ -694,9 +706,10 @@ func TestValidateUserCertRejectsSHA1RSA(t *testing.T) {
 	algSigner := rsaSigner.(ssh.AlgorithmSigner)
 
 	cert := &ssh.Certificate{
-		Key:         uPub,
-		CertType:    ssh.UserCert,
-		ValidBefore: ssh.CertTimeInfinity,
+		Key:             uPub,
+		CertType:        ssh.UserCert,
+		ValidPrincipals: []string{"alice@example.com"},
+		ValidBefore:     ssh.CertTimeInfinity,
 		Permissions: ssh.Permissions{
 			Extensions: map[string]string{"permit-port-forwarding": ""},
 		},
@@ -704,14 +717,14 @@ func TestValidateUserCertRejectsSHA1RSA(t *testing.T) {
 	if err := cert.SignCert(rand.Reader, &fixedAlgoTestSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSA}); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateUserCert(cert, "", nil); err == nil {
+	if err := validateUserCert(cert, "alice@example.com", nil); err == nil {
 		t.Error("expected validateUserCert to reject ssh-rsa (SHA-1) signature")
 	}
 
 	if err := cert.SignCert(rand.Reader, &fixedAlgoTestSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSASHA512}); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateUserCert(cert, "", nil); err != nil {
+	if err := validateUserCert(cert, "alice@example.com", nil); err != nil {
 		t.Errorf("expected validateUserCert to accept rsa-sha2-512 signature, got: %v", err)
 	}
 }
