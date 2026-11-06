@@ -26,14 +26,19 @@ package internal
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -487,7 +492,19 @@ cert-authority,principals="sre@example.com",permitopen="*.prod.internal:22" %s c
 				},
 			},
 		}
-		if err := cert.SignCert(rand.Reader, caSigner); err != nil {
+		if len(principals) == 0 {
+			cert.Nonce = make([]byte, 32)
+			if _, err := io.ReadFull(rand.Reader, cert.Nonce); err != nil {
+				t.Fatal(err)
+			}
+			cert.SignatureKey = caSigner.PublicKey()
+			out := cert.Marshal()
+			sig, err := caSigner.Sign(rand.Reader, out[:len(out)-4])
+			if err != nil {
+				t.Fatal(err)
+			}
+			cert.Signature = sig
+		} else if err := cert.SignCert(rand.Reader, caSigner); err != nil {
 			t.Fatal(err)
 		}
 		certSigner, err := ssh.NewCertSigner(cert, uSigner)
@@ -694,9 +711,10 @@ func TestValidateUserCertRejectsSHA1RSA(t *testing.T) {
 	algSigner := rsaSigner.(ssh.AlgorithmSigner)
 
 	cert := &ssh.Certificate{
-		Key:         uPub,
-		CertType:    ssh.UserCert,
-		ValidBefore: ssh.CertTimeInfinity,
+		Key:             uPub,
+		CertType:        ssh.UserCert,
+		ValidPrincipals: []string{"alice@example.com"},
+		ValidBefore:     ssh.CertTimeInfinity,
 		Permissions: ssh.Permissions{
 			Extensions: map[string]string{"permit-port-forwarding": ""},
 		},
@@ -704,14 +722,14 @@ func TestValidateUserCertRejectsSHA1RSA(t *testing.T) {
 	if err := cert.SignCert(rand.Reader, &fixedAlgoTestSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSA}); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateUserCert(cert, "", nil); err == nil {
+	if err := validateUserCert(cert, "alice@example.com", nil); err == nil {
 		t.Error("expected validateUserCert to reject ssh-rsa (SHA-1) signature")
 	}
 
 	if err := cert.SignCert(rand.Reader, &fixedAlgoTestSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSASHA512}); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateUserCert(cert, "", nil); err != nil {
+	if err := validateUserCert(cert, "alice@example.com", nil); err != nil {
 		t.Errorf("expected validateUserCert to accept rsa-sha2-512 signature, got: %v", err)
 	}
 }
@@ -1016,5 +1034,136 @@ func TestJumpHostTrustedProxiesXForwardedFor(t *testing.T) {
 	// Malformed XFF fails closed and does NOT fall back to proxy's 127.0.0.1.
 	if err := dialWithXFF(wsTrusted, pubTrusted, mintSourceCert("127.0.0.0/8"), "invalid-ip"); err == nil {
 		t.Error("expected malformed XFF to fail closed")
+	}
+}
+
+// webAuthnTestSigner is a Signer for an sk-ecdsa-sha2-nistp256@openssh.com
+// key that produces webauthn-sk-ecdsa-sha2-nistp256@openssh.com signatures,
+// like the browser app does with an ecdsa-sk key.
+type webAuthnTestSigner struct {
+	priv *ecdsa.PrivateKey
+	pub  ssh.PublicKey
+}
+
+func newWebAuthnTestSigner(t *testing.T) *webAuthnTestSigner {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := ssh.ParsePublicKey(ssh.Marshal(struct {
+		Name        string
+		ID          string
+		Key         []byte
+		Application string
+	}{
+		ssh.KeyAlgoSKECDSA256,
+		"nistp256",
+		elliptic.Marshal(elliptic.P256(), priv.PublicKey.X, priv.PublicKey.Y),
+		"ssh:",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &webAuthnTestSigner{priv: priv, pub: pub}
+}
+
+func (s *webAuthnTestSigner) PublicKey() ssh.PublicKey { return s.pub }
+
+func (s *webAuthnTestSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+	const origin = "https://sshterm.example.com"
+	clientData := fmt.Sprintf(`{"type":"webauthn.get","challenge":%q,"origin":%q,"crossOrigin":false}`,
+		base64.RawURLEncoding.EncodeToString(data), origin)
+	appHash := sha256.Sum256([]byte("ssh:"))
+	clientDataHash := sha256.Sum256([]byte(clientData))
+	const flags byte = 0x05 // UP | UV
+	const counter uint32 = 1
+	signed := ssh.Marshal(struct {
+		ApplicationDigest []byte `ssh:"rest"`
+		Flags             byte
+		Counter           uint32
+		MessageDigest     []byte `ssh:"rest"`
+	}{appHash[:], flags, counter, clientDataHash[:]})
+	digest := sha256.Sum256(signed)
+	r, ss, err := ecdsa.Sign(rand, s.priv, digest[:])
+	if err != nil {
+		return nil, err
+	}
+	return &ssh.Signature{
+		Format: ssh.SigAlgoWebAuthnSKECDSA256,
+		Blob:   ssh.Marshal(struct{ R, S *big.Int }{r, ss}),
+		Rest: ssh.Marshal(struct {
+			Flags      byte
+			Counter    uint32
+			Origin     string
+			ClientData string
+			Extensions string
+		}{flags, counter, origin, clientData, ""}),
+	}, nil
+}
+
+func TestJumpHostWebAuthnSignature(t *testing.T) {
+	signer := newWebAuthnTestSigner(t)
+	keyLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
+
+	targetAddr, targetHostPub := startMockTargetSSHServer(t, "targetuser", signer.PublicKey())
+
+	akFile := filepath.Join(t.TempDir(), "authorized_keys")
+	akContent := fmt.Sprintf("permitopen=\"internal.example.com:22\" %s webauthn-key\n", keyLine)
+	if err := os.WriteFile(akFile, []byte(akContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := New(Options{
+		AuthorizedKeysFile: akFile,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if address != "internal.example.com:22" {
+				return nil, fmt.Errorf("unexpected dial to %q", address)
+			}
+			var d net.Dialer
+			return d.DialContext(ctx, "tcp", targetAddr)
+		},
+		Logger: log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	wsJumpURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/_ws/" + DefaultJumpEndpointName
+
+	jumpClient, err := dialJumpSSHClient(t, wsJumpURL, "anyuser", srv.jumpHost.signer.PublicKey(), ssh.PublicKeys(signer))
+	if err != nil {
+		t.Fatalf("dialJumpSSHClient(webauthn key): %v", err)
+	}
+	defer jumpClient.Close()
+
+	// The same key also authenticates to the target through the tunnel.
+	tunConn, err := jumpClient.Dial("tcp", "internal.example.com:22")
+	if err != nil {
+		t.Fatalf("jumpClient.Dial: %v", err)
+	}
+	tc, tchans, treqs, err := ssh.NewClientConn(tunConn, "internal.example.com:22", &ssh.ClientConfig{
+		User:            "targetuser",
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.FixedHostKey(targetHostPub),
+	})
+	if err != nil {
+		tunConn.Close()
+		t.Fatalf("NewClientConn over tunnel: %v", err)
+	}
+	targetClient := ssh.NewClient(tc, tchans, treqs)
+	defer targetClient.Close()
+	sess, err := targetClient.NewSession()
+	if err != nil {
+		t.Fatalf("targetClient.NewSession: %v", err)
+	}
+	defer sess.Close()
+	out, err := sess.CombinedOutput("hello")
+	if err != nil {
+		t.Fatalf("CombinedOutput: %v", err)
+	}
+	if string(out) != "target-exec:hello" {
+		t.Errorf("output = %q, want %q", out, "target-exec:hello")
 	}
 }

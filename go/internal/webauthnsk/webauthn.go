@@ -406,7 +406,7 @@ func RecoverPublicKey(authData1, clientDataJSON1, sig1Bytes, authData2, clientDa
 
 const (
 	ecdsa256KeyType         = ssh.KeyAlgoSKECDSA256
-	webauthnSignatureFormat = "webauthn-sk-ecdsa-sha2-nistp256@openssh.com"
+	webauthnSignatureFormat = ssh.SigAlgoWebAuthnSKECDSA256
 )
 
 type Key struct {
