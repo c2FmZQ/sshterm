@@ -16,6 +16,18 @@
 
 * Use `sk-ecdsa-sha2-nistp256@openssh.com` as the public key type for WebAuthn (`ecdsa-sk`) keys while keeping `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` as the signature format, enabling SSH certificate signing, certificate import, and agent forwarding for WebAuthn keys while preserving backward compatibility with existing stored keys.
 
+### :wrench: Misc
+
+* Update go: 1.27.4
+* Update go dependencies:
+  * upgraded github.com/fxamacker/cbor/v2 v2.9.6 => v2.10.0
+  * upgraded golang.org/x/crypto v0.58.0 => v0.59.0
+  * upgraded golang.org/x/sys v0.49.0 => v0.50.0
+  * upgraded golang.org/x/term v0.47.0 => v0.48.0
+  * upgraded github.com/chromedp/cdproto v0.158.5 => v0.159.3
+  * upgraded github.com/chromedp/chromedp v0.21.0 => v0.23.0
+  * upgraded github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 => v1.27.2
+
 ## v0.11.7
 
 ### :wrench: Misc

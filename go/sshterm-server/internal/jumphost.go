@@ -644,10 +644,10 @@ func matchPrincipals(patterns, certPrincipals []string) (string, bool) {
 }
 
 // validateUserCert checks that cert is a usable user certificate. principal is
-// the certificate principal that matched the authorized_keys rule (empty if
-// the certificate has no principals). The validity window, critical option
-// allowlist and CA signature are checked by ssh.CertChecker; the checks that
-// are specific to this jump host are done here.
+// the certificate principal that matched the authorized_keys rule. The
+// validity window, critical option allowlist and CA signature are checked by
+// ssh.CertChecker; the checks that are specific to this jump host are done
+// here.
 func validateUserCert(cert *ssh.Certificate, principal string, remoteAddr net.Addr) error {
 	if cert.CertType != ssh.UserCert {
 		return fmt.Errorf("certificate has wrong type: %d", cert.CertType)
