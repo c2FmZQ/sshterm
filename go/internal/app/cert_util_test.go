@@ -72,7 +72,12 @@ func TestCheckCertificate(t *testing.T) {
 		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.UserCert, ValidBefore: ssh.CertTimeInfinity}, certType: ssh.HostCert, expectErr: true},
 		{cert: &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidAfter: later, ValidBefore: earlier}, badSig: true, expectErr: true},
 	} {
-		tc.cert.SignCert(rand.Reader, signer)
+		if len(tc.cert.ValidPrincipals) == 0 {
+			tc.cert.ValidPrincipals = []string{"test"}
+		}
+		if err := tc.cert.SignCert(rand.Reader, signer); err != nil {
+			t.Fatalf("[#%d] SignCert: %v", i, err)
+		}
 		if tc.badSig {
 			tc.cert.KeyId = "foo"
 		}
@@ -101,7 +106,7 @@ func TestCheckCertificate(t *testing.T) {
 	}
 	algSigner := rsaSigner.(ssh.AlgorithmSigner)
 
-	sha1Cert := &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: ssh.CertTimeInfinity}
+	sha1Cert := &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidPrincipals: []string{"test"}, ValidBefore: ssh.CertTimeInfinity}
 	if err := sha1Cert.SignCert(rand.Reader, &fixedAlgoSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSA}); err != nil {
 		t.Fatalf("SignCert(ssh-rsa): %v", err)
 	}
@@ -109,7 +114,7 @@ func TestCheckCertificate(t *testing.T) {
 		t.Errorf("expected checkCertificate to reject ssh-rsa (SHA-1) CA signature")
 	}
 
-	sha512Cert := &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidBefore: ssh.CertTimeInfinity}
+	sha512Cert := &ssh.Certificate{Key: sshPub, CertType: ssh.HostCert, ValidPrincipals: []string{"test"}, ValidBefore: ssh.CertTimeInfinity}
 	if err := sha512Cert.SignCert(rand.Reader, &fixedAlgoSigner{AlgorithmSigner: algSigner, algo: ssh.KeyAlgoRSASHA512}); err != nil {
 		t.Fatalf("SignCert(rsa-sha2-512): %v", err)
 	}

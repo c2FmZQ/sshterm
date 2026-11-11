@@ -226,11 +226,12 @@ func TestSSHTerm(t *testing.T) {
 		}
 		now := time.Now().UTC()
 		cert := &ssh.Certificate{
-			Key:         pub,
-			CertType:    ssh.UserCert,
-			KeyId:       "testuser",
-			ValidAfter:  uint64(now.Add(-5 * time.Minute).Unix()),
-			ValidBefore: uint64(now.Add(10 * time.Minute).Unix()),
+			Key:             pub,
+			CertType:        ssh.UserCert,
+			KeyId:           "testuser",
+			ValidPrincipals: []string{"testuser"},
+			ValidAfter:      uint64(now.Add(-5 * time.Minute).Unix()),
+			ValidBefore:     uint64(now.Add(10 * time.Minute).Unix()),
 		}
 		if err := cert.SignCert(rand.Reader, sshServerWithCert.authority); err != nil {
 			t.Logf("/cert: SignCert: %v", err)
