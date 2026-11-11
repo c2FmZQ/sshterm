@@ -24,3 +24,5 @@ require (
 	github.com/xrash/smetrics v0.0.0-20261013231157-39c47d93efba // indirect
 	golang.org/x/sys v0.50.0 // indirect
 )
+
+replace golang.org/x/crypto => github.com/rthellend/crypto v0.0.0-20261106170958-e27f963f43a9

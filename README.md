@@ -243,6 +243,8 @@ For this to work, you only need a configured endpoint for the *first* jump host.
 
     The hostname `internal-host.example.com` does not need its own endpoint; it is resolved from the jump host.
 
+    > **Note:** Because each hop establishes an independent SSH session with its own session ID, authenticating with a WebAuthn (`ecdsa-sk`) key requires a separate security key touch or passkey verification for each hop that uses the key (e.g., once for the jump host and once for the destination host).
+
 ### Command Reference
 
 Here is a list of all available commands. Most commands follow a `command <sub-command> [arguments]` pattern.
