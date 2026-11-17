@@ -5,9 +5,9 @@ go 1.27.4
 godebug multipathtcp=0
 
 require (
-	github.com/chromedp/cdproto v0.159.3
-	github.com/chromedp/chromedp v0.23.0
-	github.com/fxamacker/cbor/v2 v2.10.0
+	github.com/c2FmZQ/webauthn v0.0.0-20261117022304-9643eefd1e03
+	github.com/chromedp/cdproto v0.160.3
+	github.com/chromedp/chromedp v0.23.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/pkg/sftp v1.13.12
 	github.com/urfave/cli/v2 v2.27.7
@@ -17,6 +17,7 @@ require (
 
 require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
+	github.com/fxamacker/cbor/v2 v2.10.0 // indirect
 	github.com/go-json-experiment/json v1.27.2 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect

@@ -50,7 +50,7 @@ import (
 
 	"github.com/c2FmZQ/sshterm/internal/jsutil"
 	"github.com/c2FmZQ/sshterm/internal/termsafe"
-	"github.com/c2FmZQ/sshterm/internal/webauthnsk"
+	webauthnsk "github.com/c2FmZQ/webauthn/ssh"
 )
 
 func (a *App) generateKey(name, passphrase, idp, typ string, bits int, resident bool) (*key, error) {

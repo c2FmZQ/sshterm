@@ -1,5 +1,15 @@
 # SSH Term Release Notes
 
+## next
+
+### :wrench: Misc
+
+* Migrate to github.com/c2FmZQ/webauthn
+* Update go dependencies:
+  * added github.com/c2FmZQ/webauthn v0.0.0-20261117022304-9643eefd1e03
+  * upgraded github.com/chromedp/cdproto v0.159.3 => v0.160.3
+  * upgraded github.com/chromedp/chromedp v0.23.0 => v0.23.1
+
 ## v0.12.0
 
 ### :star2: New features
