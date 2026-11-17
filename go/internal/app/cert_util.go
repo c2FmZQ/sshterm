@@ -73,13 +73,15 @@ func checkCertificate(cert *ssh.Certificate, certType uint32) error {
 		slices.Sort(opts)
 		errs = append(errs, fmt.Errorf("certificate has critical options: %v", opts))
 	}
-	c2 := *cert
-	c2.Signature = nil
-	signBytes := c2.Marshal()
-	if cert.Signature == nil || cert.Signature.Format == ssh.KeyAlgoRSA || cert.Signature.Format == ssh.KeyAlgoDSA {
+	if cert.Signature == nil || cert.SignatureKey == nil || cert.Signature.Format == ssh.KeyAlgoRSA || cert.Signature.Format == ssh.KeyAlgoDSA {
 		errs = append(errs, fmt.Errorf("certificate signature is invalid"))
-	} else if err := cert.SignatureKey.Verify(signBytes[:len(signBytes)-4], cert.Signature); err != nil {
-		errs = append(errs, fmt.Errorf("certificate signature is invalid"))
+	} else {
+		c2 := *cert
+		c2.Signature = nil
+		signBytes := c2.Marshal()
+		if err := cert.SignatureKey.Verify(signBytes[:len(signBytes)-4], cert.Signature); err != nil {
+			errs = append(errs, fmt.Errorf("certificate signature is invalid"))
+		}
 	}
 	return errors.Join(errs...)
 }
