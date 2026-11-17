@@ -6,7 +6,6 @@
 
 * Migrate to github.com/c2FmZQ/webauthn
 * Update go dependencies:
-  * removed github.com/fxamacker/cbor/v2 v2.10.0
   * added github.com/c2FmZQ/webauthn v0.0.0-20261117022304-9643eefd1e03
   * upgraded github.com/chromedp/cdproto v0.159.3 => v0.160.3
   * upgraded github.com/chromedp/chromedp v0.23.0 => v0.23.1
