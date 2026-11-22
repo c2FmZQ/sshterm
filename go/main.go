@@ -31,7 +31,10 @@ import (
 	app "github.com/c2FmZQ/sshterm/internal"
 )
 
+var Version = "dev"
+
 func main() {
+	app.Version = Version
 	sshApp := js.Global().Get("sshApp")
 	if sshApp.Type() != js.TypeObject {
 		panic("sshApp object not found")
