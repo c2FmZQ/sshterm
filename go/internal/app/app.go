@@ -28,6 +28,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -107,8 +108,23 @@ func New(cfg *Config) (*App, error) {
 			Usage:           "Show version",
 			UsageText:       "version",
 			HideHelpCommand: true,
+			Flags: []cli.Flag{
+				&cli.BoolFlag{
+					Name:  "build",
+					Value: false,
+					Usage: "Display build information",
+				},
+			},
 			Action: func(ctx *cli.Context) error {
 				app.term.Printf("%s\n", app.cfg.Version)
+				if ctx.Bool("build") {
+					app.term.Printf("\nBuildInfo = ")
+					if info, ok := debug.ReadBuildInfo(); ok {
+						enc := json.NewEncoder(app.term)
+						enc.SetIndent("", "  ")
+						enc.Encode(info)
+					}
+				}
 				return nil
 			},
 		},
