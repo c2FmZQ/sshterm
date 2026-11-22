@@ -5,7 +5,7 @@ go 1.27.4
 godebug multipathtcp=0
 
 require (
-	github.com/c2FmZQ/webauthn v0.0.0-20261117022304-9643eefd1e03
+	github.com/c2FmZQ/webauthn v0.1.0
 	github.com/chromedp/cdproto v0.160.3
 	github.com/chromedp/chromedp v0.23.1
 	github.com/gorilla/websocket v1.5.3
@@ -25,5 +25,3 @@ require (
 	github.com/xrash/smetrics v0.0.0-20261013231157-39c47d93efba // indirect
 	golang.org/x/sys v0.50.0 // indirect
 )
-
-replace golang.org/x/crypto => github.com/rthellend/crypto v0.0.0-20261106170958-e27f963f43a9
