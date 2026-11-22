@@ -1,5 +1,5 @@
-github.com/c2FmZQ/webauthn v0.0.0-20261117022304-9643eefd1e03 h1:vlBCrniYp+f995sGXTkJQl5353dX+JY5xbjTyukb4xc=
-github.com/c2FmZQ/webauthn v0.0.0-20261117022304-9643eefd1e03/go.mod h1:wVitmVNeHvULhGba0yfU3DJUKh6u6c/6xnNpDfVfaF0=
+github.com/c2FmZQ/webauthn v0.1.0 h1:Eg3YiQk+/gH2T1jPyw/hlaVK4WxLYhqTDdBwe2EKq5w=
+github.com/c2FmZQ/webauthn v0.1.0/go.mod h1:wVitmVNeHvULhGba0yfU3DJUKh6u6c/6xnNpDfVfaF0=
 github.com/chromedp/cdproto v0.160.3 h1:IpCgfMavg4heyk4detaGEUneXjAZ7hZDwqWwYMSgaVQ=
 github.com/chromedp/cdproto v0.160.3/go.mod h1:h68JaIuFr9o3yiayxEYhBdvaxgYO3shDrPSYhNlyfu0=
 github.com/chromedp/chromedp v0.23.1 h1:CbK1Knbhe9H/m/KT3qfmuSG1c6ErR8ZjmmpHb4Fadz8=

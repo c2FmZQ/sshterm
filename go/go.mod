@@ -5,7 +5,7 @@ go 1.27.4
 godebug multipathtcp=0
 
 require (
-	github.com/c2FmZQ/webauthn v0.0.0-20261117022304-9643eefd1e03
+	github.com/c2FmZQ/webauthn v0.1.0
 	github.com/chromedp/cdproto v0.160.3
 	github.com/chromedp/chromedp v0.23.1
 	github.com/gorilla/websocket v1.5.3

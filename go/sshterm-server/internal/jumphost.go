@@ -58,6 +58,9 @@ var jumpPubKeyAuthAlgorithms = []string{
 	ssh.KeyAlgoED25519,
 	ssh.KeyAlgoSKED25519,
 	ssh.KeyAlgoSKECDSA256,
+	// Browser-generated WebAuthn signatures for sk-ecdsa keys.
+	//ssh.SigAlgoWebAuthnSKECDSA256,
+	"webauthn-sk-ecdsa-sha2-nistp256@openssh.com",
 	ssh.KeyAlgoECDSA256,
 	ssh.KeyAlgoECDSA384,
 	ssh.KeyAlgoECDSA521,
