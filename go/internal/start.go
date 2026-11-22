@@ -70,6 +70,7 @@ func Start(this js.Value, args []js.Value) (result any) {
 	}
 
 	cfg.Term = term
+	cfg.Version = Version
 	bar := strings.Repeat("═", 37+len(Version))
 	cfg.Term.Call("writeln", "\x1b[32m╔"+bar+"╗\x1b[0m")
 	cfg.Term.Call("writeln", "\x1b[32m║ SSH TERM "+Version+" \x1b[4;34mgithub.com/c2FmZQ/sshterm\x1b[0;32m ║\x1b[0m")

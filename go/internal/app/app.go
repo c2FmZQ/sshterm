@@ -54,7 +54,8 @@ var backupMagic = []byte{0xe2, 0x9b, 0x94, '0'}
 const defaultDBName = "sshterm"
 
 type Config struct {
-	Term js.Value `json:"-"`
+	Term    js.Value `json:"-"`
+	Version string   `json:"-"`
 	config.Config
 
 	// Used in tests
@@ -98,6 +99,16 @@ func New(cfg *Config) (*App, error) {
 			HideHelpCommand: true,
 			Action: func(ctx *cli.Context) error {
 				js.Global().Get("location").Call("reload")
+				return nil
+			},
+		},
+		{
+			Name:            "version",
+			Usage:           "Show version",
+			UsageText:       "version",
+			HideHelpCommand: true,
+			Action: func(ctx *cli.Context) error {
+				app.term.Printf("%s\n", app.cfg.Version)
 				return nil
 			},
 		},
