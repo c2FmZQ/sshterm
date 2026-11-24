@@ -469,28 +469,25 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	wsConn, err := s.upgrader.Upgrade(w, req, nil)
-	if err != nil {
+	if err := s.upgrader.Serve(w, req, nil, func(wsConn *websocket.Conn) {
+		dialCtx, cancel := context.WithTimeout(req.Context(), dialTimeout)
+		tcpConn, err := s.opts.DialContext(dialCtx, "tcp", targetAddr)
+		cancel()
+		if err != nil {
+			s.logger.Printf("dial %q (%s) failed: %v", name, targetAddr, err)
+			_ = wsConn.WriteControl(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "upstream connection failed"),
+				time.Now().Add(writeWait),
+			)
+			return
+		}
+		defer tcpConn.Close()
+
+		s.proxyConn(wsConn, tcpConn)
+	}); err != nil {
 		s.logger.Printf("websocket upgrade failed for %q: %v", name, err)
-		return
 	}
-	defer wsConn.Close()
-
-	dialCtx, cancel := context.WithTimeout(req.Context(), dialTimeout)
-	tcpConn, err := s.opts.DialContext(dialCtx, "tcp", targetAddr)
-	cancel()
-	if err != nil {
-		s.logger.Printf("dial %q (%s) failed: %v", name, targetAddr, err)
-		_ = wsConn.WriteControl(
-			websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "upstream connection failed"),
-			time.Now().Add(writeWait),
-		)
-		return
-	}
-	defer tcpConn.Close()
-
-	s.proxyConn(wsConn, tcpConn)
 }
 
 func (s *Server) proxyConn(wsConn *websocket.Conn, tcpConn net.Conn) {
