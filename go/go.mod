@@ -6,8 +6,8 @@ godebug multipathtcp=0
 
 require (
 	github.com/c2FmZQ/webauthn v0.1.0
-	github.com/chromedp/cdproto v0.160.3
-	github.com/chromedp/chromedp v0.23.1
+	github.com/chromedp/cdproto v0.160.8
+	github.com/chromedp/chromedp v0.24.0
 	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4
 	github.com/pkg/sftp v1.13.12
 	github.com/urfave/cli/v2 v2.27.7
@@ -23,6 +23,6 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xrash/smetrics v0.0.0-20261013231157-39c47d93efba // indirect
-	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/net v0.63.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 )
