@@ -49,7 +49,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/c2FmZQ/websocket"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/c2FmZQ/sshterm/config"

@@ -43,7 +43,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/c2FmZQ/websocket"
 
 	"github.com/c2FmZQ/sshterm/config"
 )
@@ -270,7 +270,8 @@ func New(opts Options) (*Server, error) {
 	s.mux.HandleFunc("GET /config.json", s.handleConfigJSON)
 	s.mux.HandleFunc("HEAD /config.json", s.handleConfigJSON)
 	s.mux.HandleFunc("GET /_ws/{name}", s.handleWebSocket)
-	s.mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+	s.mux.HandleFunc("CONNECT /_ws/{name}", s.handleWebSocket)
+	s.mux.HandleFunc("GET /", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		fileServer.ServeHTTP(w, req)
 	})
@@ -614,6 +615,14 @@ func (s *Server) Run(ctx context.Context) error {
 	httpServer := &http.Server{
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		HTTP2: &http.HTTP2Config{
+			// TODO: Set EnableConnectProtocol: true once Go 1.28+
+			// (golang/go@e29e95265674) is used, replacing GODEBUG=http2xconnect=1.
+			SendPingTimeout:  30 * time.Second,
+			PingTimeout:      15 * time.Second,
+			WriteByteTimeout: writeWait,
+		},
 	}
 
 	errCh := make(chan error, 1)
@@ -625,7 +634,11 @@ func (s *Server) Run(ctx context.Context) error {
 			s.logger.Printf("HTTPS server listening on https://%s", l.Addr())
 			errCh <- httpServer.ServeTLS(l, s.opts.TLSCertFile, s.opts.TLSKeyFile)
 		} else {
-			s.logger.Printf("HTTP server listening on http://%s", l.Addr())
+			protocols := &http.Protocols{}
+			protocols.SetHTTP1(true)
+			protocols.SetUnencryptedHTTP2(true)
+			httpServer.Protocols = protocols
+			s.logger.Printf("HTTP server listening on http://%s (HTTP/1.1 + h2c)", l.Addr())
 			errCh <- httpServer.Serve(l)
 		}
 	}()
@@ -634,7 +647,9 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			_ = httpServer.Close()
+		}
 		err := <-errCh
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil

@@ -17,6 +17,6 @@ COPY --from=build /go/bin/sshterm-server /bin/
 
 EXPOSE 8080
 USER 1000:1000
-ENV GODEBUG="clobberfree=1,http2xconnect=0"
+ENV GODEBUG="clobberfree=1,http2xconnect=1"
 
 ENTRYPOINT ["/bin/sshterm-server", "--addr=:8080"]

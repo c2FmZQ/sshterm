@@ -105,7 +105,7 @@ Available flags:
 *   `--host-key <file>`: Optional path to an SSH private key file for the built-in jump host (recommended for persistent deployments; if omitted, an ephemeral `ed25519` key is generated at startup).
 *   `--trusted-proxies <ip|cidr[,...]>` (repeatable): Optional comma-separated list of trusted reverse proxy IP addresses or CIDR ranges (e.g., `192.168.0.12/32`). When a connection arrives from a trusted proxy, the client IP is extracted from the `X-Forwarded-For` header for certificate `source-address` verification.
 *   `--config <file>`: Optional path to a base `config.json` file. Configured endpoints are merged into it on the fly.
-*   `--tls-cert <file>` and `--tls-key <file>`: Optional TLS certificate and private key files to serve HTTPS instead of HTTP.
+*   `--tls-cert <file>` and `--tls-key <file>`: Optional TLS certificate and private key files to serve HTTPS instead of HTTP. When TLS is not enabled, `sshterm-server` serves both HTTP/1.1 and cleartext HTTP/2 (`h2c`). WebSocket connections over HTTP/2 (RFC 8441) are enabled automatically at startup (unless overridden with `GODEBUG=http2xconnect=0`).
 
 ### Using `config.json`
 

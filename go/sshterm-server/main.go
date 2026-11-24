@@ -34,6 +34,11 @@ import (
 	"strings"
 	"syscall"
 
+	// Enable GODEBUG=http2xconnect=1 before net/http initializes.
+	// Once built with Go 1.28+ (golang/go@e29e95265674), HTTP2Config.EnableConnectProtocol
+	// can be set on http.Server.HTTP2 instead.
+	_ "github.com/c2FmZQ/websocket/h2xconnect"
+
 	"github.com/c2FmZQ/sshterm/sshterm-server/internal"
 )
 
