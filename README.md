@@ -68,6 +68,8 @@ In this setup, `tlsproxy` handles TLS termination, SSO authentication, and the S
         volumes:
           - /path/to/tlsproxy:/config:ro
           - /path/to/cache:/.cache
+        networks:
+          - sshterm-net
 
       sshterm-server:
         container_name: sshterm-server
@@ -79,13 +81,22 @@ In this setup, `tlsproxy` handles TLS termination, SSO authentication, and the S
           - --addr=:8080
           - --authorized-keys=/config/authorized_keys
           - --host-key=/config/host_key
+          - --trusted-proxies=172.30.0.0/24
         volumes:
           - /path/to/sshterm-config:/config:ro
         extra_hosts:
           - "my-server:192.168.0.1"
+        networks:
+          - sshterm-net
+
+    networks:
+      sshterm-net:
+        ipam:
+          config:
+            - subnet: 172.30.0.0/24
     ```
 
-    *Note: `--addr=:8080` allows `tlsproxy` to connect to `sshterm-server:8080` over the Docker Compose network. You can also expose ports `80`/`443` on `tlsproxy` as needed for your environment.*
+    *Note: `--addr=:8080` allows `tlsproxy` to connect to `sshterm-server:8080` over the Docker Compose network, and `--trusted-proxies=172.30.0.0/24` ensures `sshterm-server` only trusts `X-Forwarded-For` headers from `tlsproxy` on that subnet for certificate `source-address` verification. You can also expose ports `80`/`443` on `tlsproxy` as needed for your environment.*
 
 2.  **Configure `tlsproxy` (`config.yaml`)**
 
