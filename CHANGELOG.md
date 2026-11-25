@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## v0.13.1
+
+### :wrench: Misc
+
+* Fix embedded version string
+
 ## v0.13.0
 
 ### :star2: New features
