@@ -24,7 +24,9 @@
 package internal
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"embed"
 	"encoding/json"
@@ -37,6 +39,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -266,6 +269,10 @@ func New(opts Options) (*Server, error) {
 	}
 	s.configJSON = cfgBytes
 
+	etags, err := buildStaticETags(docFS)
+	if err != nil {
+		return nil, fmt.Errorf("hashing docroot: %w", err)
+	}
 	fileServer := http.FileServerFS(docFS)
 	s.mux.HandleFunc("GET /config.json", s.handleConfigJSON)
 	s.mux.HandleFunc("HEAD /config.json", s.handleConfigJSON)
@@ -273,10 +280,55 @@ func New(opts Options) (*Server, error) {
 	s.mux.HandleFunc("CONNECT /_ws/{name}", s.handleWebSocket)
 	s.mux.HandleFunc("GET /", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
+		// http.FileServerFS redirects */index.html to ./ (301); only attach
+		// an ETag when serving the actual file content.
+		if !strings.HasSuffix(req.URL.Path, "/index.html") {
+			if etag := staticETag(etags, req.URL.Path); etag != "" {
+				w.Header().Set("ETag", etag)
+			}
+		}
 		fileServer.ServeHTTP(w, req)
 	})
 
 	return s, nil
+}
+
+func buildStaticETags(docFS fs.FS) (map[string]string, error) {
+	etags := make(map[string]string)
+	err := fs.WalkDir(docFS, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !d.Type().IsRegular() {
+			return nil
+		}
+		f, err := docFS.Open(p)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			return err
+		}
+		etags[p] = fmt.Sprintf(`"%x"`, h.Sum(nil)[:16])
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return etags, nil
+}
+
+func staticETag(etags map[string]string, urlPath string) string {
+	clean := strings.TrimPrefix(path.Clean("/"+urlPath), "/")
+	if clean == "" {
+		return etags["index.html"]
+	}
+	if etag, ok := etags[clean]; ok {
+		return etag
+	}
+	return etags[clean+"/index.html"]
 }
 
 func loadBaseConfig(configFile string, endpoints []Endpoint, hasJumpHost bool) (config.Config, map[string]string, error) {
@@ -446,15 +498,12 @@ func (s *Server) handleConfigJSON(w http.ResponseWriter, req *http.Request) {
 			cfgBytes = b
 		}
 	}
+	sum := sha256.Sum256(cfgBytes)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Vary", "Host")
-	w.Header().Set("Content-Length", strconv.Itoa(len(cfgBytes)))
-	if req.Method == http.MethodHead {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	w.Write(cfgBytes)
+	w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sum[:16]))
+	http.ServeContent(w, req, "config.json", time.Time{}, bytes.NewReader(cfgBytes))
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, req *http.Request) {
