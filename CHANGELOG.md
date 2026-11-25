@@ -7,6 +7,10 @@
 * Add HTTP/2 WebSocket (RFC 8441) and cleartext HTTP/2 (`h2c`) support to `sshterm-server`.
 * Log `sshterm-server` built-in jump host sessions, channel requests, and routing decisions (matched `permitopen` rule, resolved target address, and denial reasons).
 
+### :wrench: Bug fixes
+
+* Add SHA-256 `ETag` headers and `If-None-Match` conditional request support (`304 Not Modified`) for static assets and `/config.json` in `sshterm-server` so `Cache-Control: no-cache` revalidates without re-downloading unchanged files.
+
 ### :wrench: Misc
 
 * Switch WebSocket dependency from `github.com/gorilla/websocket` to `github.com/c2FmZQ/websocket` (`v0.0.0-20261124194418-a5ab079a99f5`).

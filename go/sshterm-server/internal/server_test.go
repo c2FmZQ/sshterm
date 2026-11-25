@@ -229,6 +229,13 @@ func TestEmbeddedStaticFilesAndHeaders(t *testing.T) {
 		if got := resp.Header.Get("Content-Type"); got != tc.wantType {
 			t.Errorf("GET %s: Content-Type = %q, want %q", tc.path, got, tc.wantType)
 		}
+		if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("GET %s: Cache-Control = %q, want no-cache", tc.path, got)
+		}
+		etag := resp.Header.Get("ETag")
+		if etag == "" {
+			t.Errorf("GET %s: missing ETag header", tc.path)
+		}
 		if got := resp.Header.Get("X-Frame-Options"); got != "DENY" {
 			t.Errorf("GET %s: X-Frame-Options = %q, want DENY", tc.path, got)
 		}
@@ -237,6 +244,47 @@ func TestEmbeddedStaticFilesAndHeaders(t *testing.T) {
 		}
 		if got := resp.Header.Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'none'") {
 			t.Errorf("GET %s: Content-Security-Policy = %q, want frame-ancestors 'none'", tc.path, got)
+		}
+
+		// Conditional GET with matching ETag should return 304 Not Modified with empty body.
+		req, err := http.NewRequest(http.MethodGet, ts.URL+tc.path, nil)
+		if err != nil {
+			t.Fatalf("NewRequest %s: %v", tc.path, err)
+		}
+		req.Header.Set("If-None-Match", etag)
+		condResp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("conditional GET %s: %v", tc.path, err)
+		}
+		condBody, _ := io.ReadAll(condResp.Body)
+		condResp.Body.Close()
+		if condResp.StatusCode != http.StatusNotModified {
+			t.Errorf("conditional GET %s: status = %d, want 304", tc.path, condResp.StatusCode)
+		}
+		if len(condBody) != 0 {
+			t.Errorf("conditional GET %s: body len = %d, want 0", tc.path, len(condBody))
+		}
+		if got := condResp.Header.Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("conditional GET %s: Cache-Control = %q, want no-cache", tc.path, got)
+		}
+
+		// Conditional GET with mismatched ETag should return 200 OK.
+		reqMismatch, err := http.NewRequest(http.MethodGet, ts.URL+tc.path, nil)
+		if err != nil {
+			t.Fatalf("NewRequest mismatch %s: %v", tc.path, err)
+		}
+		reqMismatch.Header.Set("If-None-Match", `"0000000000000000"`)
+		mismatchResp, err := http.DefaultClient.Do(reqMismatch)
+		if err != nil {
+			t.Fatalf("mismatch GET %s: %v", tc.path, err)
+		}
+		mismatchBody, _ := io.ReadAll(mismatchResp.Body)
+		mismatchResp.Body.Close()
+		if mismatchResp.StatusCode != http.StatusOK {
+			t.Errorf("mismatch GET %s: status = %d, want 200", tc.path, mismatchResp.StatusCode)
+		}
+		if len(mismatchBody) == 0 {
+			t.Errorf("mismatch GET %s: expected non-empty body", tc.path)
 		}
 	}
 
@@ -249,6 +297,9 @@ func TestEmbeddedStaticFilesAndHeaders(t *testing.T) {
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("GET %s: status = %d, want 404", excluded, resp.StatusCode)
+		}
+		if got := resp.Header.Get("ETag"); got != "" {
+			t.Errorf("GET %s: unexpected ETag = %q on 404", excluded, got)
 		}
 	}
 }
@@ -349,6 +400,29 @@ func TestConfigJSONSynthesis(t *testing.T) {
 	headResp.Body.Close()
 	if headResp.StatusCode != http.StatusOK {
 		t.Errorf("HEAD /config.json: status = %d, want 200", headResp.StatusCode)
+	}
+
+	// Verify ETag and conditional GET on /config.json.
+	cfgETag := resp.Header.Get("ETag")
+	if cfgETag == "" {
+		t.Fatal("GET /config.json: missing ETag header")
+	}
+	condReq, err := http.NewRequest(http.MethodGet, ts.URL+"/config.json", nil)
+	if err != nil {
+		t.Fatalf("NewRequest /config.json: %v", err)
+	}
+	condReq.Header.Set("If-None-Match", cfgETag)
+	condResp, err := http.DefaultClient.Do(condReq)
+	if err != nil {
+		t.Fatalf("conditional GET /config.json: %v", err)
+	}
+	condBody, _ := io.ReadAll(condResp.Body)
+	condResp.Body.Close()
+	if condResp.StatusCode != http.StatusNotModified {
+		t.Errorf("conditional GET /config.json: status = %d, want 304", condResp.StatusCode)
+	}
+	if len(condBody) != 0 {
+		t.Errorf("conditional GET /config.json: body len = %d, want 0", len(condBody))
 	}
 }
 
