@@ -2,8 +2,13 @@
 
 ## next
 
+### :star2: New features
+
+* Add HTTP/2 WebSocket (RFC 8441) and cleartext HTTP/2 (`h2c`) support to `sshterm-server`.
+
 ### :wrench: Misc
 
+* Switch WebSocket dependency from `github.com/gorilla/websocket` to `github.com/c2FmZQ/websocket` (`v0.0.0-20261124194418-a5ab079a99f5`).
 * Migrate to github.com/c2FmZQ/webauthn
 * Update go dependencies:
   * added github.com/c2FmZQ/webauthn v0.0.0-20261117022304-9643eefd1e03

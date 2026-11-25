@@ -41,7 +41,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/c2FmZQ/websocket"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -870,7 +870,10 @@ func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenR
 
 func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn, remoteAddr net.Addr) {
 	conn := newJumpWSConn(wsConn, remoteAddr)
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+		conn.Wait()
+	}()
 
 	rules := j.getRules()
 	var (
@@ -1050,6 +1053,7 @@ type jumpWSConn struct {
 	reader     io.Reader
 	writeMu    sync.Mutex
 	done       chan struct{}
+	pingWG     sync.WaitGroup
 	closeOnce  sync.Once
 }
 
@@ -1067,7 +1071,9 @@ func newJumpWSConn(ws *websocket.Conn, remoteAddr net.Addr) *jumpWSConn {
 	ws.SetPongHandler(func(string) error {
 		return ws.SetReadDeadline(time.Now().Add(pongWait))
 	})
+	c.pingWG.Add(1)
 	go func() {
+		defer c.pingWG.Done()
 		ticker := time.NewTicker(pingPeriod)
 		defer ticker.Stop()
 		for {
@@ -1083,6 +1089,10 @@ func newJumpWSConn(ws *websocket.Conn, remoteAddr net.Addr) *jumpWSConn {
 		}
 	}()
 	return c
+}
+
+func (c *jumpWSConn) Wait() {
+	c.pingWG.Wait()
 }
 
 func (c *jumpWSConn) Read(b []byte) (int, error) {
@@ -1148,12 +1158,10 @@ func (c *jumpWSConn) SetWriteDeadline(t time.Time) error {
 }
 
 func (s *Server) handleJumpWebSocket(w http.ResponseWriter, req *http.Request) {
-	wsConn, err := s.upgrader.Upgrade(w, req, nil)
-	if err != nil {
+	if err := s.upgrader.Serve(w, req, nil, func(wsConn *websocket.Conn) {
+		remoteAddr := s.jumpHost.resolveClientAddr(req, wsConn.RemoteAddr())
+		s.jumpHost.serveWebSocket(req.Context(), wsConn, remoteAddr)
+	}); err != nil {
 		s.logger.Printf("websocket upgrade failed for jump host: %v", err)
-		return
 	}
-	defer wsConn.Close()
-	remoteAddr := s.jumpHost.resolveClientAddr(req, wsConn.RemoteAddr())
-	s.jumpHost.serveWebSocket(req.Context(), wsConn, remoteAddr)
 }

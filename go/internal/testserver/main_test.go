@@ -50,10 +50,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/c2FmZQ/websocket"
 	"github.com/chromedp/cdproto/webauthn"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/remote"
-	"github.com/gorilla/websocket"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
