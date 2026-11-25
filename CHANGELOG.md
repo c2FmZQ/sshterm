@@ -5,6 +5,7 @@
 ### :star2: New features
 
 * Add HTTP/2 WebSocket (RFC 8441) and cleartext HTTP/2 (`h2c`) support to `sshterm-server`.
+* Log `sshterm-server` built-in jump host sessions, channel requests, and routing decisions (matched `permitopen` rule, resolved target address, and denial reasons).
 
 ### :wrench: Misc
 
