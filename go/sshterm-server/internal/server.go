@@ -177,14 +177,15 @@ type Options struct {
 // Server serves the sshterm web application and proxies WebSocket connections
 // to configured SSH endpoints.
 type Server struct {
-	opts       Options
-	endpoints  map[string]string
-	jumpHost   *jumpHost
-	baseCfg    config.Config
-	configJSON []byte
-	upgrader   websocket.Upgrader
-	mux        *http.ServeMux
-	logger     *log.Logger
+	opts           Options
+	endpoints      map[string]string
+	trustedProxies []ipMatcher
+	jumpHost       *jumpHost
+	baseCfg        config.Config
+	configJSON     []byte
+	upgrader       websocket.Upgrader
+	mux            *http.ServeMux
+	logger         *log.Logger
 
 	mu       sync.Mutex
 	listener net.Listener
@@ -238,7 +239,7 @@ func New(opts Options) (*Server, error) {
 
 	var jh *jumpHost
 	if opts.AuthorizedKeysFile != "" {
-		jh, err = newJumpHost(opts.AuthorizedKeysFile, opts.HostKeyFile, trustedProxies, opts.DialContext, logger)
+		jh, err = newJumpHost(opts.AuthorizedKeysFile, opts.HostKeyFile, opts.DialContext, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -250,10 +251,11 @@ func New(opts Options) (*Server, error) {
 	}
 
 	s := &Server{
-		opts:      opts,
-		endpoints: epMap,
-		jumpHost:  jh,
-		baseCfg:   baseCfg,
+		opts:           opts,
+		endpoints:      epMap,
+		trustedProxies: trustedProxies,
+		jumpHost:       jh,
+		baseCfg:        baseCfg,
 		upgrader: websocket.Upgrader{
 			HandshakeTimeout: dialTimeout,
 			ReadBufferSize:   8192,
@@ -519,11 +521,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := s.upgrader.Serve(w, req, nil, func(wsConn *websocket.Conn) {
+		remoteAddr := resolveClientAddr(s.trustedProxies, req, wsConn.RemoteAddr())
 		dialCtx, cancel := context.WithTimeout(req.Context(), dialTimeout)
 		tcpConn, err := s.opts.DialContext(dialCtx, "tcp", targetAddr)
 		cancel()
 		if err != nil {
-			s.logger.Printf("dial %q (%s) failed: %v", name, targetAddr, err)
+			s.logger.Printf("websocket dial failed: client=%s endpoint=%q target=%s: %v", remoteAddr, name, targetAddr, err)
 			_ = wsConn.WriteControl(
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "upstream connection failed"),
@@ -533,9 +536,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, req *http.Request) {
 		}
 		defer tcpConn.Close()
 
+		s.logger.Printf("websocket connected: client=%s endpoint=%q target=%s", remoteAddr, name, targetAddr)
 		s.proxyConn(wsConn, tcpConn)
+		s.logger.Printf("websocket closed: client=%s endpoint=%q target=%s", remoteAddr, name, targetAddr)
 	}); err != nil {
-		s.logger.Printf("websocket upgrade failed for %q: %v", name, err)
+		s.logger.Printf("websocket upgrade failed for %q from %s: %v", name, req.RemoteAddr, err)
 	}
 }
 

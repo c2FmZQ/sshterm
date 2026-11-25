@@ -829,3 +829,118 @@ func TestWSProxyWriteDeadline(t *testing.T) {
 		t.Fatal("expected proxyConn to close connection when upstream TCP write times out")
 	}
 }
+
+func TestWebSocketProxyLogging(t *testing.T) {
+	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	defer tcpListener.Close()
+
+	go func() {
+		for {
+			conn, err := tcpListener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_, _ = io.Copy(c, c)
+			}(conn)
+		}
+	}()
+
+	var (
+		logMu  sync.Mutex
+		logBuf bytes.Buffer
+	)
+	logger := log.New(writerFunc(func(p []byte) (int, error) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		return logBuf.Write(p)
+	}), "", 0)
+
+	srv, err := New(Options{
+		Endpoints: []Endpoint{
+			{Name: "echo", Address: tcpListener.Addr().String()},
+			{Name: "broken", Address: "127.0.0.1:1"},
+		},
+		TrustedProxies: []string{"127.0.0.1/32"},
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if address == "127.0.0.1:1" {
+				return nil, fmt.Errorf("dial refused")
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+		Logger: logger,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	wsBaseURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+
+	// 1. Successful connection with X-Forwarded-For from trusted proxy.
+	hdr := http.Header{"X-Forwarded-For": []string{"203.0.113.5"}}
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsBaseURL+"/_ws/echo", hdr)
+	if err != nil {
+		t.Fatalf("Dial echo: %v", err)
+	}
+	if err := wsConn.WriteMessage(websocket.BinaryMessage, []byte("hi")); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+	if _, _, err := wsConn.ReadMessage(); err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	wsConn.Close()
+
+	// Wait briefly for server handler goroutine to log closure.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		logMu.Lock()
+		hasClosed := strings.Contains(logBuf.String(), "websocket closed:")
+		logMu.Unlock()
+		if hasClosed {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// 2. Dial failure.
+	if badConn, _, err := websocket.DefaultDialer.Dial(wsBaseURL+"/_ws/broken", hdr); err == nil {
+		_, _, _ = badConn.ReadMessage()
+		badConn.Close()
+	}
+
+	// 3. Upgrade failure (cross-origin).
+	_, _, _ = websocket.DefaultDialer.Dial(wsBaseURL+"/_ws/echo", http.Header{"Origin": []string{"https://evil.example.com"}})
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		logMu.Lock()
+		s := logBuf.String()
+		logMu.Unlock()
+		if strings.Contains(s, "websocket dial failed:") && strings.Contains(s, "websocket upgrade failed") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	logMu.Lock()
+	logs := logBuf.String()
+	logMu.Unlock()
+
+	wantSubstrings := []string{
+		fmt.Sprintf(`websocket connected: client=203.0.113.5:0 endpoint="echo" target=%s`, tcpListener.Addr().String()),
+		fmt.Sprintf(`websocket closed: client=203.0.113.5:0 endpoint="echo" target=%s`, tcpListener.Addr().String()),
+		`websocket dial failed: client=203.0.113.5:0 endpoint="broken" target=127.0.0.1:1: dial refused`,
+		`websocket upgrade failed for "echo" from `,
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(logs, want) {
+			t.Errorf("logs missing %q\nfull logs:\n%s", want, logs)
+		}
+	}
+}
