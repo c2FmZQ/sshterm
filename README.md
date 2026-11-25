@@ -155,6 +155,7 @@ Available flags:
 *   `--trusted-proxies <ip|cidr[,...]>` (repeatable): Optional comma-separated list of trusted reverse proxy IP addresses or CIDR ranges (e.g., `192.168.0.12/32`). When a connection arrives from a trusted proxy, the client IP is extracted from the `X-Forwarded-For` header for certificate `source-address` verification.
 *   `--config <file>`: Optional path to a base `config.json` file. Configured endpoints are merged into it on the fly.
 *   `--tls-cert <file>` and `--tls-key <file>`: Optional TLS certificate and private key files to serve HTTPS instead of HTTP. When TLS is not enabled, `sshterm-server` serves both HTTP/1.1 and cleartext HTTP/2 (`h2c`). WebSocket connections over HTTP/2 (RFC 8441) are enabled automatically at startup (unless overridden with `GODEBUG=http2xconnect=0`).
+*   `-v`: Show the version and exit.
 
 ### Using `config.json`
 
@@ -192,13 +193,15 @@ Here is an example with explanations of the fields:
 		"hostname": "myserver.example.com",
 		"identity": "default",
 		"command": "uname -a",
-		"forwardAgent": false
+		"forwardAgent": false,
+		"zmodem": false
 	}
 }
 ```
 
+*   `dbName`: The name of the IndexedDB database to use (defaults to `"sshterm"`).
 *   `persist`: Controls whether settings are saved to the browser's local storage. When `false`, all data is cleared on reload.
-*   `theme`: Sets the visual theme (e.g., "dark", "light").
+*   `theme`: Sets the visual theme (e.g., "dark", "light", "green").
 *   `jumpHosts`: Default comma-separated jump host(s) used when connecting to a target that does not match any configured endpoint.
 *   `certificateAuthorities`: Specifies trusted Certificate Authorities for verifying host certificates.
     *   `name`: A unique name for the CA.
@@ -214,6 +217,7 @@ Here is an example with explanations of the fields:
 *   `generateKeys`: Can be used to generate new SSH keys on first use. Keys that already exist with the same names are kept.
     *   `name`: The name to give the new key.
     *   `type`: The key type (e.g., `ecdsa`, `ecdsa-sk`, `ed25519`, `rsa`).
+    *   `bits`: Optional key size in bits.
     *   `identityProvider`: If specified, the application will send a request to this URL to get the newly generated public key signed, creating a certificate.
     *   `addToAgent`: If `true`, the new key will be automatically added to the in-memory agent.
     *   `resident`: If `true`, request a discoverable (resident) credential on the security key. Only valid with type `ecdsa-sk`.
@@ -224,6 +228,7 @@ Here is an example with explanations of the fields:
     *   `command`: An optional command to run on the remote server.
     *   `forwardAgent`: If `true`, enables agent forwarding for the session.
     *   `jumpHosts`: Optional comma-separated jump host(s) for the connection (or `"none"` to bypass the default `jumpHosts`).
+    *   `zmodem`: If `true`, enables ZMODEM support for the session.
 
 ### Deployment Security
 
@@ -306,7 +311,8 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
     *   `-A, --forward-agent`: Forwards access to the local SSH agent.
     *   `-z, --zmodem`: Enable ZMODEM support for file transfers (`rz`/`sz`). Each transfer must be confirmed before it starts.
 *   `sftp [options] [user@]hostname` - Starts an interactive SFTP session.
-    *   (Options are the same as `ssh`)
+    *   `-i, --identity <keyname>`: The key to use for authentication.
+    *   `-J, --jump-hosts <jump-hosts>`: Connect by going through jump hosts.
 
 #### Key Management (`keys`)
 
@@ -322,7 +328,7 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 *   `keys show <name>` - Shows a key's public part and certificate details.
 *   `keys change-pass <name>` - Changes a key's passphrase.
 *   `keys import <name>` - Imports a private key from a file.
-*   `keys export [-p] <name>` - Exports a key. With `-p` or `--private`, exports the private key.
+*   `keys export [--private] <name>` - Exports a key. With `--private`, exports the private key.
 *   `keys import-cert <key-name>` - Imports a certificate for an existing key.
 
 #### Endpoint Management (`ep`)
@@ -336,7 +342,7 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 
 *   `agent list` - Lists keys in the SSH agent.
 *   `agent add <key-name>` - Adds a key to the agent.
-*   `agent remove [-all] [<name>]` - Removes a key (or all keys with `--all`) from the agent.
+*   `agent remove [--all] [<name>]` - Removes a key (or all keys with `--all`) from the agent.
 *   `agent lock` - Locks the agent with a passphrase.
 *   `agent unlock` - Unlocks the agent.
 
@@ -357,7 +363,7 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 
 *   `db persist [on|off|toggle]` - Manages whether the database is persisted to local storage.
 *   `db wipe` - Deletes everything from the database.
-*   `db backup` - Creates an encrypted backup of the database.
+*   `db backup [--iter <n>]` - Creates an encrypted backup of the database (`--iter` sets the PBKDF2 iteration count, default `600000`).
 *   `db restore` - Restores the database from a backup.
 
 #### SFTP Commands (for use within an `sftp` session)
@@ -382,6 +388,7 @@ Here is a list of all available commands. Most commands follow a `command <sub-c
 *   `set theme <light|dark|green>` - Sets the color theme.
 *   `clear` - Clears the terminal screen.
 *   `reload` - Reloads the application page.
+*   `version [--build]` - Shows the application version (and Go build info with `--build`).
 *   `help` - Shows a list of available commands.
 *   `exit` - Exits the application.
 
@@ -403,21 +410,23 @@ For a detailed explanation of the project's architecture and design, please see 
 
 The codebase is organized into the following main directories:
 
-*   `go/`: Contains all the Go source code for the SSH client. This code is compiled into a WebAssembly (`.wasm`) module.
+*   `go/`: Contains all the Go source code for the SSH client and server. The client code is compiled into a WebAssembly (`.wasm`) module.
+    *   `go/config/`: Defines the `config.json` schema shared between the client and `sshterm-server`.
     *   `go/internal/app/`: Defines all the application's commands (`ssh`, `keys`, `ep`, etc.).
     *   `go/internal/indexeddb/`: A Go wrapper for the browser's IndexedDB API for local storage.
     *   `go/internal/jsutil/`: Utilities for Go-to-JavaScript interoperability.
     *   `go/internal/terminal/`: A Go wrapper for the `xterm.js` terminal to handle I/O.
+    *   `go/internal/termsafe/`: Sanitizes untrusted text from remote servers before printing to the terminal.
     *   `go/internal/shellwords/`: Handles shell-style command-line parsing.
     *   `go/internal/websocket/`: Implements a `net.Conn` interface over a browser WebSocket.
-    *   `go/internal/webauthnsk/`: Implements the `ecdsa-sk` (WebAuthn) key type.
+    *   `go/internal/zmodem/`: Implements ZMODEM file transfer protocol support.
     *   `go/internal/tests/`: Contains internal end-to-end tests for the Go application, which are also compiled to WASM and run in a browser.
     *   `go/internal/testserver/`: A backend server used for running the internal Go tests, providing a mock SSH server and other endpoints.
-    *   `go/sshterm-server/`: A lightweight standalone HTTP/HTTPS and WebSocket proxy server with the `docroot/` assets embedded.
+    *   `go/sshterm-server/`: A lightweight standalone HTTP/HTTPS and WebSocket proxy server (with a built-in SSH jump host) with the `docroot/` assets embedded.
 *   `docroot/`: The web root for the application. It contains the main `index.html`, the compiled `ssh.wasm` binary, and the necessary JavaScript and CSS assets. This is the directory you would serve to users.
 *   `xterm/`: Contains the `xterm.js` frontend component and its dependencies, which provides the terminal UI.
 *   `tests/`: Contains scripts and Docker configurations for running the end-to-end browser tests.
-*   `build.sh`: The main build script that compiles the Go code into WASM and moves all necessary assets into the `docroot/` directory.
+*   `build.sh`: The main build script that compiles the Go client into WASM, places assets into `docroot/`, and builds the `sshterm-server` binary.
 
 2.  **Run the tests:**
     You can run the test suite to verify your changes.
