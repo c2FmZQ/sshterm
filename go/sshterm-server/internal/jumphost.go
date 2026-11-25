@@ -137,6 +137,27 @@ type permitOpenRule struct {
 	port        int // 0 means wildcard '*'
 }
 
+func (r permitOpenRule) String() string {
+	portStr := "*"
+	if r.port != 0 {
+		portStr = strconv.Itoa(r.port)
+	}
+	switch {
+	case r.ip != nil:
+		return net.JoinHostPort(r.ip.String(), portStr)
+	case r.cidr != nil:
+		return net.JoinHostPort(r.cidr.String(), portStr)
+	default:
+		return net.JoinHostPort(r.hostPattern, portStr)
+	}
+}
+
+func (j *jumpHost) logf(format string, args ...any) {
+	if j.logger != nil {
+		j.logger.Printf(format, args...)
+	}
+}
+
 func newJumpHost(authorizedKeysFile, hostKeyFile string, trustedProxies []ipMatcher, dialContext func(ctx context.Context, network, address string) (net.Conn, error), logger *log.Logger) (*jumpHost, error) {
 	akBytes, err := os.ReadFile(authorizedKeysFile)
 	if err != nil {
@@ -780,13 +801,20 @@ func checkSourceAddress(sourceAddrs string, remoteAddr net.Addr) bool {
 	return matched
 }
 
-func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenRule, destHost string, destPort uint32) (string, bool) {
+type routingDecision struct {
+	allowed     bool
+	targetAddr  string
+	matchedRule string
+	reason      string
+}
+
+func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenRule, destHost string, destPort uint32) routingDecision {
 	if destPort < 1 || destPort > 65535 {
-		return "", false
+		return routingDecision{reason: "invalid port"}
 	}
 	rawHost := strings.TrimSpace(destHost)
 	if rawHost == "" {
-		return "", false
+		return routingDecision{reason: "empty host"}
 	}
 	h := rawHost
 	if strings.HasPrefix(rawHost, "[") && strings.HasSuffix(rawHost, "]") {
@@ -794,7 +822,7 @@ func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenR
 		if ip := net.ParseIP(inner); ip != nil && strings.Contains(inner, ":") {
 			h = inner
 		} else {
-			return "", false
+			return routingDecision{reason: "invalid bracketed host"}
 		}
 	}
 
@@ -806,22 +834,21 @@ func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenR
 			if r.port != 0 && r.port != port {
 				continue
 			}
-			if r.hostPattern == "*" {
-				return net.JoinHostPort(destIP.String(), portStr), true
-			}
-			if r.ip != nil && r.ip.Equal(destIP) {
-				return net.JoinHostPort(destIP.String(), portStr), true
-			}
-			if r.cidr != nil && cidrContainsIP(r.cidr, destIP) {
-				return net.JoinHostPort(destIP.String(), portStr), true
+			if r.hostPattern == "*" || (r.ip != nil && r.ip.Equal(destIP)) || (r.cidr != nil && cidrContainsIP(r.cidr, destIP)) {
+				return routingDecision{
+					allowed:     true,
+					targetAddr:  net.JoinHostPort(destIP.String(), portStr),
+					matchedRule: r.String(),
+					reason:      "ip-literal",
+				}
 			}
 		}
-		return "", false
+		return routingDecision{reason: "no matching permitopen rule for IP"}
 	}
 
 	lowerHost := strings.ToLower(h)
 	if !isValidDestHostname(lowerHost) {
-		return "", false
+		return routingDecision{reason: "invalid destination hostname"}
 	}
 	hasIPRule := false
 	for _, r := range rules {
@@ -829,43 +856,63 @@ func (j *jumpHost) authorizeDestination(ctx context.Context, rules []permitOpenR
 			continue
 		}
 		if r.hostPattern == "*" {
-			return net.JoinHostPort(lowerHost, portStr), true
+			return routingDecision{
+				allowed:     true,
+				targetAddr:  net.JoinHostPort(lowerHost, portStr),
+				matchedRule: r.String(),
+				reason:      "hostname-pattern",
+			}
 		}
 		if r.hostPattern != "" {
 			if matched, err := path.Match(r.hostPattern, lowerHost); err == nil && matched {
-				return net.JoinHostPort(lowerHost, portStr), true
+				return routingDecision{
+					allowed:     true,
+					targetAddr:  net.JoinHostPort(lowerHost, portStr),
+					matchedRule: r.String(),
+					reason:      "hostname-pattern",
+				}
 			}
 		}
 		if r.ip != nil || r.cidr != nil {
 			hasIPRule = true
 		}
 	}
-	if !hasIPRule || j.lookupIP == nil {
-		return "", false
+	if !hasIPRule {
+		return routingDecision{reason: "no matching permitopen rule"}
+	}
+	if j.lookupIP == nil {
+		return routingDecision{reason: "DNS lookup unavailable"}
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, dialTimeout)
 	addrs, err := j.lookupIP(lookupCtx, lowerHost)
 	cancel()
 	if err != nil {
-		return "", false
+		return routingDecision{reason: fmt.Sprintf("DNS lookup failed: %v", err)}
 	}
+	var resolvedIPs []string
 	for _, addr := range addrs {
 		if addr.IP == nil {
 			continue
 		}
+		resolvedIPs = append(resolvedIPs, addr.IP.String())
 		for _, r := range rules {
 			if r.port != 0 && r.port != port {
 				continue
 			}
-			if r.ip != nil && r.ip.Equal(addr.IP) {
-				return net.JoinHostPort(addr.IP.String(), portStr), true
-			}
-			if r.cidr != nil && cidrContainsIP(r.cidr, addr.IP) {
-				return net.JoinHostPort(addr.IP.String(), portStr), true
+			if (r.ip != nil && r.ip.Equal(addr.IP)) || (r.cidr != nil && cidrContainsIP(r.cidr, addr.IP)) {
+				return routingDecision{
+					allowed:     true,
+					targetAddr:  net.JoinHostPort(addr.IP.String(), portStr),
+					matchedRule: r.String(),
+					reason:      "dns-resolved-ip",
+				}
 			}
 		}
 	}
-	return "", false
+	if len(resolvedIPs) == 0 {
+		return routingDecision{reason: "DNS lookup returned no IP addresses"}
+	}
+	return routingDecision{reason: fmt.Sprintf("resolved IPs %v did not match any permitopen rule", resolvedIPs)}
 }
 
 func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn, remoteAddr net.Addr) {
@@ -906,9 +953,11 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 	sconn, chans, reqs, err := ssh.NewServerConn(conn, sshCfg)
 	handshakeTimer.Stop()
 	if err != nil {
+		j.logf("jump host ssh handshake from %s failed: %v", remoteAddr, err)
 		return
 	}
 	defer sconn.Close()
+	j.logf("jump host session opened: client=%s user=%q auth=%q", sconn.RemoteAddr(), sconn.User(), authID)
 
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -928,12 +977,14 @@ func (j *jumpHost) serveWebSocket(reqCtx context.Context, wsConn *websocket.Conn
 	sem := make(chan struct{}, maxJumpChannelsPerConn)
 	for newChan := range chans {
 		if newChan.ChannelType() != "direct-tcpip" {
+			j.logf("jump host rejected channel %q from %s (%q)", newChan.ChannelType(), sconn.RemoteAddr(), authID)
 			rejectChannel(sconn, newChan, ssh.Prohibited, "only direct-tcpip is permitted")
 			continue
 		}
 		select {
 		case sem <- struct{}{}:
 		default:
+			j.logf("jump host rejected direct-tcpip from %s (%q): too many concurrent channels (%d)", sconn.RemoteAddr(), authID, maxJumpChannelsPerConn)
 			rejectChannel(sconn, newChan, ssh.ResourceShortage, "too many concurrent channels")
 			continue
 		}
@@ -968,25 +1019,27 @@ func (j *jumpHost) handleDirectTCPIP(ctx context.Context, sconn ssh.Conn, newCha
 		OriginPort uint32
 	}
 	if err := ssh.Unmarshal(newChan.ExtraData(), &payload); err != nil {
+		j.logf("jump host rejected direct-tcpip from %s (%q): invalid payload: %v", sconn.RemoteAddr(), authID, err)
 		rejectChannel(sconn, newChan, ssh.ConnectionFailed, "invalid direct-tcpip payload")
 		return
 	}
 
-	targetAddr, ok := j.authorizeDestination(ctx, allowedRules, payload.DestHost, payload.DestPort)
-	if !ok {
-		j.logger.Printf("jump host denied %q -> %q:%d", authID, payload.DestHost, payload.DestPort)
+	decision := j.authorizeDestination(ctx, allowedRules, payload.DestHost, payload.DestPort)
+	if !decision.allowed {
+		j.logf("jump host denied %q from %s -> %q:%d (%s)", authID, sconn.RemoteAddr(), payload.DestHost, payload.DestPort, decision.reason)
 		rejectChannel(sconn, newChan, ssh.Prohibited, "destination not permitted")
 		return
 	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
-	tcpConn, err := j.dialContext(dialCtx, "tcp", targetAddr)
+	tcpConn, err := j.dialContext(dialCtx, "tcp", decision.targetAddr)
 	cancel()
 	if err != nil {
-		j.logger.Printf("jump host dial %q:%d (%s) failed: %v", payload.DestHost, payload.DestPort, targetAddr, err)
+		j.logf("jump host dial %q from %s -> %q:%d -> %s (rule=%s via=%s) failed: %v", authID, sconn.RemoteAddr(), payload.DestHost, payload.DestPort, decision.targetAddr, decision.matchedRule, decision.reason, err)
 		rejectChannel(sconn, newChan, ssh.ConnectionFailed, "upstream connection failed")
 		return
 	}
+	j.logf("jump host allowed %q from %s -> %q:%d -> %s (rule=%s via=%s)", authID, sconn.RemoteAddr(), payload.DestHost, payload.DestPort, decision.targetAddr, decision.matchedRule, decision.reason)
 	defer tcpConn.Close()
 
 	var (

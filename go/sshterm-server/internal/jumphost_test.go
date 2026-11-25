@@ -1170,3 +1170,123 @@ func TestJumpHostWebAuthnSignature(t *testing.T) {
 		t.Errorf("output = %q, want %q", out, "target-exec:hello")
 	}
 }
+
+func TestJumpHostRoutingLogs(t *testing.T) {
+	_, keySigner, keyLine := generateTestSSHKey(t)
+	_, unauthSigner, _ := generateTestSSHKey(t)
+
+	akFile := filepath.Join(t.TempDir(), "authorized_keys")
+	akContent := fmt.Sprintf("permitopen=\"*.example.com:22,10.20.0.0/16:22\" %s test-key\n", keyLine)
+	if err := os.WriteFile(akFile, []byte(akContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var logBuf bytes.Buffer
+	var logMu sync.Mutex
+	srv, err := New(Options{
+		AuthorizedKeysFile: akFile,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if address == "fail.example.com:22" {
+				return nil, fmt.Errorf("dial refused")
+			}
+			c1, c2 := net.Pipe()
+			_ = c2.Close()
+			return c1, nil
+		},
+		Logger: log.New(writerFunc(func(p []byte) (int, error) {
+			logMu.Lock()
+			defer logMu.Unlock()
+			return logBuf.Write(p)
+		}), "", 0),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	srv.jumpHost.lookupIP = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		if host == "resolved.internal" {
+			return []net.IPAddr{{IP: net.ParseIP("10.20.30.40")}}, nil
+		}
+		return nil, fmt.Errorf("unknown host %q", host)
+	}
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	wsJumpURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/_ws/" + DefaultJumpEndpointName
+	jumpHostPub := srv.jumpHost.signer.PublicKey()
+
+	// Failed handshake / auth.
+	if _, err := dialJumpSSHClient(t, wsJumpURL, "baduser", jumpHostPub, ssh.PublicKeys(unauthSigner)); err == nil {
+		t.Fatal("expected unauthorized key to fail")
+	}
+
+	c, err := dialJumpSSHClient(t, wsJumpURL, "alice", jumpHostPub, ssh.PublicKeys(keySigner))
+	if err != nil {
+		t.Fatalf("dialJumpSSHClient: %v", err)
+	}
+
+	// Allowed via hostname-pattern.
+	if ch, err := c.Dial("tcp", "allowed.example.com:22"); err != nil {
+		t.Fatalf("Dial(allowed.example.com:22): %v", err)
+	} else {
+		ch.Close()
+	}
+
+	// Allowed via dns-resolved-ip.
+	if ch, err := c.Dial("tcp", "resolved.internal:22"); err != nil {
+		t.Fatalf("Dial(resolved.internal:22): %v", err)
+	} else {
+		ch.Close()
+	}
+
+	// Allowed via ip-literal.
+	if ch, err := c.Dial("tcp", "10.20.1.2:22"); err != nil {
+		t.Fatalf("Dial(10.20.1.2:22): %v", err)
+	} else {
+		ch.Close()
+	}
+
+	// Allowed by rule, but dial fails.
+	if _, err := c.Dial("tcp", "fail.example.com:22"); err == nil {
+		t.Fatal("expected Dial(fail.example.com:22) to fail")
+	}
+
+	// Denied by policy (DNS lookup failed).
+	if _, err := c.Dial("tcp", "blocked.org:22"); err == nil {
+		t.Fatal("expected Dial(blocked.org:22) to be denied")
+	}
+
+	// Denied by policy (port mismatch, no matching rule).
+	if _, err := c.Dial("tcp", "allowed.example.com:2222"); err == nil {
+		t.Fatal("expected Dial(allowed.example.com:2222) to be denied")
+	}
+
+	// Rejected non-direct-tcpip channel.
+	if _, err := c.NewSession(); err == nil {
+		t.Fatal("expected NewSession to be rejected")
+	}
+
+	c.Close()
+
+	logMu.Lock()
+	logs := logBuf.String()
+	logMu.Unlock()
+
+	wantSubstrings := []string{
+		"jump host ssh handshake from ",
+		`jump host session opened: client=`,
+		`user="alice"`,
+		`-> "allowed.example.com":22 -> allowed.example.com:22 (rule=*.example.com:22 via=hostname-pattern)`,
+		`-> "resolved.internal":22 -> 10.20.30.40:22 (rule=10.20.0.0/16:22 via=dns-resolved-ip)`,
+		`-> "10.20.1.2":22 -> 10.20.1.2:22 (rule=10.20.0.0/16:22 via=ip-literal)`,
+		`-> "fail.example.com":22 -> fail.example.com:22 (rule=*.example.com:22 via=hostname-pattern) failed: dial refused`,
+		`jump host denied `,
+		`-> "blocked.org":22 (DNS lookup failed: unknown host "blocked.org")`,
+		`-> "allowed.example.com":2222 (no matching permitopen rule)`,
+		`jump host rejected channel "session" from `,
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(logs, want) {
+			t.Errorf("logs missing %q\nfull logs:\n%s", want, logs)
+		}
+	}
+}
