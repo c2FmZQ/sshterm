@@ -46,38 +46,87 @@ After the build completes, the `docroot/` directory will contain all the require
 
 ### Configuration
 
-SSH Term connects to SSH servers via a WebSocket proxy. For full production deployments (with ACME/Let's Encrypt, authentication, and SSH certificate issuance), we recommend [tlsproxy](https://github.com/c2FmZQ/tlsproxy). For local use or deployments behind an existing reverse proxy, you can also use the built-in lightweight `sshterm-server`.
+SSH Term connects to SSH servers via a WebSocket proxy. For full production deployments (with ACME/Let's Encrypt, SSO authentication, and SSH certificate issuance), we recommend running [tlsproxy](https://github.com/c2FmZQ/tlsproxy) in front of `sshterm-server`. For local testing or deployments behind an existing reverse proxy, you can also run `sshterm-server` standalone.
 
-#### Option A: Using `tlsproxy` (Recommended for Production)
+#### Option A: Using `tlsproxy` and `sshterm-server` (Recommended for Production)
 
-1.  **Configure `tlsproxy`**
+In this setup, `tlsproxy` handles TLS termination, SSO authentication, and the SSH Certificate Authority, and proxies HTTP/2 (including WebSockets over HTTP/2) to `sshterm-server`. `sshterm-server` serves the web application and acts as a built-in SSH jump host controlled by `authorized_keys`.
 
-    Create a `tlsproxy` configuration file. Here is a minimal example:
+1.  **Create `docker-compose.yaml`**
 
     ```yaml
+    services:
+      tlsproxy:
+        container_name: tlsproxy
+        image: c2fmzq/tlsproxy:latest ## Or pinned version
+        user: 801:801  ## Some UID that can access the config and cache files
+        restart: always
+        stop_grace_period: 60s
+        read_only: true
+        environment:
+          - TLSPROXY_PASSPHRASE=<a random passphrase>
+        volumes:
+          - /path/to/tlsproxy:/config:ro
+          - /path/to/cache:/.cache
+
+      sshterm-server:
+        container_name: sshterm-server
+        image: c2fmzq/sshterm-server:latest ## Or pinned version
+        user: 802:802  ## Some UID that can access the config files
+        restart: always
+        read_only: true
+        command:
+          - --addr=:8080
+          - --authorized-keys=/config/authorized_keys
+          - --host-key=/config/host_key
+        volumes:
+          - /path/to/sshterm-config:/config:ro
+        extra_hosts:
+          - "my-server:192.168.0.1"
+    ```
+
+    *Note: `--addr=:8080` allows `tlsproxy` to connect to `sshterm-server:8080` over the Docker Compose network. You can also expose ports `80`/`443` on `tlsproxy` as needed for your environment.*
+
+2.  **Configure `tlsproxy` (`config.yaml`)**
+
+    Create `/path/to/tlsproxy/config.yaml` with an SSH Certificate Authority and an HTTP/2 backend pointing to `sshterm-server:8080`:
+
+    ```yaml
+    sshCertificateAuthorities:
+    - name: "ACME EXAMPLE SSH CA"
+      keyType: ecdsa-p256
+      publicKeyEndpoint: https://ssh.example.com/ca
+      certificateEndpoint: https://ssh.example.com/cert
+      maximumCertificateLifetime: 24h
+
     backends:
-      - serverNames:
-          - ssh.example.com
-        mode: local
-        documentRoot: /path/to/your/docroot/
-
-    webSockets:
-      - endpoint: wss://ssh.example.com/myserver
-        address: 192.168.0.100:22
+    - serverNames:
+      - ssh.example.com
+      mode: http
+      addresses:
+      - sshterm-server:8080
+      backendProto: h2
+      sso:
+        provider: <a configured IDP>
+        rules:
+        - exceptions:
+          - /ssh.webmanifest
+          - /ssh.png
     ```
-    *Update the `serverNames`, `documentRoot`, `endpoint`, and `address` to match your environment.*
+    *Update `serverNames`, `publicKeyEndpoint`, `certificateEndpoint`, and `sso.provider` to match your environment. See the [tlsproxy documentation](https://github.com/c2FmZQ/tlsproxy) for full SSO and ACME configuration details.*
 
-2.  **Configure the Endpoint in the App**
+3.  **Configure `sshterm-server`**
 
-    Open the SSH Term URL in your browser (e.g., `https://ssh.example.com`). The first time you use it, you must configure the server endpoint with the `ep` command:
+    In `/path/to/sshterm-config/`:
+    *   Create `host_key` (e.g., `ssh-keygen -t ed25519 -N "" -f host_key`) so the jump host identity persists across restarts.
+    *   Create `authorized_keys` to control which keys or `tlsproxy` user certificates can connect and which target hosts/ports they can reach via `permitopen`. You can retrieve the CA public key from `https://ssh.example.com/ca` and add a `cert-authority` line. See [AUTHORIZED_KEYS.md](AUTHORIZED_KEYS.md) for detailed examples.
+    *   Optionally, add a `config.json` and pass `--config=/config/config.json` to pre-configure `generateKeys` (e.g. with `"identityProvider": "./cert"`), `certificateAuthorities`, or `hosts`.
 
-    ```console
-    ep add myserver wss://ssh.example.com/myserver
-    ```
-    The URL can also be a relative path, e.g. `./myserver`.
-    Alternatively, you can provide this configuration in a `config.json` file in the `docroot` directory.
+    Because `sshterm-server` automatically injects the jump host endpoint into `/config.json`, no manual `ep add` step is needed in the browser.
 
-#### Option B: Using `sshterm-server` (Lightweight Standalone Server)
+#### Option B: Testing and Standalone `sshterm-server`
+
+For local testing, you can run `sshterm-server` standalone (either from a pre-built release, Docker, or built from source with `./build.sh`), or run a local `tlsproxy` + `sshterm-server` pair as described in [tlsproxy-chrome-dev.md](tlsproxy-chrome-dev.md).
 
 `sshterm-server` is a self-contained binary that embeds the web application and proxies WebSocket connections to configured SSH servers. It automatically injects the configured endpoints into `/config.json` on the fly, so no `ep add` step is needed in the browser.
 
