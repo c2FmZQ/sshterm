@@ -1,5 +1,11 @@
 # SSH Term Release Notes
 
+## next
+
+### :wrench: Misc
+
+* Log non-jump WebSocket proxy connections (client address, endpoint, target address, connection open/close, and dial/upgrade failures) in `sshterm-server`, including `--trusted-proxies` `X-Forwarded-For` resolution.
+
 ## v0.13.1
 
 ### :wrench: Misc

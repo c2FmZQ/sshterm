@@ -112,7 +112,6 @@ func parseTrustedProxies(specs []string) ([]ipMatcher, error) {
 type jumpHost struct {
 	signer             ssh.Signer
 	authorizedKeysFile string
-	trustedProxies     []ipMatcher
 	dialContext        func(ctx context.Context, network, address string) (net.Conn, error)
 	lookupIP           func(ctx context.Context, host string) ([]net.IPAddr, error)
 	logger             *log.Logger
@@ -158,7 +157,7 @@ func (j *jumpHost) logf(format string, args ...any) {
 	}
 }
 
-func newJumpHost(authorizedKeysFile, hostKeyFile string, trustedProxies []ipMatcher, dialContext func(ctx context.Context, network, address string) (net.Conn, error), logger *log.Logger) (*jumpHost, error) {
+func newJumpHost(authorizedKeysFile, hostKeyFile string, dialContext func(ctx context.Context, network, address string) (net.Conn, error), logger *log.Logger) (*jumpHost, error) {
 	akBytes, err := os.ReadFile(authorizedKeysFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading authorized_keys file: %w", err)
@@ -206,7 +205,6 @@ func newJumpHost(authorizedKeysFile, hostKeyFile string, trustedProxies []ipMatc
 	return &jumpHost{
 		signer:             signer,
 		authorizedKeysFile: authorizedKeysFile,
-		trustedProxies:     trustedProxies,
 		dialContext:        dialContext,
 		lookupIP:           net.DefaultResolver.LookupIPAddr,
 		logger:             logger,
@@ -728,8 +726,8 @@ func extractAddrIP(addr net.Addr) net.IP {
 	return parseIPString(host)
 }
 
-func (j *jumpHost) isTrustedProxy(ip net.IP) bool {
-	for _, m := range j.trustedProxies {
+func isTrustedProxy(trustedProxies []ipMatcher, ip net.IP) bool {
+	for _, m := range trustedProxies {
 		if m.matches(ip) {
 			return true
 		}
@@ -737,12 +735,12 @@ func (j *jumpHost) isTrustedProxy(ip net.IP) bool {
 	return false
 }
 
-func (j *jumpHost) resolveClientAddr(req *http.Request, peerAddr net.Addr) net.Addr {
-	if len(j.trustedProxies) == 0 || req == nil {
+func resolveClientAddr(trustedProxies []ipMatcher, req *http.Request, peerAddr net.Addr) net.Addr {
+	if len(trustedProxies) == 0 || req == nil {
 		return peerAddr
 	}
 	peerIP := extractAddrIP(peerAddr)
-	if !j.isTrustedProxy(peerIP) {
+	if !isTrustedProxy(trustedProxies, peerIP) {
 		return peerAddr
 	}
 	xffValues := req.Header.Values("X-Forwarded-For")
@@ -763,7 +761,7 @@ func (j *jumpHost) resolveClientAddr(req *http.Request, peerAddr net.Addr) net.A
 		if ip == nil {
 			return &net.TCPAddr{}
 		}
-		if !j.isTrustedProxy(ip) || i == 0 {
+		if !isTrustedProxy(trustedProxies, ip) || i == 0 {
 			return &net.TCPAddr{IP: ip}
 		}
 	}
@@ -1212,9 +1210,9 @@ func (c *jumpWSConn) SetWriteDeadline(t time.Time) error {
 
 func (s *Server) handleJumpWebSocket(w http.ResponseWriter, req *http.Request) {
 	if err := s.upgrader.Serve(w, req, nil, func(wsConn *websocket.Conn) {
-		remoteAddr := s.jumpHost.resolveClientAddr(req, wsConn.RemoteAddr())
+		remoteAddr := resolveClientAddr(s.trustedProxies, req, wsConn.RemoteAddr())
 		s.jumpHost.serveWebSocket(req.Context(), wsConn, remoteAddr)
 	}); err != nil {
-		s.logger.Printf("websocket upgrade failed for jump host: %v", err)
+		s.logger.Printf("websocket upgrade failed for jump host from %s: %v", req.RemoteAddr, err)
 	}
 }
