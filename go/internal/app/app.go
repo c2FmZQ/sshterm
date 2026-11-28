@@ -28,7 +28,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -118,11 +117,9 @@ func New(cfg *Config) (*App, error) {
 			Action: func(ctx *cli.Context) error {
 				app.term.Printf("%s\n", app.cfg.Version)
 				if ctx.Bool("build") {
-					app.term.Printf("\nBuildInfo = ")
+					app.term.Printf("\nBuildInfo:\n")
 					if info, ok := debug.ReadBuildInfo(); ok {
-						enc := json.NewEncoder(app.term)
-						enc.SetIndent("", "  ")
-						enc.Encode(info)
+						app.term.Printf("%s", termsafe.Text(info.String()))
 					}
 				}
 				return nil
